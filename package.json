@@ -1,0 +1,21 @@
+{
+  "name": "mealplanner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Family meal planner — fridge inventory, SMS dinner attendance polling, and AI recipe suggestions on Azure.",
+  "workspaces": [
+    "shared",
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace shared && npm run build --workspace api && npm run build --workspace web",
+    "dev:api": "npm run start --workspace api",
+    "dev:web": "npm run dev --workspace web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

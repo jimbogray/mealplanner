@@ -1,0 +1,24 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "DATABASE_URL": "postgres://postgres:postgres@localhost:5432/mealplanner",
+    "HOUSEHOLD_ID": "00000000-0000-0000-0000-000000000001",
+
+    "ACS_CONNECTION_STRING": "endpoint=https://<your-acs>.communication.azure.com/;accesskey=<key>",
+    "ACS_FROM_NUMBER": "+1XXXXXXXXXX",
+
+    "AZURE_OPENAI_ENDPOINT": "https://<your-openai>.openai.azure.com/",
+    "AZURE_OPENAI_API_KEY": "<key>",
+    "AZURE_OPENAI_CHAT_DEPLOYMENT": "gpt-4o-mini",
+    "AZURE_OPENAI_EMBED_DEPLOYMENT": "text-embedding-3-small",
+
+    "WEB_SEARCH_PROVIDER": "none",
+    "TAVILY_API_KEY": ""
+  },
+  "Host": {
+    "CORS": "http://localhost:5173",
+    "CORSCredentials": true
+  }
+}

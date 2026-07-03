@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm install
+      - run: npm run build --workspace shared
+      - run: npm run typecheck
+      - name: Unit tests (api pure helpers)
+        run: |
+          npm --workspace api run build
+          node --test api/dist/test/*.test.js
