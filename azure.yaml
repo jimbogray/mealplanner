@@ -1,0 +1,15 @@
+# Azure Developer CLI (azd) configuration.
+# Deploy with:  azd up
+name: mealplanner
+metadata:
+  template: mealplanner@0.1.0
+services:
+  api:
+    project: ./api
+    language: ts
+    host: function
+  web:
+    project: ./web
+    language: ts
+    host: staticwebapp
+    dist: dist
