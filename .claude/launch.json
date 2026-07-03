@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "azurite",
+      "runtimeExecutable": "azurite",
+      "runtimeArgs": ["--silent", "--location", ".azurite", "--debug", ".azurite/debug.log"],
+      "port": 10000
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start", "--workspace", "api"],
+      "port": 7071
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace", "web"],
+      "port": 5173
+    },
+    {
+      "name": "swa",
+      "runtimeExecutable": "swa",
+      "runtimeArgs": ["start", "http://localhost:5173", "--app-location", "web", "--swa-config-location", ".swa-local-auth", "--api-devserver-url", "http://localhost:7071"],
+      "port": 4280
+    }
+  ]
+}
