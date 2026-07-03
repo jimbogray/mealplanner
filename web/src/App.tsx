@@ -25,7 +25,10 @@ export function App() {
         <div className="auth">
           {me ? (
             <>
-              <span>{me.userDetails}</span>
+              <span>
+                {me.userDetails}
+                {me.userRoles.includes("admin") && <strong> (admin)</strong>}
+              </span>
               <a href="/logout">Sign out</a>
             </>
           ) : (

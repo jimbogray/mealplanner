@@ -32,6 +32,8 @@ export interface FamilyMember {
   name: string;
   /** E.164 format, e.g. "+447700900123". */
   phoneE164: string;
+  /** Sign-in email, matched against the AAD userDetails claim to grant the "admin" role. */
+  email: string | null;
   dietaryPrefs: DietaryPrefs;
   role: MemberRole;
   active: boolean;

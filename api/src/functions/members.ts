@@ -13,7 +13,7 @@ async function members(req: HttpRequest, _ctx: InvocationContext): Promise<HttpR
   if (req.method === "GET") {
     const { rows } = await query(
       `SELECT id, household_id AS "householdId", name, phone_e164 AS "phoneE164",
-              dietary_prefs AS "dietaryPrefs", role, active
+              email, dietary_prefs AS "dietaryPrefs", role, active
          FROM family_member WHERE household_id = $1 ORDER BY name`,
       [HOUSEHOLD_ID()],
     );
@@ -25,18 +25,18 @@ async function members(req: HttpRequest, _ctx: InvocationContext): Promise<HttpR
 
   if (req.method === "POST") {
     const { rows } = await query(
-      `INSERT INTO family_member (household_id, name, phone_e164, dietary_prefs, role)
-       VALUES ($1,$2,$3,$4,COALESCE($5,'member')) RETURNING id`,
-      [HOUSEHOLD_ID(), body.name, body.phoneE164, body.dietaryPrefs ?? {}, body.role],
+      `INSERT INTO family_member (household_id, name, phone_e164, email, dietary_prefs, role)
+       VALUES ($1,$2,$3,$4,$5,COALESCE($6,'member')) RETURNING id`,
+      [HOUSEHOLD_ID(), body.name, body.phoneE164, body.email ?? null, body.dietaryPrefs ?? {}, body.role],
     );
     return { status: 201, jsonBody: { id: rows[0]?.id } };
   }
 
   if (req.method === "PUT" && id) {
     await query(
-      `UPDATE family_member SET name=$2, phone_e164=$3, dietary_prefs=$4, role=$5, active=$6
-       WHERE id=$1 AND household_id=$7`,
-      [id, body.name, body.phoneE164, body.dietaryPrefs ?? {}, body.role ?? "member", body.active ?? true, HOUSEHOLD_ID()],
+      `UPDATE family_member SET name=$2, phone_e164=$3, email=$4, dietary_prefs=$5, role=$6, active=$7
+       WHERE id=$1 AND household_id=$8`,
+      [id, body.name, body.phoneE164, body.email ?? null, body.dietaryPrefs ?? {}, body.role ?? "member", body.active ?? true, HOUSEHOLD_ID()],
     );
     return { status: 204 };
   }
