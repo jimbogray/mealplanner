@@ -2,8 +2,7 @@
   "routes": [
     { "route": "/api/*", "allowedRoles": ["authenticated"] },
     { "route": "/login", "rewrite": "/.auth/login/aad" },
-    { "route": "/logout", "rewrite": "/.auth/logout" },
-    { "route": "/*", "serve": "/index.html", "statusCode": 200 }
+    { "route": "/logout", "rewrite": "/.auth/logout" }
   ],
   "responseOverrides": {
     "401": { "redirect": "/login", "statusCode": 302 }
