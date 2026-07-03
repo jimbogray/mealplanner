@@ -17,6 +17,10 @@ obj/
 # azd
 .azure/
 
+# local-only SWA CLI auth mock (see README > Local development)
+.swa-local-auth/
+.azurite/
+
 # editor / OS
 .vscode/*
 !.vscode/extensions.json
