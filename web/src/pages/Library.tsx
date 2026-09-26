@@ -148,11 +148,12 @@ function Library({ isManager }: { isManager: boolean }) {
   );
 }
 
-type GroupBy = "time" | "protein";
+type GroupBy = "time" | "protein" | "prepared";
 
 const GROUPINGS: { key: GroupBy; label: string }[] = [
   { key: "time", label: "Cook Time" },
   { key: "protein", label: "Protein" },
+  { key: "prepared", label: "Prepared" },
 ];
 
 const TIME_BANDS = [
@@ -171,6 +172,10 @@ function groupRecipes(recipes: FavouriteRecipe[], by: GroupBy): { label: string;
     labels = TIME_BANDS.map((b) => b.label);
     unknown = "Cook time not known";
     labelOf = (r) => (r.cookingMinutes == null ? null : TIME_BANDS.find((b) => r.cookingMinutes! <= b.max)!.label);
+  } else if (by === "prepared") {
+    labels = ["Prepared"];
+    unknown = "Not prepared yet";
+    labelOf = (r) => (r.prepared ? "Prepared" : null);
   } else {
     // Proteins are free text, so "chicken" and "Chicken " share a group.
     const names = new Map<string, string>();
