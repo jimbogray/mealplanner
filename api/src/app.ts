@@ -28,9 +28,10 @@ import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, req
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
-import { fetchPage, pageImages, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
+import { fetchPage, pageImages, pageLinks, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
 import type { Maps } from "./maps.js";
 import type { RecipeReader } from "./recipe-reader.js";
+import type { RestaurantReader } from "./restaurant-reader.js";
 import * as v from "./validate.js";
 
 export const INVITE_DAYS = 14;
@@ -227,6 +228,8 @@ export interface AppOptions {
   readRecipe?: RecipeReader;
   /** Finds restaurants on the map and times the drive from home. Without it, there are no driving times. */
   maps?: Maps;
+  /** Reads a restaurant's web page for its cuisine, address and booking link. Without it, people type them in. */
+  readRestaurant?: RestaurantReader;
   /** Finds UK addresses as people type (Google Places). Without it, the home address can't be set. */
   addressSearch?: AddressSearch;
 }
@@ -307,6 +310,8 @@ interface RestaurantRow {
   url: string | null;
   notes: string | null;
   address: string | null;
+  cuisine: string | null;
+  booking_url: string | null;
   drive_minutes: number | null;
   average_rating: string | null;
   rating_count: number;
@@ -317,7 +322,7 @@ interface RestaurantRow {
 
 /** Selects restaurants with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
 function restaurantSelect(me: string): string {
-  return `SELECT r.id, r.name, r.url, r.notes, r.address, r.drive_minutes, m.name AS added_by, r.created_at,
+  return `SELECT r.id, r.name, r.url, r.notes, r.address, r.cuisine, r.booking_url, r.drive_minutes, m.name AS added_by, r.created_at,
     (SELECT round(avg(stars), 1) FROM restaurant_rating WHERE restaurant_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM restaurant_rating WHERE restaurant_id = r.id) AS rating_count,
     (SELECT stars FROM restaurant_rating WHERE restaurant_id = r.id AND member_id = ${me}) AS my_rating
@@ -331,6 +336,8 @@ function toRestaurant(r: RestaurantRow): Restaurant {
     url: r.url,
     notes: r.notes,
     address: r.address,
+    cuisine: r.cuisine,
+    bookingUrl: r.booking_url,
     driveMinutes: r.drive_minutes,
     averageRating: r.average_rating === null ? null : Number(r.average_rating),
     ratingCount: r.rating_count,
@@ -347,15 +354,55 @@ interface RestaurantLocation {
   drive_minutes: number | null;
 }
 
-/** A restaurant's name, link and notes, as added or edited. */
-function restaurantInput(body: unknown): { name: string; url: string | null; notes: string | null; address: string | null } {
+interface RestaurantInput {
+  name: string;
+  url: string | null;
+  notes: string | null;
+  address: string | null;
+  cuisine: string | null;
+  bookingUrl: string | null;
+}
+
+function optionalWebUrl(value: unknown, field: string): string | null {
+  return value == null || (typeof value === "string" && !value.trim()) ? null : v.webUrl(value, field);
+}
+
+/** A restaurant's details, as added or edited. */
+function restaurantInput(body: unknown): RestaurantInput {
   const b = v.object(body);
   return {
     name: v.text(b.name, "Restaurant name", 120),
-    url: b.url == null || (typeof b.url === "string" && !b.url.trim()) ? null : v.webUrl(b.url, "Restaurant link"),
+    url: optionalWebUrl(b.url, "Restaurant link"),
     notes: v.optionalText(b.notes, "Notes", 1000),
     address: v.optionalText(b.address, "Address", 200),
+    cuisine: v.optionalText(b.cuisine, "Cuisine", 60),
+    bookingUrl: optionalWebUrl(b.bookingUrl, "Booking link"),
   };
+}
+
+/**
+ * Fills in whatever the person left blank (cuisine, address, booking link) from the restaurant's web page,
+ * read by Claude. What they typed always wins; a page that can't be read, or isn't a restaurant's, changes nothing.
+ */
+async function fillFromPage(options: Pick<AppOptions, "fetchPage" | "readRestaurant">, r: RestaurantInput): Promise<RestaurantInput> {
+  if (!r.url || !options.readRestaurant || (r.cuisine && r.address && r.bookingUrl)) return r;
+  try {
+    const page = await (options.fetchPage ?? fetchPage)(r.url);
+    const links = pageLinks(page.html, page.url);
+    const found = await options.readRestaurant({ url: page.url, text: pageText(page.html), links });
+    if (!found.isRestaurant) return r;
+    // Only a link that's really on the page, so a made-up one can't slip through.
+    const booking = links.find((l) => l.url === found.bookingUrl?.trim())?.url ?? null;
+    return {
+      ...r,
+      cuisine: r.cuisine ?? (found.cuisine?.trim().slice(0, 60) || null),
+      address: r.address ?? (found.address?.trim().slice(0, 200) || null),
+      bookingUrl: r.bookingUrl ?? booking,
+    };
+  } catch (err) {
+    console.error("Reading a restaurant's page failed", err);
+    return r;
+  }
 }
 
 /**
@@ -471,7 +518,7 @@ function weekStart(value: string): string {
 
 export function buildRouter(
   db: Db,
-  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "addressSearch" | "maps"> & { webOrigins?: string[] } = {},
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "addressSearch" | "maps" | "readRestaurant"> & { webOrigins?: string[] } = {},
 ): Router {
   const router = new Router();
   const me = (userId: string, email: string) => loadMe(db, userId, email, options.addressSearch !== undefined);
@@ -983,17 +1030,18 @@ export function buildRouter(
   // Adding one (or changing its name or address) also finds it on the map and times the drive from home.
   router.add("POST", "/api/family/restaurants", async (req) => {
     const { member } = await requireMember(db, req);
-    const r = restaurantInput(req.body);
-    const taken = await db.query("SELECT 1 FROM restaurant WHERE family_id = $1 AND lower(name) = lower($2)", [member.family_id, r.name]);
-    if (taken.rowCount) throw new HttpError(409, `${r.name} is already one of your restaurants`);
+    const typed = restaurantInput(req.body);
+    const taken = await db.query("SELECT 1 FROM restaurant WHERE family_id = $1 AND lower(name) = lower($2)", [member.family_id, typed.name]);
+    if (taken.rowCount) throw new HttpError(409, `${typed.name} is already one of your restaurants`);
+    const r = await fillFromPage(options, typed);
     const at = await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r);
     let id: string;
     try {
       id = (
         await db.query<{ id: string }>(
-          `INSERT INTO restaurant (family_id, name, url, notes, address, latitude, longitude, drive_minutes, added_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-          [member.family_id, r.name, r.url, r.notes, at.address, at.latitude, at.longitude, at.drive_minutes, member.id],
+          `INSERT INTO restaurant (family_id, name, url, notes, address, latitude, longitude, drive_minutes, cuisine, booking_url, added_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+          [member.family_id, r.name, r.url, r.notes, at.address, at.latitude, at.longitude, at.drive_minutes, r.cuisine, r.bookingUrl, member.id],
         )
       ).rows[0].id;
     } catch (err) {
@@ -1007,11 +1055,13 @@ export function buildRouter(
   router.add("PUT", "/api/family/restaurants/:id", async (req) => {
     const { member } = await requireMember(db, req);
     const id = v.uuid(req.params.id);
-    const r = restaurantInput(req.body);
+    const typed = restaurantInput(req.body);
     const current = (
       await db.query<RestaurantRow & RestaurantLocation>("SELECT * FROM restaurant WHERE id = $1 AND family_id = $2", [id, member.family_id])
     ).rows[0];
     if (!current) throw new HttpError(404, "That restaurant isn't in your list");
+    // A new link is read again for anything left blank.
+    const r = typed.url !== current.url ? await fillFromPage(options, typed) : typed;
     // Only look it up again when where it is may have changed. A blank address means "find it by name".
     const typedAddressKept = r.address !== null && r.address === current.address && current.latitude !== null;
     const foundByNameKept = r.address === null && r.name === current.name && current.latitude !== null;
@@ -1022,9 +1072,10 @@ export function buildRouter(
     let updated;
     try {
       updated = await db.query(
-        `UPDATE restaurant SET name = $1, url = $2, notes = $3, address = $4, latitude = $5, longitude = $6, drive_minutes = $7
-         WHERE id = $8 AND family_id = $9`,
-        [r.name, r.url, r.notes, at.address, at.latitude, at.longitude, at.drive_minutes, id, member.family_id],
+        `UPDATE restaurant SET name = $1, url = $2, notes = $3, address = $4, latitude = $5, longitude = $6, drive_minutes = $7,
+           cuisine = $8, booking_url = $9
+         WHERE id = $10 AND family_id = $11`,
+        [r.name, r.url, r.notes, at.address, at.latitude, at.longitude, at.drive_minutes, r.cuisine, r.bookingUrl, id, member.family_id],
       );
     } catch (err) {
       if (isUniqueViolation(err)) throw new HttpError(409, `${r.name} is already one of your restaurants`);

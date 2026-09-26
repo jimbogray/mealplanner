@@ -5,6 +5,7 @@ import { googleKeySource } from "./google.js";
 import { azureMaps } from "./maps.js";
 import { googlePlacesSearch } from "./places.js";
 import { claudeRecipeReader } from "./recipe-reader.js";
+import { claudeRestaurantReader } from "./restaurant-reader.js";
 
 loadDotEnv();
 const config = loadConfig();
@@ -21,6 +22,7 @@ const server = createApp(db, {
   readRecipe: config.anthropicApiKey ? claudeRecipeReader(config.anthropicApiKey, config.recipeModel) : undefined,
   addressSearch: config.googlePlacesApiKey ? googlePlacesSearch(config.googlePlacesApiKey) : undefined,
   maps: config.azureMapsKey ? azureMaps(config.azureMapsKey) : undefined,
+  readRestaurant: config.anthropicApiKey ? claudeRestaurantReader(config.anthropicApiKey, config.recipeModel) : undefined,
 });
 server.listen(config.port, () => {
   console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")}; Google sign-in ${config.googleClientId ? "on" : "off"}; recipe reading ${config.anthropicApiKey ? `on with ${config.recipeModel}` : "off"}; address search ${config.googlePlacesApiKey ? "on" : "off"}; driving times ${config.azureMapsKey ? "on" : "off"})`);

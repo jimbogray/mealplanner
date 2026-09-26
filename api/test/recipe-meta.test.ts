@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, test } from "node:test";
-import { fetchPage, isPublicAddress, pageImages, pageText, parseRecipeMeta } from "../src/recipe-meta.js";
+import { fetchPage, isPublicAddress, pageImages, pageLinks, pageText, parseRecipeMeta } from "../src/recipe-meta.js";
 
 const PAGE = "https://www.example.com/recipes/pancakes";
 
@@ -51,6 +51,17 @@ test("pageImages lists content photos and skips icons, pixels, SVGs and duplicat
   assert.deepEqual(pageImages(html, PAGE), [
     { url: "https://www.example.com/stew-hero.jpg", alt: "Beef & ale stew" },
     { url: "https://www.example.com/step.jpg", alt: null },
+  ]);
+});
+
+test("pageLinks lists http links and embedded frames once each, with their text", () => {
+  const html = `<a href="/menu">Our <b>menu</b></a><a href="mailto:hi@example.com">Email</a><a href="/menu">Menu again</a>
+    <a href="https://www.opentable.co.uk/r/x" aria-label="Book"></a><iframe src="https://widget.resdiary.com/x"></iframe>
+    <script>var a = '<a href="/hidden">x</a>';</script>`;
+  assert.deepEqual(pageLinks(html, "https://example.com/"), [
+    { url: "https://example.com/menu", text: "Our menu" },
+    { url: "https://www.opentable.co.uk/r/x", text: "Book" },
+    { url: "https://widget.resdiary.com/x", text: "(embedded frame)" },
   ]);
 });
 

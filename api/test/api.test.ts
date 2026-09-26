@@ -58,6 +58,13 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Stand in for the web and for Claude, so tests stay offline.
       fetchPage: async (url) => {
         if (url.includes("unreachable")) throw new Error("offline");
+        if (url.includes("trattoria")) {
+          return {
+            url,
+            html: `<title>Trattoria</title><h1>Trattoria Roma</h1><p>Proper Roman food. 5 Market Street, Bath BA1 1AB</p>
+              <a href="/menu">Menu</a><a href="https://www.opentable.co.uk/r/trattoria-roma">Book a table</a>`,
+          };
+        }
         // "noimage" pages have no share image, just photos in the page for Claude to choose from.
         const head = url.includes("noimage")
           ? `<title>Page title</title>`
@@ -104,6 +111,12 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         },
         // One minute per hundredth of a degree, give or take.
         driveMinutes: async (from, to) => Math.round((Math.abs(from.lat - to.lat) + Math.abs(from.lng - to.lng)) * 100),
+      },
+      // Claude reading a restaurant's page: "trattoria" pages are restaurants; "madeup" ones return a booking link not on the page.
+      readRestaurant: async ({ url, text, links }) => {
+        if (!text.includes("Trattoria Roma")) return { isRestaurant: false, cuisine: null, address: null, bookingUrl: null };
+        const booking = url.includes("madeup") ? "https://evil.example.com/book" : links.find((l) => l.text === "Book a table")?.url ?? null;
+        return { isRestaurant: true, cuisine: "Italian", address: "5 Market Street, Bath BA1 1AB", bookingUrl: booking };
       },
       readRecipe: async ({ url, text, images }) => {
         const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
@@ -532,6 +545,40 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         list.body.map((r) => r.name),
         ["Anchor Fish Bar", "Luigi's Pizza"],
       );
+    });
+
+    test("with a link, the cuisine, address and booking link are read from the restaurant's page", async () => {
+      const res = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: parentToken,
+        body: { name: "Trattoria Roma", url: "https://trattoria.example.com/" },
+      });
+      assert.equal(res.status, 201);
+      assert.deepEqual(
+        [res.body.cuisine, res.body.address, res.body.bookingUrl],
+        ["Italian", "5 Market Street, Bath BA1 1AB", "https://www.opentable.co.uk/r/trattoria-roma"],
+      );
+      // What's typed in wins, and a booking link that isn't on the page is dropped.
+      const typed = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: parentToken,
+        body: { name: "Trattoria Two", url: "https://trattoria.example.com/madeup", cuisine: "Roman", address: "1 Other Road" },
+      });
+      assert.deepEqual([typed.body.cuisine, typed.body.address, typed.body.bookingUrl], ["Roman", "1 Other Road", null]);
+      // A page that isn't a restaurant's, or can't be read, leaves the details blank.
+      for (const [name, url] of [["Shop", "https://shop.example.com/"], ["Offline", "https://unreachable.example.com/"]]) {
+        const other = await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { name, url } });
+        assert.equal(other.status, 201);
+        assert.deepEqual([other.body.cuisine, other.body.address, other.body.bookingUrl], [null, null, null]);
+        await call("DELETE", `/api/family/restaurants/${other.body.id}`, { token: parentToken });
+      }
+      // Editing reads the page again only when the link changes, filling in what's blank.
+      const path = `/api/family/restaurants/${typed.body.id}`;
+      const kept = await call<Restaurant>("PUT", path, { token: parentToken, body: { name: "Trattoria Two", url: "https://trattoria.example.com/madeup" } });
+      assert.deepEqual([kept.body.cuisine, kept.body.bookingUrl], [null, null]);
+      const relinked = await call<Restaurant>("PUT", path, { token: parentToken, body: { name: "Trattoria Two", url: "https://trattoria.example.com/two" } });
+      assert.deepEqual([relinked.body.cuisine, relinked.body.bookingUrl], ["Italian", "https://www.opentable.co.uk/r/trattoria-roma"]);
+      for (const id of [res.body.id, typed.body.id]) await call("DELETE", `/api/family/restaurants/${id}`, { token: parentToken });
+      const bad = await call("POST", "/api/family/restaurants", { token: parentToken, body: { name: "X", bookingUrl: "javascript:alert(1)" } });
+      assert.equal(bad.status, 400);
     });
 
     test("names are unique within the family, ignoring case", async () => {

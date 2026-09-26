@@ -304,3 +304,30 @@ export function pageImages(html: string, pageUrl: string): PageImage[] {
   }
   return images;
 }
+
+export interface PageLink {
+  url: string;
+  text: string | null;
+}
+
+const MAX_LINKS = 150;
+
+/**
+ * Links on the page (and embedded frames, where booking widgets usually live), for the LLM to pick
+ * from, so any link it returns is one really on the page. http(s) only, de-duplicated.
+ */
+export function pageLinks(html: string, pageUrl: string): PageLink[] {
+  const links: PageLink[] = [];
+  const seen = new Set<string>();
+  const body = html.replace(/<(script|style|noscript|svg|template)\b[\s\S]*?<\/\1\s*>/gi, " ");
+  for (const m of body.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>|<iframe\b[^>]*>/gi)) {
+    const a = attributes(m[1] !== undefined ? `<a ${m[1]}>` : m[0]);
+    const url = absoluteUrl(m[1] !== undefined ? a.href : a.src, pageUrl);
+    if (!url || !/^https?:/i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    const text = m[2] === undefined ? "(embedded frame)" : clean(m[2].replace(/<[^>]+>/g, " "), 80);
+    links.push({ url, text: text ?? clean(a["aria-label"] ?? a.title, 80) });
+    if (links.length >= MAX_LINKS) break;
+  }
+  return links;
+}
