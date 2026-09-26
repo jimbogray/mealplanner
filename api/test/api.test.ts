@@ -228,10 +228,21 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   });
 
   test("a member invite is deleted with its member", async () => {
-    const kid = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Kid", lifeStage: "child" } });
+    const kid = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Kid", lifeStage: "teenager" } });
     const invite = await call<Invite>("POST", "/api/family/invites", { token: parentToken, body: { memberId: kid.body.id } });
     await call("DELETE", `/api/family/members/${kid.body.id}`, { token: parentToken });
     assert.equal((await call("GET", `/api/invites/${invite.body.code}`)).status, 404);
+  });
+
+  test("only adults and teenagers can be invited to sign in or made managers", async () => {
+    const child = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Tiny", lifeStage: "child" } });
+    assert.equal((await call("POST", "/api/family/invites", { token: parentToken, body: { memberId: child.body.id } })).status, 400);
+    assert.equal((await call("PATCH", `/api/family/members/${child.body.id}`, { token: parentToken, body: { role: "admin" } })).status, 400);
+    assert.equal(
+      (await call("POST", "/api/family/members", { token: parentToken, body: { name: "Tot", lifeStage: "toddler", role: "admin" } })).status,
+      400,
+    );
+    await call("DELETE", `/api/family/members/${child.body.id}`, { token: parentToken });
   });
 
   let teenToken: string;
@@ -409,7 +420,24 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     const adminId = parentMe.member!.id;
     assert.equal((await call("PATCH", `/api/family/members/${adminId}`, { token: parentToken, body: { role: "member" } })).status, 400);
     assert.equal((await call("DELETE", `/api/family/members/${adminId}`, { token: parentToken })).status, 400);
-    assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body: { role: "admin" } })).status, 400);
+  });
+
+  test("a Family Manager can add a Co-Manager, who only counts once they can sign in", async () => {
+    const adminId = parentMe.member!.id;
+    const co = await call<FamilyMember>("POST", "/api/family/members", {
+      token: parentToken,
+      body: { name: "Jo", lifeStage: "adult", role: "admin" },
+    });
+    assert.equal(co.status, 201);
+    assert.equal(co.body.role, "admin");
+    assert.equal(co.body.hasAccount, false);
+    assert.equal((await call("POST", "/api/family/members", { token: parentToken, body: { name: "X", lifeStage: "adult", role: "boss" } })).status, 400);
+    // Jo can't sign in yet, so the only manager who can still can't step down.
+    assert.equal((await call("PATCH", `/api/family/members/${adminId}`, { token: parentToken, body: { role: "member" } })).status, 400);
+    // A manager without a login can be demoted or removed freely.
+    assert.equal((await call<FamilyMember>("PATCH", `/api/family/members/${co.body.id}`, { token: parentToken, body: { role: "member" } })).body.role, "member");
+    assert.equal((await call<FamilyMember>("PATCH", `/api/family/members/${co.body.id}`, { token: parentToken, body: { role: "admin" } })).body.role, "admin");
+    assert.equal((await call("DELETE", `/api/family/members/${co.body.id}`, { token: parentToken })).status, 204);
   });
 
   test("a removed member keeps their login and can start or join another family", async () => {

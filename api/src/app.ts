@@ -1,5 +1,16 @@
 import { createServer, type Server } from "node:http";
-import type { AuthResponse, Family, FamilyMember, FavouriteRecipe, Invite, InvitePreview, LifeStage, Me, RecipePreview } from "@mealplanner/shared";
+import {
+  canSignIn,
+  type AuthResponse,
+  type Family,
+  type FamilyMember,
+  type FavouriteRecipe,
+  type Invite,
+  type InvitePreview,
+  type LifeStage,
+  type Me,
+  type RecipePreview,
+} from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
@@ -69,7 +80,7 @@ async function requireMember(db: Db, req: Request): Promise<{ userId: string; em
 
 async function requireAdmin(db: Db, req: Request) {
   const ctx = await requireMember(db, req);
-  if (ctx.member.role !== "admin") throw new HttpError(403, "Only a family admin can do that");
+  if (ctx.member.role !== "admin") throw new HttpError(403, "Only a Family Manager can do that");
   return ctx;
 }
 
@@ -81,9 +92,10 @@ async function familyMember(db: Queryable, familyId: string, id: string): Promis
   return row;
 }
 
+/** Family Managers who can actually sign in (a manager added without a login can't manage anything yet). */
 async function adminCount(db: Queryable, familyId: string): Promise<number> {
   const { rows } = await db.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM family_member WHERE family_id = $1 AND role = 'admin'",
+    "SELECT count(*)::int AS n FROM family_member WHERE family_id = $1 AND role = 'admin' AND user_id IS NOT NULL",
     [familyId],
   );
   return rows[0].n;
@@ -382,9 +394,12 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const lifeStage = v.lifeStage(b.lifeStage);
     const diet = b.diet === undefined ? "none" : v.diet(b.diet);
     const allergies = b.allergies === undefined ? [] : v.allergies(b.allergies);
+    // A Co-Manager is another Family Manager; they can manage the family once they sign in.
+    const role = b.role === undefined ? "member" : v.role(b.role);
+    if (role === "admin" && !canSignIn(lifeStage)) throw new HttpError(400, "Only adults and teenagers can be Co-Managers");
     const { rows } = await db.query<{ id: string }>(
-      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-      [member.family_id, name, lifeStage, diet, allergies],
+      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+      [member.family_id, name, lifeStage, diet, allergies, role],
     );
     return { status: 201, body: toMember(await familyMember(db, member.family_id, rows[0].id)) };
   });
@@ -394,7 +409,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
     const isSelf = target.id === self.id;
-    if (self.role !== "admin" && !isSelf) throw new HttpError(403, "Only a family admin can change other members");
+    if (self.role !== "admin" && !isSelf) throw new HttpError(403, "Only a Family Manager can change other members");
 
     const b = v.object(req.body);
     const name = b.name === undefined ? target.name : v.text(b.name, "Name");
@@ -403,13 +418,15 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
     let role = target.role;
     if (b.role !== undefined) {
-      if (b.role !== "admin" && b.role !== "member") throw new HttpError(400, "Role must be admin or member");
-      if (self.role !== "admin") throw new HttpError(403, "Only a family admin can change roles");
-      if (b.role === "admin" && !target.user_id) throw new HttpError(400, "Only members with their own login can be admins");
-      if (b.role === "member" && target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
-        throw new HttpError(400, "A family needs at least one admin");
+      const newRole = v.role(b.role);
+      if (self.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose who manages the family");
+      if (newRole === "admin" && target.role !== "admin" && !target.user_id && !canSignIn(lifeStage)) {
+        throw new HttpError(400, "Only adults and teenagers can be Family Managers");
       }
-      role = b.role;
+      if (newRole === "member" && target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
+        throw new HttpError(400, "A family needs at least one Family Manager");
+      }
+      role = newRole;
     }
     await db.query(
       "UPDATE family_member SET name = $1, life_stage = $2, diet = $3, allergies = $4, role = $5 WHERE id = $6",
@@ -422,9 +439,9 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
     // Admins can remove anyone; anyone can leave.
-    if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a family admin can remove members");
-    if (target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
-      throw new HttpError(400, "A family needs at least one admin; make someone else an admin first");
+    if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a Family Manager can remove members");
+    if (target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
+      throw new HttpError(400, "A family needs at least one Family Manager; make someone else a Family Manager first");
     }
     await db.query("DELETE FROM family_member WHERE id = $1", [target.id]);
     return { status: 204 };
@@ -451,6 +468,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     if (b.memberId !== undefined && b.memberId !== null) {
       target = await familyMember(db, member.family_id, String(b.memberId));
       if (target.user_id) throw new HttpError(400, `${target.name} already has their own login`);
+      if (!canSignIn(target.life_stage)) throw new HttpError(400, "Only adults and teenagers can be invited to sign in");
     }
     const { rows } = await db.query<InviteRow>(
       `INSERT INTO invite (family_id, code, created_by, member_id, expires_at)

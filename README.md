@@ -34,7 +34,7 @@ everywhere (locally, in CI, in a container) without the Functions host.
 
 ### Who can do what
 
-- The person who creates a family is its **admin**. Admins can add, edit and remove
+- The person who creates a family is its **admin** (shown as "Family Manager"; adding someone as a "Co-Manager" makes them an admin too). Admins can add, edit and remove
   members, make other members with a login admins, and create or revoke invite links.
 - Everyone can edit their own name, life stage, diet and allergies, and leave the family.
 - A family always keeps at least one admin.
