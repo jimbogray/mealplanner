@@ -1,11 +1,25 @@
 import type { LifeStage } from "@mealplanner/shared";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
 import { GoogleButton, OrDivider } from "../components/GoogleButton";
 import { LifeStageSelect } from "../components/LifeStageSelect";
 import { useSession } from "../session";
+
+interface Draft {
+  familyName?: string;
+  name?: string;
+  lifeStage?: LifeStage;
+}
+
+function readDraft(key: string): Draft {
+  try {
+    return (JSON.parse(sessionStorage.getItem(key) ?? "{}") as Draft) ?? {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Sign-up form. With an inviteCode it joins that family; otherwise it creates a new one.
@@ -14,13 +28,24 @@ import { useSession } from "../session";
 export function AccountForm({ inviteCode, forMember, submitLabel }: { inviteCode?: string; forMember?: string | null; submitLabel: string }) {
   const { signIn } = useSession();
   const navigate = useNavigate();
-  const [familyName, setFamilyName] = useState("");
-  const [name, setName] = useState("");
-  const [lifeStage, setLifeStage] = useState<LifeStage>("adult");
+  // Kept for the tab's session, so the form survives Google's full-page redirect sign-in on iPhone.
+  const draftKey = `family.signupDraft:${inviteCode ?? ""}`;
+  const [draft] = useState(() => readDraft(draftKey));
+  const [familyName, setFamilyName] = useState(draft.familyName ?? "");
+  const [name, setName] = useState(draft.name ?? "");
+  const [lifeStage, setLifeStage] = useState<LifeStage>(draft.lifeStage ?? "adult");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify({ familyName, name, lifeStage }));
+    } catch {
+      // Storage blocked: nothing to restore after a redirect.
+    }
+  }, [draftKey, familyName, name, lifeStage]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();

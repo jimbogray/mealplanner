@@ -465,7 +465,7 @@ function weekStart(value: string): string {
 
 export function buildRouter(
   db: Db,
-  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "lookupAddress" | "maps"> = {},
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "lookupAddress" | "maps"> & { webOrigins?: string[] } = {},
 ): Router {
   const router = new Router();
   const me = (userId: string, email: string) => loadMe(db, userId, email, options.lookupAddress !== undefined);
@@ -585,6 +585,20 @@ export function buildRouter(
     const email = (await db.query<{ email: string }>("SELECT email FROM app_user WHERE id = $1", [result.userId])).rows[0].email;
     const body: AuthResponse = { token, me: await me(result.userId, email) };
     return { status: result.created ? 201 : 200, body };
+  });
+
+  // Google's full-page ("redirect" mode) sign-in, used on iPhones and iPads where its popup fails,
+  // form-posts the ID token here. Hand it to the web app's /auth/google page in the URL fragment
+  // (never sent to a server); that page checks the nonce it started with and calls /api/auth/google.
+  router.add("POST", "/api/auth/google/redirect", async (req) => {
+    const webOrigin = options.webOrigins?.[0];
+    if (!options.google || !webOrigin) throw new HttpError(404, "Google sign-in isn't set up");
+    const credential = (req.body as Record<string, unknown> | undefined)?.credential;
+    const fragment =
+      typeof credential === "string" && credential
+        ? new URLSearchParams({ credential })
+        : new URLSearchParams({ error: "Google didn't send a sign-in. Please try again." });
+    return { redirect: `${webOrigin}/auth/google#${fragment}` };
   });
 
   router.add("POST", "/api/auth/logout", async (req) => {
