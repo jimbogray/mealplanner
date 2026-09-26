@@ -297,6 +297,8 @@ export const MAX_GUESTS = 50;
 /** Dinner on one day: which family members are joining, and how many guests. */
 export interface ScheduleDay {
   date: IsoDate;
+  /** The family is eating out: memberIds is empty and guests is 0. */
+  eatOut: boolean;
   memberIds: Uuid[];
   guests: number;
 }
@@ -318,10 +320,12 @@ export interface AddWeekRequest {
   startsOn: IsoDate;
   /** The person's local date, so "this week" is theirs rather than the server's. */
   today: IsoDate;
-  days?: { date: IsoDate; memberIds: Uuid[]; guests: number }[];
+  days?: ({ date: IsoDate } & UpdateDayRequest)[];
 }
 
+/** Who's joining and how many guests; or eatOut, which leaves out everyone (memberIds and guests aren't needed). */
 export interface UpdateDayRequest {
-  memberIds: Uuid[];
-  guests: number;
+  eatOut?: boolean;
+  memberIds?: Uuid[];
+  guests?: number;
 }

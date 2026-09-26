@@ -201,3 +201,6 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .day-legend legend { float: left; margin-bottom: 0.35rem; }
 .day-legend + * { clear: both; }
 .day-form li.day-removed { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; color: var(--muted); }
+.chip.toggle.eat-out { border-style: dashed; }
+.chip.toggle.eat-out:has(input:checked) { border-style: solid; border-color: #c98a1b; background: #fdf3dd; color: #7a5510; }
+.days li.eat-out .diners { color: #7a5510; font-style: italic; }

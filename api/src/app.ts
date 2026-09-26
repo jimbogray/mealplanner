@@ -254,26 +254,27 @@ interface ScheduleRow {
   starts_on: string;
   day: string;
   guests: number;
+  eat_out: boolean;
   member_ids: string[];
 }
 
 /** The family's weeks (or just the one starting on `startsOn`), oldest first, each with its seven days. */
 async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Promise<ScheduleWeek[]> {
   const { rows } = await db.query<ScheduleRow>(
-    `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests,
+    `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests, d.eat_out,
             coalesce(array_agg(s.member_id::text ORDER BY s.member_id) FILTER (WHERE s.member_id IS NOT NULL), '{}') AS member_ids
        FROM schedule_week w
        JOIN schedule_day d ON d.week_id = w.id
        LEFT JOIN schedule_diner s ON s.week_id = d.week_id AND s.day = d.day
       WHERE w.family_id = $1 AND ($2::date IS NULL OR w.starts_on = $2::date)
-      GROUP BY w.id, w.starts_on, d.day, d.guests
+      GROUP BY w.id, w.starts_on, d.day, d.guests, d.eat_out
       ORDER BY w.starts_on, d.day`,
     [familyId, startsOn ?? null],
   );
   const weeks: ScheduleWeek[] = [];
   for (const r of rows) {
     if (weeks.at(-1)?.id !== r.id) weeks.push({ id: r.id, startsOn: r.starts_on, days: [] });
-    weeks.at(-1)!.days.push({ date: r.day, memberIds: r.member_ids, guests: r.guests });
+    weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, memberIds: r.member_ids, guests: r.guests });
   }
   return weeks;
 }
@@ -283,18 +284,20 @@ async function familyMemberIds(db: Queryable, familyId: string): Promise<string[
   return rows.map((r) => r.id);
 }
 
-/** Who's joining and how many guests, checked against the family's members. */
+/** Who's joining and how many guests, checked against the family's members. Eating out clears both. */
 function dinner(b: Record<string, unknown>, familyIds: string[]): Omit<ScheduleDay, "date"> {
+  if (b.eatOut !== undefined && typeof b.eatOut !== "boolean") throw new HttpError(400, "Eat out must be true or false");
+  if (b.eatOut) return { eatOut: true, memberIds: [], guests: 0 };
   const memberIds = v.ids(b.memberIds, "Who's joining");
   if (memberIds.some((id) => !familyIds.includes(id))) throw new HttpError(400, "Only members of your family can join for dinner");
-  return { memberIds, guests: v.guests(b.guests) };
+  return { eatOut: false, memberIds, guests: v.guests(b.guests) };
 }
 
 async function saveDay(tx: Tx, weekId: string, day: ScheduleDay): Promise<void> {
   await tx.query(
-    `INSERT INTO schedule_day (week_id, day, guests) VALUES ($1, $2, $3)
-     ON CONFLICT (week_id, day) DO UPDATE SET guests = EXCLUDED.guests`,
-    [weekId, day.date, day.guests],
+    `INSERT INTO schedule_day (week_id, day, guests, eat_out) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (week_id, day) DO UPDATE SET guests = EXCLUDED.guests, eat_out = EXCLUDED.eat_out`,
+    [weekId, day.date, day.guests, day.eatOut],
   );
   await tx.query("DELETE FROM schedule_diner WHERE week_id = $1 AND day = $2", [weekId, day.date]);
   await tx.query(
@@ -770,7 +773,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
     const familyIds = await familyMemberIds(db, member.family_id);
     // This week starts from today: days already gone aren't planned.
-    const days = daysToPlan(startsOn, today).map((date): ScheduleDay => ({ date, memberIds: familyIds, guests: 0 }));
+    const days = daysToPlan(startsOn, today).map((date): ScheduleDay => ({ date, eatOut: false, memberIds: familyIds, guests: 0 }));
     // When days are listed, only those days are planned (the rest are left out of the schedule).
     if (b.days !== undefined) {
       if (!Array.isArray(b.days)) throw new HttpError(400, "Days must be a list");

@@ -114,7 +114,7 @@ function Schedule({ members }: { members: FamilyMember[] }) {
 
 /** A day with the whole family joining and no guests. */
 function everyone(date: string, members: FamilyMember[]): ScheduleDay {
-  return { date, memberIds: members.map((m) => m.id), guests: 0 };
+  return { date, eatOut: false, memberIds: members.map((m) => m.id), guests: 0 };
 }
 
 function Week({
@@ -153,7 +153,7 @@ function Week({
               return !before || !sameDay(d, before);
             });
             const removed = week.days.filter((b) => !days.some((d) => d.date === b.date));
-            const saved = await Promise.all(changed.map((d) => api.updateDay(week.startsOn, d.date, { memberIds: d.memberIds, guests: d.guests })));
+            const saved = await Promise.all(changed.map((d) => api.updateDay(week.startsOn, d.date, { eatOut: d.eatOut, memberIds: d.memberIds, guests: d.guests })));
             await Promise.all(removed.map((d) => api.removeDay(week.startsOn, d.date)));
             onChange({ ...week, days: days.map((d) => saved.find((s) => s.date === d.date) ?? d) });
             setEditing(false);
@@ -179,10 +179,10 @@ function Week({
       </div>
       <ul className="days">
         {week.days.map((d) => (
-          <li key={d.date}>
+          <li key={d.date} className={d.eatOut ? "eat-out" : undefined}>
             <span className="day-name">{dayLabel(d.date)}</span>
             <span className="diners">{dinersSummary(d, members)}</span>
-            <span className="diner-count">{d.memberIds.length + d.guests} for dinner</span>
+            <span className="diner-count">{d.eatOut ? "" : `${d.memberIds.length + d.guests} for dinner`}</span>
           </li>
         ))}
       </ul>
@@ -191,10 +191,11 @@ function Week({
 }
 
 function sameDay(a: ScheduleDay, b: ScheduleDay): boolean {
-  return a.guests === b.guests && a.memberIds.length === b.memberIds.length && a.memberIds.every((id) => b.memberIds.includes(id));
+  return a.eatOut === b.eatOut && a.guests === b.guests && a.memberIds.length === b.memberIds.length && a.memberIds.every((id) => b.memberIds.includes(id));
 }
 
 function dinersSummary(day: ScheduleDay, members: FamilyMember[]): string {
+  if (day.eatOut) return "Eating out";
   const joining = members.filter((m) => day.memberIds.includes(m.id));
   const names = joining.length === members.length && members.length > 1 ? "Everyone" : joining.map((m) => m.name).join(", ");
   const guests = day.guests ? `${day.guests} ${day.guests === 1 ? "guest" : "guests"}` : "";
@@ -232,6 +233,11 @@ function WeekForm({
 
   function toggle(day: ScheduleDay, memberId: string, joining: boolean) {
     update(day.date, { memberIds: joining ? [...day.memberIds, memberId] : day.memberIds.filter((id) => id !== memberId) });
+  }
+
+  /** Eating out takes everyone and any guests off that day; eating in again starts from the whole family. */
+  function setEatOut(date: string, eatOut: boolean) {
+    update(date, eatOut ? { eatOut, memberIds: [], guests: 0 } : { eatOut, memberIds: members.map((m) => m.id), guests: 0 });
   }
 
   function removeDay(date: string) {
@@ -290,24 +296,31 @@ function WeekForm({
                 </div>
                 <div className="day-fields">
                   <div className="chips">
-                    {members.map((m) => (
-                      <label key={m.id} className="chip toggle">
-                        <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
-                        {m.name}
-                      </label>
-                    ))}
+                    {!d.eatOut &&
+                      members.map((m) => (
+                        <label key={m.id} className="chip toggle">
+                          <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
+                          {m.name}
+                        </label>
+                      ))}
+                    <label className="chip toggle eat-out">
+                      <input type="checkbox" checked={d.eatOut} onChange={(e) => setEatOut(d.date, e.target.checked)} />
+                      Eat out
+                    </label>
                   </div>
-                  <label className="guests">
-                    Guests
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={MAX_GUESTS}
-                      value={d.guests}
-                      onChange={(e) => update(d.date, { guests: Math.min(MAX_GUESTS, Math.max(0, Math.floor(Number(e.target.value) || 0))) })}
-                    />
-                  </label>
+                  {!d.eatOut && (
+                    <label className="guests">
+                      Guests
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={MAX_GUESTS}
+                        value={d.guests}
+                        onChange={(e) => update(d.date, { guests: Math.min(MAX_GUESTS, Math.max(0, Math.floor(Number(e.target.value) || 0))) })}
+                      />
+                    </label>
+                  )}
                 </div>
               </fieldset>
             </li>
