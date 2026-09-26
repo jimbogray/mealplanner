@@ -11,10 +11,10 @@ export function LibraryPage() {
   const { me } = useSession();
   if (!me) return null;
   if (!me.family) return <Navigate to="/family" replace />;
-  return <Library />;
+  return <Library isManager={me.member?.role === "admin"} />;
 }
 
-function Library() {
+function Library({ isManager }: { isManager: boolean }) {
   const [recipes, setRecipes] = useState<FavouriteRecipe[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +33,16 @@ function Library() {
     }
   }
 
+  async function togglePrepared(recipe: FavouriteRecipe) {
+    setError(null);
+    try {
+      const updated = await api.setRecipePrepared(recipe.id, !recipe.prepared);
+      setRecipes((list) => (list ?? []).map((r) => (r.id === updated.id ? updated : r)));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <div className="stack">
       <section className="card">
@@ -45,7 +55,7 @@ function Library() {
       {recipes && recipes.length > 0 && (
         <ul className="tiles">
           {recipes.map((r) => (
-            <li key={r.id} className="tile">
+            <li key={r.id} className={r.prepared ? "tile prepared" : "tile"}>
               <a href={r.url} target="_blank" rel="noopener noreferrer">
                 <Thumb src={r.imageUrl} />
                 <span className="tile-body">
@@ -54,6 +64,15 @@ function Library() {
                   <span className="note small">{recipeFacts(r)}</span>
                 </span>
               </a>
+              <button
+                className="tile-prepared"
+                aria-pressed={r.prepared}
+                disabled={!isManager}
+                title={isManager ? (r.prepared ? "Mark as not prepared yet" : "Mark as prepared") : "Only a Family Manager can change this"}
+                onClick={() => void togglePrepared(r)}
+              >
+                {r.prepared ? "✓ Prepared" : "Prepared"}
+              </button>
               <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from library" onClick={() => void remove(r)}>
                 ×
               </button>

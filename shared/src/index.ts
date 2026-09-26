@@ -213,6 +213,8 @@ export interface RecipeDetails {
 export interface FavouriteRecipe extends RecipeDetails {
   id: Uuid;
   url: string;
+  /** The family has cooked it. Only Family Managers can change this. */
+  prepared: boolean;
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;

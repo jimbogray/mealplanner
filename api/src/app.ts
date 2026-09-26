@@ -211,12 +211,13 @@ interface RecipeRow {
   main_protein: string | null;
   image_url: string | null;
   site_name: string | null;
+  prepared: boolean;
   added_by: string | null;
   created_at: Date;
 }
 
 const RECIPE_SELECT = `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
-    m.name AS added_by, r.created_at
+    r.prepared, m.name AS added_by, r.created_at
   FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
 
 function toRecipe(r: RecipeRow): FavouriteRecipe {
@@ -229,6 +230,7 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     mainProtein: r.main_protein,
     imageUrl: r.image_url,
     siteName: r.site_name,
+    prepared: r.prepared,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };
@@ -685,6 +687,20 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
     const saved = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
     return { status: 201, body: toRecipe(saved) };
+  });
+
+  // Marking a recipe as prepared is for Family Managers only.
+  router.add("PATCH", "/api/family/recipes/:id", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const prepared = v.object(req.body).prepared;
+    if (typeof prepared !== "boolean") throw new HttpError(400, "Prepared must be true or false");
+    const { rows } = await db.query<{ id: string }>(
+      "UPDATE favourite_recipe SET prepared = $1 WHERE id = $2 AND family_id = $3 RETURNING id",
+      [prepared, v.uuid(req.params.id), member.family_id],
+    );
+    if (!rows[0]) throw new HttpError(404, "That recipe isn't in your favourites");
+    const updated = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
+    return { body: toRecipe(updated) };
   });
 
   router.add("DELETE", "/api/family/recipes/:id", async (req) => {

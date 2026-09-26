@@ -361,6 +361,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal(res.body.cookingMinutes, 25);
       assert.equal(res.body.mainProtein, "Eggs");
       assert.equal(res.body.addedBy, "Sam");
+      assert.equal(res.body.prepared, false);
       const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
       assert.deepEqual(list.body.map((r) => r.id), [pancakesId]);
     });
@@ -411,12 +412,27 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       }
     });
 
+    test("only a Family Manager can mark one as prepared", async () => {
+      const path = `/api/family/recipes/${pancakesId}`;
+      assert.equal((await call("PATCH", path, { token: teenToken, body: { prepared: true } })).status, 403);
+      assert.equal((await call("PATCH", path, { token: parentToken, body: { prepared: "yes" } })).status, 400);
+      const res = await call<FavouriteRecipe>("PATCH", path, { token: parentToken, body: { prepared: true } });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.prepared, true);
+      assert.equal(res.body.name, "Easy pancakes");
+      const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: teenToken });
+      assert.equal(list.body.find((r) => r.id === pancakesId)?.prepared, true);
+      assert.equal((await call<FavouriteRecipe>("PATCH", path, { token: parentToken, body: { prepared: false } })).body.prepared, false);
+    });
+
     test("other families can't see or remove them", async () => {
       const other = await call<AuthResponse>("POST", "/api/auth/signup", {
         body: { email: "recipes-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
       });
       assert.deepEqual((await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: other.body.token })).body, []);
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: other.body.token })).status, 404);
+      const patch = await call("PATCH", `/api/family/recipes/${pancakesId}`, { token: other.body.token, body: { prepared: true } });
+      assert.equal(patch.status, 404);
       assert.equal((await call("GET", "/api/family/recipes")).status, 401);
     });
 

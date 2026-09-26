@@ -125,6 +125,16 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   border-radius: 999px; border: none; background: rgba(255, 255, 255, 0.9); color: var(--danger);
   font-size: 1.25rem; line-height: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
+.tile-prepared {
+  position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.25rem 0.7rem;
+  border-radius: 999px; border: 1px solid var(--accent); background: rgba(255, 255, 255, 0.92); color: var(--accent);
+  font-size: 0.85rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.tile-prepared[aria-pressed="true"] { background: var(--accent); color: #fff; }
+/* Everyone can see which recipes are prepared; only Family Managers can change it. */
+.tile-prepared:disabled { opacity: 1; }
+.tile-prepared:disabled[aria-pressed="false"] { opacity: 0.6; }
+.tile.prepared { border-color: var(--accent); }
 @media (max-width: 480px) {
   .topbar { gap: 0.5rem; }
   .brand { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
