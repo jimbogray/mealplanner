@@ -990,6 +990,22 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await google({ credential: googleToken({ sub: "g-other", email: "parent@example.com" }) })).status, 409);
     });
 
+    test("Google's redirect-mode form post is handed to the web app in the URL fragment", async () => {
+      const post = (form: Record<string, string>) =>
+        fetch(`${base}/api/auth/google/redirect`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams(form),
+          redirect: "manual",
+        });
+      const res = await post({ credential: "a.b.c", g_csrf_token: "x" });
+      assert.equal(res.status, 303);
+      assert.equal(res.headers.get("location"), "http://web.test/auth/google#credential=a.b.c");
+      const missing = await post({ g_csrf_token: "x" });
+      assert.equal(missing.status, 303);
+      assert.match(missing.headers.get("location") ?? "", /^http:\/\/web\.test\/auth\/google#error=/);
+    });
+
     test("bad Google tokens are rejected", async () => {
       const now = Math.floor(Date.now() / 1000);
       const other = generateKeyPairSync("rsa", { modulusLength: 2048 });

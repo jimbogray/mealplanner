@@ -28,6 +28,11 @@ import type {
 const BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 const TOKEN_KEY = "family.token";
 
+/** Absolute URL of an API path, for places that navigate there rather than fetch. */
+export function apiUrl(path: string): string {
+  return (BASE || window.location.origin) + path;
+}
+
 export function getToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
