@@ -1,102 +1,103 @@
-// Shared domain types used by both the API (Azure Functions) and the web SPA.
-// Mirrors the Postgres schema in /db.
+// Types and constants shared by the API and the web app.
+// Mirrors the Postgres schema in /db/migrations.
 
 export type Uuid = string;
 
+/** Stage of life for a family member, youngest first. */
+export const LIFE_STAGES = ["baby", "toddler", "child", "teenager", "adult"] as const;
+export type LifeStage = (typeof LIFE_STAGES)[number];
+
+export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {
+  baby: "Baby (0–1)",
+  toddler: "Toddler (1–3)",
+  child: "Child (4–12)",
+  teenager: "Teenager (13–17)",
+  adult: "Adult (18+)",
+};
+
+export function isLifeStage(value: unknown): value is LifeStage {
+  return typeof value === "string" && (LIFE_STAGES as readonly string[]).includes(value);
+}
+
+/** "admin" can add, edit and remove members and create invites. */
 export type MemberRole = "admin" | "member";
-export type AttendanceResponse = "yes" | "no" | "pending";
-export type MealEventStatus = "polling" | "planned" | "cooked";
-export type RecipeOrigin = "ai" | "web" | "manual";
-export type SmsDirection = "outbound" | "inbound";
-
-export interface Household {
-  id: Uuid;
-  name: string;
-  /** Local time-of-day the daily dinner poll fires, "HH:mm". */
-  dinnerPollTime: string;
-  /** IANA timezone, e.g. "Europe/London". */
-  timezone: string;
-}
-
-export interface DietaryPrefs {
-  vegetarian?: boolean;
-  vegan?: boolean;
-  glutenFree?: boolean;
-  dislikes?: string[];
-  allergies?: string[];
-}
 
 export interface FamilyMember {
   id: Uuid;
-  householdId: Uuid;
   name: string;
-  /** E.164 format, e.g. "+447700900123". */
-  phoneE164: string;
-  /** Sign-in email, matched against the AAD userDetails claim to grant the "admin" role. */
-  email: string | null;
-  dietaryPrefs: DietaryPrefs;
+  lifeStage: LifeStage;
   role: MemberRole;
-  active: boolean;
+  /** True when the member has their own login (joined via sign-up or an invite). */
+  hasAccount: boolean;
+  email: string | null;
+  createdAt: string;
 }
 
-export interface InventoryItem {
+export interface Family {
   id: Uuid;
-  householdId: Uuid;
   name: string;
-  quantity: number;
-  unit: string;
-  category: string;
-  /** ISO date "YYYY-MM-DD" or null. */
-  expiresOn: string | null;
-  updatedAt: string;
+  createdAt: string;
 }
 
-export interface RecipeIngredient {
+export interface Invite {
+  id: Uuid;
+  code: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** What GET /api/me returns. family/member are null for a login that isn't in a family (e.g. after being removed). */
+export interface Me {
+  user: { id: Uuid; email: string };
+  family: Family | null;
+  member: FamilyMember | null;
+  members: FamilyMember[];
+}
+
+/** Public details about an invite, shown on the join page before sign-up. */
+export interface InvitePreview {
+  familyName: string;
+  invitedBy: string;
+  expiresAt: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  me: Me;
+}
+
+export interface SignupRequest {
+  email: string;
+  password: string;
   name: string;
-  quantity?: number;
-  unit?: string;
+  lifeStage: LifeStage;
+  /** Create a new family with this name… */
+  familyName?: string;
+  /** …or join an existing family through an invite code. */
+  inviteCode?: string;
 }
 
-export interface Recipe {
-  id: Uuid;
-  title: string;
-  ingredients: RecipeIngredient[];
-  steps: string[];
-  tags: string[];
-  sourceUrl: string | null;
-  imageUrl: string | null;
-  nutrition: Record<string, number> | null;
-  createdBy: RecipeOrigin;
+export interface LoginRequest {
+  email: string;
+  password: string;
 }
 
-export interface RecipeRating {
-  memberId: Uuid;
-  recipeId: Uuid;
-  score: number; // 1..5
-  cookedOn: string; // ISO date
+export interface MemberInput {
+  name: string;
+  lifeStage: LifeStage;
 }
 
-export interface MealEvent {
-  id: Uuid;
-  householdId: Uuid;
-  date: string; // ISO date
-  recipeId: Uuid | null;
-  status: MealEventStatus;
-  headcount: number;
+export interface MemberUpdate {
+  name?: string;
+  lifeStage?: LifeStage;
+  role?: MemberRole;
 }
 
-export interface AttendanceRow {
-  mealEventId: Uuid;
-  memberId: Uuid;
-  response: AttendanceResponse;
-  respondedAt: string | null;
+/** Create a family for a signed-in user who isn't in one. */
+export interface CreateFamilyRequest extends MemberInput {
+  familyName: string;
 }
 
-/** A recipe suggestion returned by the AI engine, scored against current inventory. */
-export interface RecipeSuggestion {
-  recipe: Recipe;
-  /** 0..1 — share of ingredients already available in the fridge. */
-  fridgeMatch: number;
-  missingIngredients: string[];
-  rationale: string;
+export interface ApiError {
+  error: string;
 }

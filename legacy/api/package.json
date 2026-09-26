@@ -1,19 +1,22 @@
 {
   "name": "@mealplanner/api",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/src/server.js",
+  "main": "dist/src/functions/*.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/src/server.js",
-    "migrate": "tsx src/migrate.ts",
-    "test": "tsx --test test/*.test.ts"
+    "prestart": "npm run build",
+    "start": "func start",
+    "test": "node --test --import tsx dist/test/*.test.js || node --test test/*.test.ts"
   },
   "dependencies": {
+    "@azure/communication-sms": "^1.1.0",
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.4.1",
     "@mealplanner/shared": "*",
+    "openai": "^4.56.0",
     "pg": "^8.12.0"
   },
   "devDependencies": {

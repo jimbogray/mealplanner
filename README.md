@@ -1,101 +1,106 @@
-# Family meal planner
+# Family app
 
-A small Azure app that helps a family plan the evening meal:
+A simple starting point: someone signs up and creates a **family**, then invites the
+rest of the family with a shareable link. Every family member has a **life stage**:
+baby, toddler, child, teenager or adult. Members who won't sign in themselves (a baby,
+a toddler) can be added directly by an admin.
 
-- 🧊 **Fridge inventory** — track what food is in stock.
-- 📲 **SMS attendance poll** — texts the family each afternoon ("home for dinner? Y/N") and tallies the headcount.
-- 🤖 **AI recipe suggestions** — Azure OpenAI proposes dinners matched to the headcount and what's in the fridge, and can discover new ideas from the web.
-- 🖥️ **Web dashboard** — manage inventory, family, and see/choose tonight's recipe.
-
-Built with **TypeScript end-to-end** and deployed to **Azure**. See the full design in [`.claude/plans/linked-dazzling-naur.md`](.claude/plans/linked-dazzling-naur.md).
+The earlier meal-planning code (fridge inventory, SMS poll, AI recipes) is parked in
+[`legacy/`](legacy/NOTE.md).
 
 ## Architecture
 
-| Concern | Service |
-|---|---|
-| Frontend | React + Vite on **Azure Static Web Apps** |
-| API | **Azure Functions v4 (Node)** — HTTP, timer, Event Grid triggers |
-| SMS | **Azure Communication Services** |
-| AI | **Azure OpenAI** (chat + embeddings) |
-| Database | **Azure Database for PostgreSQL Flexible Server** + `pgvector` |
-| Secrets | app settings (move to **Key Vault** for production) |
-| IaC / deploy | **Bicep** via **azd** |
+| Part | What | Where it runs |
+|---|---|---|
+| `web/` | React + Vite single-page app, built to static files | any static host (e.g. Azure Static Web Apps) |
+| `api/` | Plain Node.js + TypeScript HTTP API (`node:http` + `pg`, no framework) | any Node host (App Service, Container Apps, a VM…) |
+| `db/migrations/` | PostgreSQL schema, applied in order by the API | PostgreSQL 13+ |
+| `shared/` | Types and the list of life stages, used by both | — |
 
-```
-mealplanner/
-  infra/    Bicep (main.bicep, resources.bicep)
-  shared/   shared TypeScript domain types
-  api/      Azure Functions (TS)
-  web/      React SPA (Vite)
-  db/        SQL schema + seed
-```
+The API is a standalone Node server rather than Azure Functions so it runs the same
+everywhere (locally, in CI, in a container) without the Functions host.
 
-## Prerequisites
+### Data model
 
-This machine does **not** currently have Node.js. Install:
+- `app_user`: a login (email + scrypt password hash).
+- `family`: a family, with a name.
+- `family_member`: a person in a family, with `name`, `life_stage` and `role`
+  (`admin` or `member`). `user_id` is set only for people with their own login.
+- `invite`: a one-time invite code for a family, valid for 14 days.
+- `session`: sign-in tokens (only their SHA-256 hash is stored).
 
-1. **Node.js 20 LTS** — https://nodejs.org
-2. **Azure Functions Core Tools v4** — `npm i -g azure-functions-core-tools@4`
-3. **Azure Developer CLI (azd)** — https://aka.ms/azd  (Azure CLI is already installed)
-4. **Docker** (optional, for a local Postgres) or any local PostgreSQL 15+ with the `vector` extension.
+### Who can do what
+
+- The person who creates a family is its **admin**. Admins can add, edit and remove
+  members, make other members with a login admins, and create or revoke invite links.
+- Everyone can edit their own name and life stage, and leave the family.
+- A family always keeps at least one admin.
+
+## API
+
+All JSON. Signed-in calls send `Authorization: Bearer <token>`.
+
+| Method & path | Who | Does |
+|---|---|---|
+| `POST /api/auth/signup` | anyone | `{email, password, name, lifeStage, familyName}` creates a family, or `{…, inviteCode}` joins one. Returns `{token, me}`. |
+| `POST /api/auth/login` | anyone | `{email, password}` → `{token, me}` |
+| `POST /api/auth/logout` | signed in | ends the session |
+| `GET /api/me` | signed in | you, your family and its members |
+| `POST /api/family` | signed in, no family | `{familyName, name, lifeStage}` starts a family |
+| `PATCH /api/family` | admin | `{name}` renames the family |
+| `POST /api/family/members` | admin | `{name, lifeStage}` adds a member without a login |
+| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, role?}` (role: admins only) |
+| `DELETE /api/family/members/:id` | admin, or yourself | removes a member / leaves |
+| `GET /api/family/invites` | admin | open invites |
+| `POST /api/family/invites` | admin | creates an invite → `{code, expiresAt, …}` |
+| `DELETE /api/family/invites/:id` | admin | revokes an invite |
+| `GET /api/invites/:code` | anyone | family name and inviter, for the join page |
+| `POST /api/invites/:code/accept` | signed in, no family | `{name, lifeStage}` joins the family |
+| `GET /api/health` | anyone | checks the database connection |
 
 ## Local development
 
+Needs Node 20.12+ and PostgreSQL 13+.
+
 ```bash
-npm install                 # installs all workspaces
+npm install
 
-# 1. Start a local Postgres and apply the schema
-#    (example with Docker)
-docker run -d --name mp-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg16
-psql postgres://postgres:postgres@localhost:5432/postgres -c "CREATE DATABASE mealplanner"
-psql postgres://postgres:postgres@localhost:5432/mealplanner -f db/001_init.sql
-psql postgres://postgres:postgres@localhost:5432/mealplanner -f db/002_seed.sql
+# 1. A database (Docker, or any local Postgres)
+docker run -d --name family-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=mealplanner -p 5432:5432 postgres:16
 
-# 2. Configure the API
-cp api/local.settings.json.example api/local.settings.json   # then fill in ACS / OpenAI keys
+# 2. Configure and start the API (applies migrations on start-up)
+cp api/.env.example api/.env
+npm run build --workspace shared
+npm run dev:api             # http://localhost:8080
 
-# 3. Run API + web (two terminals)
-npm run dev:api             # func start on :7071
-npm run dev:web             # vite on :5173  (proxies /api -> :7071)
+# 3. Start the web app in another terminal
+npm run dev:web             # http://localhost:5173 (proxies /api to :8080)
 ```
 
-Open http://localhost:5173.
-
-> Auth: locally the SWA auth headers aren't present, so the API's `isAuthenticated`
-> check will 401. For local testing either run behind the SWA CLI
-> (`swa start http://localhost:5173 --api-location http://localhost:7071`), which
-> injects a mock principal, or temporarily relax the auth guard.
+Open http://localhost:5173, create a family, then use **Create invite link** and open the
+link in a private window to join as someone else.
 
 ### Tests
 
 ```bash
-npm run build --workspace shared
-npm --workspace api run build && node --test api/dist/test/*.test.js
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/mealplanner npm test
 ```
 
-Covers the SMS reply parser and the fridge-match ranking (the two pure helpers).
+The API tests run against a real Postgres in a throwaway schema (they're skipped if
+`TEST_DATABASE_URL` isn't set). CI runs them against a Postgres 16 service.
 
-## Deploy to Azure
+## Deploying
 
-```bash
-azd auth login
-azd env new mealplanner
-azd env set POSTGRES_ADMIN_PASSWORD "<a-strong-password>"
-azd up                      # provisions infra + deploys api & web
-```
+- **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
+- **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
+  then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT` and `WEB_ORIGIN` (the web
+  app's URL, for CORS) set.
+- **Web**: `VITE_API_URL=https://<api-host> npm run build --workspace web` and upload
+  `web/dist` to a static host. `web/staticwebapp.config.json` makes deep links like
+  `/join/<code>` work on Azure Static Web Apps.
 
-After the first deploy, one-off manual steps:
+## Not done yet
 
-1. **Apply the DB schema** to the provisioned Postgres (`db/001_init.sql`).
-2. **Buy an SMS-enabled phone number** in the Communication Services resource and set
-   `ACS_FROM_NUMBER` on the Function App.
-3. **Wire inbound SMS** → create an Event Grid subscription on the ACS resource for
-   `Microsoft.Communication.SMSReceived` pointing at the `smsInbound` function.
-4. **Configure Entra ID** app registration values (`AAD_CLIENT_ID`, `AAD_CLIENT_SECRET`)
-   on the Static Web App, and assign the `admin` role to yourself.
-
-## Build phases
-
-Delivered so far: Phase 0 (scaffolding/IaC) + Phase 1–3 core (data model, inventory &
-family CRUD, SMS attendance poll, AI suggestions, choose recipe). Remaining: richer
-learning/discovery (Phase 4) and polish (Phase 5) — see the plan file.
+- Invites are links to share by hand; no email is sent.
+- No password reset or email verification.
+- No rate limiting on sign-in.

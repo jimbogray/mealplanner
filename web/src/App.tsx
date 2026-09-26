@@ -1,50 +1,57 @@
-import { NavLink, Route, Routes } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { getMe, type ClientPrincipal } from "./api/client";
-import { Dashboard } from "./pages/Dashboard";
-import { Inventory } from "./pages/Inventory";
-import { Family } from "./pages/Family";
-import { Recipes } from "./pages/Recipes";
+import type { ReactNode } from "react";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { FamilyPage } from "./pages/Family";
+import { JoinPage } from "./pages/Join";
+import { LoginPage } from "./pages/Login";
+import { SignupPage } from "./pages/Signup";
+import { useSession } from "./session";
 
 export function App() {
-  const [me, setMe] = useState<ClientPrincipal | null>(null);
-  useEffect(() => {
-    getMe().then(setMe);
-  }, []);
+  const { me, signOut } = useSession();
 
   return (
-    <div className="app">
+    <>
       <header className="topbar">
-        <h1>🍽️ Family meal planner</h1>
-        <nav>
-          <NavLink to="/">Tonight</NavLink>
-          <NavLink to="/inventory">Fridge</NavLink>
-          <NavLink to="/recipes">Recipes</NavLink>
-          <NavLink to="/family">Family</NavLink>
-        </nav>
-        <div className="auth">
-          {me ? (
-            <>
-              <span>
-                {me.userDetails}
-                {me.userRoles.includes("admin") && <strong> (admin)</strong>}
-              </span>
-              <a href="/logout">Sign out</a>
-            </>
-          ) : (
-            <a href="/login">Sign in</a>
-          )}
-        </div>
+        <Link to="/" className="brand">
+          {me?.family ? me.family.name : "Family"}
+        </Link>
+        {me && (
+          <div className="auth">
+            <span className="note">{me.user.email}</span>
+            <button className="link" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </div>
+        )}
       </header>
-
       <main>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/recipes" element={<Recipes />} />
-          <Route path="/family" element={<Family />} />
-        </Routes>
+        {me === undefined ? (
+          <p className="note">Loading…</p>
+        ) : (
+          <Routes>
+            <Route path="/" element={me ? <Navigate to="/family" replace /> : <Navigate to="/signup" replace />} />
+            <Route path="/signup" element={me ? <Navigate to="/family" replace /> : <SignupPage />} />
+            <Route path="/login" element={me ? <Navigate to="/family" replace /> : <LoginPage />} />
+            <Route path="/join/:code" element={<JoinPage />} />
+            <Route
+              path="/family"
+              element={
+                <RequireSignIn>
+                  <FamilyPage />
+                </RequireSignIn>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        )}
       </main>
-    </div>
+    </>
   );
+}
+
+function RequireSignIn({ children }: { children: ReactNode }) {
+  const { me } = useSession();
+  const location = useLocation();
+  if (!me) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  return <>{children}</>;
 }
