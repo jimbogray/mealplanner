@@ -2,6 +2,9 @@
 **/dist
 **/.env
 .git
+.azure
 legacy
+api/.deploy
+# The API image only needs web/package.json (for npm ci against the workspace lockfile).
 web
 !web/package.json

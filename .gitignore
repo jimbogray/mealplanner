@@ -31,3 +31,6 @@ Thumbs.db
 # logs
 *.log
 npm-debug.log*
+
+# API bundle built by scripts/bundle-api.sh (used by the Dockerfile)
+api/.deploy/

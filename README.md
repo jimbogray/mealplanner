@@ -123,12 +123,39 @@ Pages on private or loopback addresses are never fetched.
 
 ## Deploying
 
+### To Azure with azd
+
+`infra/` (Bicep) and `azure.yaml` create a Container App for the API (image built from the
+root `Dockerfile` in a Basic container registry; scales to zero when idle), a Static Web App
+for the web app, and a PostgreSQL 16 Flexible Server (Burstable B1ms), all in resource group
+`rg-<env>`. Needs the [Azure Developer CLI](https://aka.ms/azd); on Apple Silicon, also
+Rosetta (`softwareupdate --install-rosetta`), because the Static Web Apps deploy tool is
+Intel-only.
+
+```bash
+azd auth login              # or: azd config set auth.useAzCliAuth true
+azd env new family-prod --location eastus2
+azd env set POSTGRES_ADMIN_PASSWORD "$(openssl rand -hex 24)"
+azd env set GOOGLE_CLIENT_ID <client-id>   # optional
+azd env set ANTHROPIC_API_KEY <key>        # optional, for reading recipe pages
+azd provision
+azd deploy
+```
+
+Provision and deploy separately the first time: the web app is built with the API's URL
+(`VITE_API_URL`, a Bicep output), and `azd up` packages it before provisioning finishes.
+After that, `azd up` or `azd deploy` both work. The API's allowed origin (`WEB_ORIGIN`) is
+wired up in the Bicep. For Google sign-in, add the `SERVICE_WEB_ENDPOINT` URL
+(`azd env get-values`) to the OAuth client's authorised origins.
+
+### Elsewhere
+
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
 - **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
   then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT`, `WEB_ORIGIN` (the web
   app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` and `ANTHROPIC_API_KEY` set.
 - **Web**: `VITE_API_URL=https://<api-host> VITE_GOOGLE_CLIENT_ID=<id> npm run build --workspace web` and upload
-  `web/dist` to a static host. `web/staticwebapp.config.json` makes deep links like
+  `web/dist` to a static host. `web/public/staticwebapp.config.json` (copied into `dist`) makes deep links like
   `/join/<code>` work on Azure Static Web Apps.
 
 ## Not done yet

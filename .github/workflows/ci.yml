@@ -1,9 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
-  # Pushes to main run this through "Deploy to staging", which only deploys if it passes.
-  workflow_call:
 
 jobs:
   build-test:
