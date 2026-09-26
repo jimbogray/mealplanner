@@ -200,6 +200,18 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   .days li { grid-template-columns: 1fr auto; gap: 0.1rem 0.75rem; }
   .days .diners { grid-column: 1 / -1; grid-row: 2; }
 }
+/* A pill that toggles on click; its checkbox is hidden but still keyboard- and screen-reader-accessible. */
+.chip.toggle { position: relative; user-select: none; }
+.chip.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.chip.toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip.toggle:not(:has(input:checked)) { color: var(--muted); }
+.day-legend { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.day-legend legend { float: left; margin-bottom: 0.35rem; }
+.day-legend + * { clear: both; }
+.day-form li.day-removed { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; color: var(--muted); }
+.chip.toggle.eat-out { border-style: dashed; }
+.chip.toggle.eat-out:has(input:checked) { border-style: solid; border-color: #c98a1b; background: #fdf3dd; color: #7a5510; }
+.days li.eat-out .diners { color: #7a5510; font-style: italic; }
 
 .restaurants { list-style: none; margin: 0; padding: 0; }
 .restaurants li { border-top: 1px solid var(--border); padding: 0.75rem 0; }

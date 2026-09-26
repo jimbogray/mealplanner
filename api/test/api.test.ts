@@ -598,25 +598,27 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal(res.status, 400);
     });
 
-    test("adding this week plans from today, everyone joining with no guests unless days say otherwise", async () => {
+    test("adding this week plans from today, with who's joining and guests as given", async () => {
       const sunday = addDays(thisWeek, 6);
-      const res = await call<ScheduleWeek>("POST", "/api/family/weeks", {
-        token: teenToken,
-        body: { startsOn: thisWeek, today, days: [{ date: sunday, memberIds: [everyone[0]], guests: 3 }] },
-      });
+      const remaining = Array.from({ length: 7 }, (_, i) => addDays(thisWeek, i)).filter((d) => d >= today);
+      const days = remaining.map((date) =>
+        date === sunday ? { date, memberIds: [everyone[0]], guests: 3 } : { date, memberIds: everyone, guests: 0 },
+      );
+      const res = await call<ScheduleWeek>("POST", "/api/family/weeks", { token: teenToken, body: { startsOn: thisWeek, today, days } });
       assert.equal(res.status, 201);
       assert.equal(res.body.startsOn, thisWeek);
       assert.deepEqual(
         res.body.days.map((d) => d.date),
         Array.from({ length: 7 }, (_, i) => addDays(thisWeek, i)).filter((d) => d >= today),
       );
-      if (today !== thisWeek) {
+      // Two days back, so the one-day time zone allowance doesn't apply.
+      if (addDays(thisWeek, 1) < today) {
         const past = await call("PATCH", `/api/family/weeks/${thisWeek}/days/${thisWeek}`, { token: teenToken, body: { memberIds: [], guests: 0 } });
         assert.equal(past.status, 404);
       }
       for (const d of res.body.days) {
-        if (d.date === sunday) assert.deepEqual(d, { date: sunday, memberIds: [everyone[0]], guests: 3 });
-        else assert.deepEqual(d, { date: d.date, memberIds: everyone, guests: 0 });
+        if (d.date === sunday) assert.deepEqual(d, { date: sunday, eatOut: false, memberIds: [everyone[0]], guests: 3 });
+        else assert.deepEqual(d, { date: d.date, eatOut: false, memberIds: everyone, guests: 0 });
       }
     });
 
@@ -653,7 +655,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         body: { memberIds: [], guests: 2 },
       });
       assert.equal(res.status, 200);
-      assert.deepEqual(res.body, { date: monday, memberIds: [], guests: 2 });
+      assert.deepEqual(res.body, { date: monday, eatOut: false, memberIds: [], guests: 2 });
       const outside = await call("PATCH", `/api/family/weeks/${monday}/days/${thisWeek}`, { token: teenToken, body: { memberIds: [], guests: 0 } });
       assert.equal(outside.status, 404);
       const missing = addDays(thisWeek, 21);
@@ -675,6 +677,64 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       });
       assert.equal(res.status, 400);
       assert.equal((await call("GET", "/api/family/weeks")).status, 401);
+    });
+
+    test("a day can be removed from a week, and added back", async () => {
+      const startsOn = addDays(thisWeek, 7);
+      const wednesday = addDays(startsOn, 2);
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}/days/${wednesday}`, { token: teenToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}/days/${wednesday}`, { token: teenToken })).status, 404);
+      const week = (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken })).body.find((w) => w.startsOn === startsOn)!;
+      assert.equal(week.days.length, 6);
+      assert.ok(!week.days.some((d) => d.date === wednesday));
+      const back = await call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${wednesday}`, {
+        token: parentToken,
+        body: { memberIds: [], guests: 1 },
+      });
+      assert.deepEqual(back.body, { date: wednesday, eatOut: false, memberIds: [], guests: 1 });
+    });
+
+    test("eating out clears who's joining and guests, and can be undone", async () => {
+      const startsOn = addDays(thisWeek, 7);
+      const friday = addDays(startsOn, 4);
+      const out = await call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${friday}`, {
+        token: teenToken,
+        body: { eatOut: true, memberIds: everyone, guests: 4 },
+      });
+      assert.equal(out.status, 200);
+      assert.deepEqual(out.body, { date: friday, eatOut: true, memberIds: [], guests: 0 });
+      const week = (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken })).body.find((w) => w.startsOn === startsOn)!;
+      assert.deepEqual(week.days.find((d) => d.date === friday), out.body);
+      const back = await call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${friday}`, {
+        token: teenToken,
+        body: { eatOut: false, memberIds: everyone, guests: 0 },
+      });
+      assert.deepEqual(back.body, { date: friday, eatOut: false, memberIds: everyone, guests: 0 });
+      const bad = await call("PATCH", `/api/family/weeks/${startsOn}/days/${friday}`, { token: teenToken, body: { eatOut: "yes" } });
+      assert.equal(bad.status, 400);
+    });
+
+    test("a week can be added with days out", async () => {
+      const startsOn = addDays(thisWeek, 14);
+      const res = await call<ScheduleWeek>("POST", "/api/family/weeks", {
+        token: parentToken,
+        body: { startsOn, today, days: [{ date: startsOn, eatOut: true }] },
+      });
+      assert.equal(res.status, 201);
+      assert.deepEqual(res.body.days, [{ date: startsOn, eatOut: true, memberIds: [], guests: 0 }]);
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+    });
+
+    test("a week keeps at least one day, and can be added with only some days", async () => {
+      const startsOn = addDays(thisWeek, 14);
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days: [] } })).status, 400);
+      const res = await call<ScheduleWeek>("POST", "/api/family/weeks", {
+        token: parentToken,
+        body: { startsOn, today, days: [{ date: startsOn, memberIds: everyone, guests: 0 }] },
+      });
+      assert.deepEqual(res.body.days.map((d) => d.date), [startsOn]);
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}/days/${startsOn}`, { token: parentToken })).status, 400);
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
     });
 
     test("a week can be removed", async () => {
