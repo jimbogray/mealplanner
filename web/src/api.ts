@@ -1,5 +1,7 @@
 import type {
   AddFavouriteRequest,
+  Address,
+  AddressLookupResponse,
   AddWeekRequest,
   AuthResponse,
   CreateFamilyRequest,
@@ -12,6 +14,8 @@ import type {
   Me,
   MemberInput,
   RecipePreview,
+  Restaurant,
+  RestaurantInput,
   MemberUpdate,
   ScheduleDay,
   ScheduleWeek,
@@ -78,6 +82,9 @@ export const api = {
 
   createFamily: (body: CreateFamilyRequest) => request<Me>("POST", "/api/family", body),
   renameFamily: (name: string) => request<void>("PATCH", "/api/family", { name }),
+  setAddress: (body: Address) => request<Address>("PUT", "/api/family/address", body),
+  removeAddress: () => request<void>("DELETE", "/api/family/address"),
+  lookupAddress: (postcode: string) => request<AddressLookupResponse>("POST", "/api/family/address/lookup", { postcode }),
   addMember: (body: MemberInput) => request<FamilyMember>("POST", "/api/family/members", body),
   updateMember: (id: string, body: MemberUpdate) => request<FamilyMember>("PATCH", `/api/family/members/${id}`, body),
   removeMember: (id: string) => request<void>("DELETE", `/api/family/members/${id}`),
@@ -96,6 +103,11 @@ export const api = {
     request<FavouriteRecipe>("PATCH", `/api/family/recipes/${id}`, { prepared }),
   rateRecipe: (id: string, stars: number) => request<FavouriteRecipe>("PUT", `/api/family/recipes/${id}/rating`, { stars }),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
+
+  restaurants: () => request<Restaurant[]>("GET", "/api/family/restaurants"),
+  addRestaurant: (body: RestaurantInput) => request<Restaurant>("POST", "/api/family/restaurants", body),
+  updateRestaurant: (id: string, body: RestaurantInput) => request<Restaurant>("PUT", `/api/family/restaurants/${id}`, body),
+  removeRestaurant: (id: string) => request<void>("DELETE", `/api/family/restaurants/${id}`),
 
   weeks: () => request<ScheduleWeek[]>("GET", "/api/family/weeks"),
   addWeek: (body: AddWeekRequest) => request<ScheduleWeek>("POST", "/api/family/weeks", body),

@@ -95,10 +95,32 @@ export interface FamilyMember {
   createdAt: string;
 }
 
+/** A UK postal address. */
+export interface Address {
+  line1: string;
+  line2: string | null;
+  town: string;
+  county: string | null;
+  /** Upper case with a single space, e.g. "SW1A 2AA". */
+  postcode: string;
+  /** WGS84 coordinates from the postcode lookup; null when the address was typed in. */
+  latitude: number | null;
+  longitude: number | null;
+}
+
 export interface Family {
   id: Uuid;
   name: string;
+  /** The family's home address, if a Family Manager has added one. */
+  address: Address | null;
   createdAt: string;
+}
+
+/** Tidies a UK postcode ("sw1a2aa" → "SW1A 2AA"), or returns null if it isn't shaped like one. */
+export function normalisePostcode(value: string): string | null {
+  const compact = value.replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z]{1,2}[0-9][A-Z0-9]?[0-9][A-Z]{2}$/.test(compact)) return null;
+  return `${compact.slice(0, -3)} ${compact.slice(-3)}`;
 }
 
 export interface Invite {
@@ -117,6 +139,8 @@ export interface Me {
   family: Family | null;
   member: FamilyMember | null;
   members: FamilyMember[];
+  /** True when the API can look addresses up by postcode; otherwise addresses are typed in. */
+  addressLookup: boolean;
 }
 
 /** Public details about an invite, shown on the join page before sign-up. */
@@ -189,6 +213,15 @@ export interface CreateFamilyRequest {
   familyName: string;
   name: string;
   lifeStage: LifeStage;
+}
+
+/** POST /api/family/address/lookup */
+export interface AddressLookupRequest {
+  postcode: string;
+}
+
+export interface AddressLookupResponse {
+  addresses: Address[];
 }
 
 export interface ApiError {
@@ -328,4 +361,30 @@ export interface UpdateDayRequest {
   eatOut?: boolean;
   memberIds?: Uuid[];
   guests?: number;
+}
+
+/** A restaurant the family likes. */
+export interface Restaurant {
+  id: Uuid;
+  name: string;
+  /** Its website, menu or map listing. */
+  url: string | null;
+  /** e.g. "Ask for the window table. Kids love the pizza." */
+  notes: string | null;
+  /** Typed in, or the address the map service found for it by name. */
+  address: string | null;
+  /** Driving time from the family's home; null when there's no home address or it couldn't be worked out. */
+  driveMinutes: number | null;
+  /** Name of the member who added it; null if they've since left. */
+  addedBy: string | null;
+  createdAt: string;
+}
+
+/** Add a restaurant, or change one (the whole thing is replaced). */
+export interface RestaurantInput {
+  name: string;
+  url?: string | null;
+  notes?: string | null;
+  /** Leave out to have it found on the map by name, near the family's home. */
+  address?: string | null;
 }

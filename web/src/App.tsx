@@ -4,6 +4,7 @@ import { FamilyPage } from "./pages/Family";
 import { JoinPage } from "./pages/Join";
 import { LibraryPage } from "./pages/Library";
 import { LoginPage } from "./pages/Login";
+import { RestaurantsPage } from "./pages/Restaurants";
 import { SchedulePage } from "./pages/Schedule";
 import { SignupPage } from "./pages/Signup";
 import { useSession } from "./session";
@@ -22,6 +23,7 @@ export function App() {
             <NavLink to="/family">Family</NavLink>
             <NavLink to="/library">Library</NavLink>
             <NavLink to="/schedule">Schedule</NavLink>
+            <NavLink to="/restaurants">Restaurants</NavLink>
           </nav>
         )}
         {me && (
@@ -63,6 +65,14 @@ export function App() {
               element={
                 <RequireSignIn>
                   <SchedulePage />
+                </RequireSignIn>
+              }
+            />
+            <Route
+              path="/restaurants"
+              element={
+                <RequireSignIn>
+                  <RestaurantsPage />
                 </RequireSignIn>
               }
             />

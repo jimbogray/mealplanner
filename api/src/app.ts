@@ -6,6 +6,9 @@ import {
   isIsoDate,
   mondayOf,
   nextWeekToAdd,
+  normalisePostcode,
+  type Address,
+  type AddressLookupResponse,
   weekDays,
   type AuthResponse,
   type Family,
@@ -16,14 +19,17 @@ import {
   type LifeStage,
   type Me,
   type RecipePreview,
+  type Restaurant,
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
+import { AddressLookupError, type AddressLookup } from "./address-lookup.js";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
 import { fetchPage, pageImages, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
+import type { Maps } from "./maps.js";
 import type { RecipeReader } from "./recipe-reader.js";
 import * as v from "./validate.js";
 
@@ -61,12 +67,37 @@ function toMember(r: MemberRow): FamilyMember {
   };
 }
 
-async function loadMe(db: Queryable, userId: string, email: string): Promise<Me> {
+interface FamilyRow {
+  id: string;
+  name: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  address_town: string | null;
+  address_county: string | null;
+  address_postcode: string | null;
+  address_latitude: number | null;
+  address_longitude: number | null;
+  created_at: Date;
+}
+
+function toAddress(r: FamilyRow): Address | null {
+  if (!r.address_line1 || !r.address_town || !r.address_postcode) return null;
+  return {
+    line1: r.address_line1,
+    line2: r.address_line2,
+    town: r.address_town,
+    county: r.address_county,
+    postcode: r.address_postcode,
+    latitude: r.address_latitude,
+    longitude: r.address_longitude,
+  };
+}
+
+async function loadMe(db: Queryable, userId: string, email: string, addressLookup: boolean): Promise<Me> {
   const user = { id: userId, email };
   const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [userId])).rows[0];
-  if (!self) return { user, family: null, member: null, members: [] };
-  const fam = (await db.query<{ id: string; name: string; created_at: Date }>("SELECT * FROM family WHERE id = $1", [self.family_id]))
-    .rows[0];
+  if (!self) return { user, family: null, member: null, members: [], addressLookup };
+  const fam = (await db.query<FamilyRow>("SELECT * FROM family WHERE id = $1", [self.family_id])).rows[0];
   const members = (
     await db.query<MemberRow>(
       `${MEMBER_SELECT} WHERE m.family_id = $1
@@ -74,8 +105,8 @@ async function loadMe(db: Queryable, userId: string, email: string): Promise<Me>
       [self.family_id],
     )
   ).rows.map(toMember);
-  const family: Family = { id: fam.id, name: fam.name, createdAt: fam.created_at.toISOString() };
-  return { user, family, member: toMember(self), members };
+  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), createdAt: fam.created_at.toISOString() };
+  return { user, family, member: toMember(self), members, addressLookup };
 }
 
 /** The signed-in user's own family_member row, or 403 if they aren't in a family. */
@@ -194,6 +225,21 @@ export interface AppOptions {
   fetchPage?: PageFetcher;
   /** Reads a recipe's details from its page with an LLM. Without it, people type the details in. */
   readRecipe?: RecipeReader;
+  /** Finds restaurants on the map and times the drive from home. Without it, there are no driving times. */
+  maps?: Maps;
+  /** Finds the addresses at a UK postcode. Without it, people type their address in. */
+  lookupAddress?: AddressLookup;
+}
+
+function address(b: Record<string, unknown>): Address {
+  return {
+    line1: v.text(b.line1, "Address line 1", 120),
+    line2: v.optionalText(b.line2, "Address line 2", 120),
+    town: v.text(b.town, "Town or city", 80),
+    county: v.optionalText(b.county, "County", 80),
+    postcode: v.postcode(b.postcode),
+    ...v.coordinates(b.latitude, b.longitude),
+  };
 }
 
 /** Optional sign-up fields: a new family name, or an invite code to join one. */
@@ -247,6 +293,99 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };
+}
+
+interface RestaurantRow {
+  id: string;
+  name: string;
+  url: string | null;
+  notes: string | null;
+  address: string | null;
+  drive_minutes: number | null;
+  added_by: string | null;
+  created_at: Date;
+}
+
+const RESTAURANT_SELECT = `SELECT r.id, r.name, r.url, r.notes, r.address, r.drive_minutes, m.name AS added_by, r.created_at
+  FROM restaurant r LEFT JOIN family_member m ON m.id = r.added_by`;
+
+function toRestaurant(r: RestaurantRow): Restaurant {
+  return {
+    id: r.id,
+    name: r.name,
+    url: r.url,
+    notes: r.notes,
+    address: r.address,
+    driveMinutes: r.drive_minutes,
+    addedBy: r.added_by,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+interface RestaurantLocation {
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  drive_minutes: number | null;
+}
+
+/** A restaurant's name, link and notes, as added or edited. */
+function restaurantInput(body: unknown): { name: string; url: string | null; notes: string | null; address: string | null } {
+  const b = v.object(body);
+  return {
+    name: v.text(b.name, "Restaurant name", 120),
+    url: b.url == null || (typeof b.url === "string" && !b.url.trim()) ? null : v.webUrl(b.url, "Restaurant link"),
+    notes: v.optionalText(b.notes, "Notes", 1000),
+    address: v.optionalText(b.address, "Address", 200),
+  };
+}
+
+/**
+ * Where the family lives, for driving times: the coordinates saved with the home address, or (for an address
+ * typed in rather than picked from the postcode lookup) the address found on the map. Null without a home address.
+ */
+async function homeLocation(db: Queryable, maps: Maps | undefined, familyId: string): Promise<{ lat: number; lng: number } | null> {
+  const home = (
+    await db.query<{ lat: number | null; lng: number | null; address: string | null }>(
+      `SELECT address_latitude AS lat, address_longitude AS lng,
+         nullif(concat_ws(', ', address_line1, address_line2, address_town, address_postcode), '') AS address
+       FROM family WHERE id = $1`,
+      [familyId],
+    )
+  ).rows[0];
+  if (!home?.address) return null;
+  if (home.lat !== null && home.lng !== null) return { lat: home.lat, lng: home.lng };
+  if (!maps) return null;
+  try {
+    const place = await maps.findPlace(home.address);
+    return place && { lat: place.lat, lng: place.lng };
+  } catch (err) {
+    console.error("Finding the family's home on the map failed", err);
+    return null;
+  }
+}
+
+/**
+ * Finds a restaurant on the map (by its address, or else by name near home) and times the drive from home.
+ * Anything the map service can't find, or a failure reaching it, just leaves those details empty.
+ */
+async function locateRestaurant(
+  maps: Maps | undefined,
+  home: { lat: number; lng: number } | null,
+  r: { name: string; address: string | null },
+): Promise<RestaurantLocation> {
+  const location: RestaurantLocation = { address: r.address, latitude: null, longitude: null, drive_minutes: null };
+  // Searching by name alone only makes sense near home.
+  if (!maps || (!r.address && !home)) return location;
+  try {
+    const place = await maps.findPlace(r.address ?? r.name, home);
+    if (!place) return location;
+    Object.assign(location, { address: r.address ?? place.address, latitude: place.lat, longitude: place.lng });
+    if (home) location.drive_minutes = await maps.driveMinutes(home, place);
+  } catch (err) {
+    console.error("Finding a restaurant on the map failed", err);
+  }
+  return location;
 }
 
 interface ScheduleRow {
@@ -312,8 +451,12 @@ function weekStart(value: string): string {
   return value;
 }
 
-export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe"> = {}): Router {
+export function buildRouter(
+  db: Db,
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "lookupAddress" | "maps"> = {},
+): Router {
   const router = new Router();
+  const me = (userId: string, email: string) => loadMe(db, userId, email, options.lookupAddress !== undefined);
 
   router.add("GET", "/api/health", async () => {
     await db.query("SELECT 1");
@@ -349,7 +492,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       else await createFamily(tx, userId, familyName!, profile);
       return { userId, token: await createSession(tx, userId) };
     });
-    const body: AuthResponse = { token, me: await loadMe(db, userId, email) };
+    const body: AuthResponse = { token, me: await me(userId, email) };
     return { status: 201, body };
   });
 
@@ -367,7 +510,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       throw new HttpError(401, "Email or password is incorrect");
     }
     const token = await createSession(db, user.id);
-    const body: AuthResponse = { token, me: await loadMe(db, user.id, user.email) };
+    const body: AuthResponse = { token, me: await me(user.id, user.email) };
     return { body };
   });
 
@@ -428,7 +571,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
     const token = await createSession(db, result.userId);
     const email = (await db.query<{ email: string }>("SELECT email FROM app_user WHERE id = $1", [result.userId])).rows[0].email;
-    const body: AuthResponse = { token, me: await loadMe(db, result.userId, email) };
+    const body: AuthResponse = { token, me: await me(result.userId, email) };
     return { status: result.created ? 201 : 200, body };
   });
 
@@ -440,7 +583,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
   router.add("GET", "/api/me", async (req) => {
     const { userId, email } = await requireUser(db, req);
-    return { body: await loadMe(db, userId, email) };
+    return { body: await me(userId, email) };
   });
 
   // --- family -----------------------------------------------------------
@@ -460,7 +603,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         throw err;
       }
     });
-    return { status: 201, body: await loadMe(db, userId, email) };
+    return { status: 201, body: await me(userId, email) };
   });
 
   router.add("PATCH", "/api/family", async (req) => {
@@ -468,6 +611,47 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const name = v.text(v.object(req.body).name, "Family name");
     await db.query("UPDATE family SET name = $1 WHERE id = $2", [name, member.family_id]);
     return { status: 204 };
+  });
+
+  router.add("PUT", "/api/family/address", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const a = address(v.object(req.body));
+    await db.query(
+      `UPDATE family SET address_line1 = $1, address_line2 = $2, address_town = $3, address_county = $4, address_postcode = $5,
+          address_latitude = $6, address_longitude = $7
+        WHERE id = $8`,
+      [a.line1, a.line2, a.town, a.county, a.postcode, a.latitude, a.longitude, member.family_id],
+    );
+    return { body: a };
+  });
+
+  router.add("DELETE", "/api/family/address", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    await db.query(
+      `UPDATE family SET address_line1 = NULL, address_line2 = NULL, address_town = NULL, address_county = NULL, address_postcode = NULL,
+          address_latitude = NULL, address_longitude = NULL
+        WHERE id = $1`,
+      [member.family_id],
+    );
+    return { status: 204 };
+  });
+
+  // Called from the API, not the browser, so the lookup service's key stays on the server.
+  router.add("POST", "/api/family/address/lookup", async (req) => {
+    await requireAdmin(db, req);
+    if (!options.lookupAddress) throw new HttpError(503, "Address lookup isn't set up, so type the address in");
+    const postcode = v.postcode(v.object(req.body).postcode);
+    let addresses: Address[];
+    try {
+      addresses = await options.lookupAddress(postcode);
+    } catch (err) {
+      if (!(err instanceof AddressLookupError)) throw err;
+      console.error("Address lookup failed", err.message);
+      throw new HttpError(502, "Couldn't look up addresses just now, so type the address in");
+    }
+    if (!addresses.length) throw new HttpError(404, `No addresses found for ${postcode}`);
+    const body: AddressLookupResponse = { addresses };
+    return { body };
   });
 
   // Add someone without a login. They can stay that way (a baby, a toddler) or be sent an
@@ -616,7 +800,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         throw err;
       }
     });
-    return { body: await loadMe(db, userId, email) };
+    return { body: await me(userId, email) };
   });
 
   // --- favourite recipes --------------------------------------------------
@@ -747,6 +931,83 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       member.family_id,
     ]);
     if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    return { status: 204 };
+  });
+
+  // --- restaurants --------------------------------------------------------
+  // Like recipes, they belong to the family: anyone in it can add, edit or remove one.
+
+  router.add("GET", "/api/family/restaurants", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rows } = await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.family_id = $1 ORDER BY lower(r.name)`, [
+      member.family_id,
+    ]);
+    const body: Restaurant[] = rows.map(toRestaurant);
+    return { body };
+  });
+
+  // Adding one (or changing its name or address) also finds it on the map and times the drive from home.
+  router.add("POST", "/api/family/restaurants", async (req) => {
+    const { member } = await requireMember(db, req);
+    const r = restaurantInput(req.body);
+    const taken = await db.query("SELECT 1 FROM restaurant WHERE family_id = $1 AND lower(name) = lower($2)", [member.family_id, r.name]);
+    if (taken.rowCount) throw new HttpError(409, `${r.name} is already one of your restaurants`);
+    const at = await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r);
+    let id: string;
+    try {
+      id = (
+        await db.query<{ id: string }>(
+          `INSERT INTO restaurant (family_id, name, url, notes, address, latitude, longitude, drive_minutes, added_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+          [member.family_id, r.name, r.url, r.notes, at.address, at.latitude, at.longitude, at.drive_minutes, member.id],
+        )
+      ).rows[0].id;
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new HttpError(409, `${r.name} is already one of your restaurants`);
+      throw err;
+    }
+    const saved = (await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.id = $1`, [id])).rows[0];
+    return { status: 201, body: toRestaurant(saved) };
+  });
+
+  router.add("PUT", "/api/family/restaurants/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = v.uuid(req.params.id);
+    const r = restaurantInput(req.body);
+    const current = (
+      await db.query<RestaurantRow & RestaurantLocation>("SELECT * FROM restaurant WHERE id = $1 AND family_id = $2", [id, member.family_id])
+    ).rows[0];
+    if (!current) throw new HttpError(404, "That restaurant isn't in your list");
+    // Only look it up again when where it is may have changed. A blank address means "find it by name".
+    const typedAddressKept = r.address !== null && r.address === current.address && current.latitude !== null;
+    const foundByNameKept = r.address === null && r.name === current.name && current.latitude !== null;
+    const at: RestaurantLocation =
+      typedAddressKept || foundByNameKept
+        ? current
+        : await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r);
+    let updated;
+    try {
+      updated = await db.query(
+        `UPDATE restaurant SET name = $1, url = $2, notes = $3, address = $4, latitude = $5, longitude = $6, drive_minutes = $7
+         WHERE id = $8 AND family_id = $9`,
+        [r.name, r.url, r.notes, at.address, at.latitude, at.longitude, at.drive_minutes, id, member.family_id],
+      );
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new HttpError(409, `${r.name} is already one of your restaurants`);
+      throw err;
+    }
+    if (!updated.rowCount) throw new HttpError(404, "That restaurant isn't in your list");
+    const saved = (await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.id = $1`, [id])).rows[0];
+    return { body: toRestaurant(saved) };
+  });
+
+  router.add("DELETE", "/api/family/restaurants/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM restaurant WHERE id = $1 AND family_id = $2", [
+      v.uuid(req.params.id),
+      member.family_id,
+    ]);
+    if (!rowCount) throw new HttpError(404, "That restaurant isn't in your list");
     return { status: 204 };
   });
 

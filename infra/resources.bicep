@@ -6,6 +6,10 @@ param postgresAdminPassword string
 param googleClientId string
 @secure()
 param anthropicApiKey string
+@secure()
+param idealPostcodesApiKey string
+@secure()
+param azureMapsKey string
 param recipeModel string
 @description('Whether the API container app already exists (azd sets this), so re-provisioning keeps its image.')
 param apiExists bool
@@ -14,6 +18,8 @@ var postgresAdminLogin = 'familyadmin'
 var databaseName = 'mealplanner'
 var apiName = 'ca-api-${resourceToken}'
 var hasAnthropicKey = !empty(anthropicApiKey)
+var hasIdealPostcodesKey = !empty(idealPostcodesApiKey)
+var hasAzureMapsKey = !empty(azureMapsKey)
 
 // ---------- PostgreSQL Flexible Server ----------
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
@@ -135,7 +141,9 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ],
         // Container Apps rejects an empty secret, so only add it when set.
-        hasAnthropicKey ? [{ name: 'anthropic-api-key', value: anthropicApiKey }] : []
+        hasAnthropicKey ? [{ name: 'anthropic-api-key', value: anthropicApiKey }] : [],
+        hasIdealPostcodesKey ? [{ name: 'ideal-postcodes-api-key', value: idealPostcodesApiKey }] : [],
+        hasAzureMapsKey ? [{ name: 'azure-maps-key', value: azureMapsKey }] : []
       )
     }
     template: {
@@ -153,7 +161,9 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
               { name: 'RECIPE_MODEL', value: recipeModel }
               { name: 'MIGRATE_ON_START', value: 'true' }
             ],
-            hasAnthropicKey ? [{ name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }] : []
+            hasAnthropicKey ? [{ name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }] : [],
+            hasIdealPostcodesKey ? [{ name: 'IDEAL_POSTCODES_API_KEY', secretRef: 'ideal-postcodes-api-key' }] : [],
+            hasAzureMapsKey ? [{ name: 'AZURE_MAPS_KEY', secretRef: 'azure-maps-key' }] : []
           )
         }
       ]
