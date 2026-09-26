@@ -85,6 +85,8 @@ legend { font-weight: 500; font-size: 0.95rem; padding: 0; margin-bottom: 0.35re
 .chip:has(input:checked) { border-color: var(--accent); background: #e1f5ee; }
 .chip input { margin: 0; accent-color: var(--accent); }
 .diet { color: #7a5510; margin-top: 0.15rem; }
+.address { display: flex; flex-direction: column; font-style: normal; }
+input.postcode { width: 9rem; text-transform: uppercase; }
 .invite-link { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
 .invite-link code { font-size: 0.8rem; word-break: break-all; }
 

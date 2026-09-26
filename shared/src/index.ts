@@ -95,10 +95,32 @@ export interface FamilyMember {
   createdAt: string;
 }
 
+/** A UK postal address. */
+export interface Address {
+  line1: string;
+  line2: string | null;
+  town: string;
+  county: string | null;
+  /** Upper case with a single space, e.g. "SW1A 2AA". */
+  postcode: string;
+  /** WGS84 coordinates from the postcode lookup; null when the address was typed in. */
+  latitude: number | null;
+  longitude: number | null;
+}
+
 export interface Family {
   id: Uuid;
   name: string;
+  /** The family's home address, if a Family Manager has added one. */
+  address: Address | null;
   createdAt: string;
+}
+
+/** Tidies a UK postcode ("sw1a2aa" → "SW1A 2AA"), or returns null if it isn't shaped like one. */
+export function normalisePostcode(value: string): string | null {
+  const compact = value.replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z]{1,2}[0-9][A-Z0-9]?[0-9][A-Z]{2}$/.test(compact)) return null;
+  return `${compact.slice(0, -3)} ${compact.slice(-3)}`;
 }
 
 export interface Invite {
@@ -117,6 +139,8 @@ export interface Me {
   family: Family | null;
   member: FamilyMember | null;
   members: FamilyMember[];
+  /** True when the API can look addresses up by postcode; otherwise addresses are typed in. */
+  addressLookup: boolean;
 }
 
 /** Public details about an invite, shown on the join page before sign-up. */
@@ -189,6 +213,15 @@ export interface CreateFamilyRequest {
   familyName: string;
   name: string;
   lifeStage: LifeStage;
+}
+
+/** POST /api/family/address/lookup */
+export interface AddressLookupRequest {
+  postcode: string;
+}
+
+export interface AddressLookupResponse {
+  addresses: Address[];
 }
 
 export interface ApiError {

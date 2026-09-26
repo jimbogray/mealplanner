@@ -6,6 +6,9 @@ import {
   isIsoDate,
   mondayOf,
   nextWeekToAdd,
+  normalisePostcode,
+  type Address,
+  type AddressLookupResponse,
   weekDays,
   type AuthResponse,
   type Family,
@@ -19,6 +22,7 @@ import {
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
+import { AddressLookupError, type AddressLookup } from "./address-lookup.js";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
@@ -61,12 +65,37 @@ function toMember(r: MemberRow): FamilyMember {
   };
 }
 
-async function loadMe(db: Queryable, userId: string, email: string): Promise<Me> {
+interface FamilyRow {
+  id: string;
+  name: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  address_town: string | null;
+  address_county: string | null;
+  address_postcode: string | null;
+  address_latitude: number | null;
+  address_longitude: number | null;
+  created_at: Date;
+}
+
+function toAddress(r: FamilyRow): Address | null {
+  if (!r.address_line1 || !r.address_town || !r.address_postcode) return null;
+  return {
+    line1: r.address_line1,
+    line2: r.address_line2,
+    town: r.address_town,
+    county: r.address_county,
+    postcode: r.address_postcode,
+    latitude: r.address_latitude,
+    longitude: r.address_longitude,
+  };
+}
+
+async function loadMe(db: Queryable, userId: string, email: string, addressLookup: boolean): Promise<Me> {
   const user = { id: userId, email };
   const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [userId])).rows[0];
-  if (!self) return { user, family: null, member: null, members: [] };
-  const fam = (await db.query<{ id: string; name: string; created_at: Date }>("SELECT * FROM family WHERE id = $1", [self.family_id]))
-    .rows[0];
+  if (!self) return { user, family: null, member: null, members: [], addressLookup };
+  const fam = (await db.query<FamilyRow>("SELECT * FROM family WHERE id = $1", [self.family_id])).rows[0];
   const members = (
     await db.query<MemberRow>(
       `${MEMBER_SELECT} WHERE m.family_id = $1
@@ -74,8 +103,8 @@ async function loadMe(db: Queryable, userId: string, email: string): Promise<Me>
       [self.family_id],
     )
   ).rows.map(toMember);
-  const family: Family = { id: fam.id, name: fam.name, createdAt: fam.created_at.toISOString() };
-  return { user, family, member: toMember(self), members };
+  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), createdAt: fam.created_at.toISOString() };
+  return { user, family, member: toMember(self), members, addressLookup };
 }
 
 /** The signed-in user's own family_member row, or 403 if they aren't in a family. */
@@ -194,6 +223,19 @@ export interface AppOptions {
   fetchPage?: PageFetcher;
   /** Reads a recipe's details from its page with an LLM. Without it, people type the details in. */
   readRecipe?: RecipeReader;
+  /** Finds the addresses at a UK postcode. Without it, people type their address in. */
+  lookupAddress?: AddressLookup;
+}
+
+function address(b: Record<string, unknown>): Address {
+  return {
+    line1: v.text(b.line1, "Address line 1", 120),
+    line2: v.optionalText(b.line2, "Address line 2", 120),
+    town: v.text(b.town, "Town or city", 80),
+    county: v.optionalText(b.county, "County", 80),
+    postcode: v.postcode(b.postcode),
+    ...v.coordinates(b.latitude, b.longitude),
+  };
 }
 
 /** Optional sign-up fields: a new family name, or an invite code to join one. */
@@ -309,8 +351,10 @@ function weekStart(value: string): string {
   return value;
 }
 
-export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe"> = {}): Router {
+export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "lookupAddress"> = {},
+): Router {
   const router = new Router();
+  const me = (userId: string, email: string) => loadMe(db, userId, email, options.lookupAddress !== undefined);
 
   router.add("GET", "/api/health", async () => {
     await db.query("SELECT 1");
@@ -346,7 +390,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       else await createFamily(tx, userId, familyName!, profile);
       return { userId, token: await createSession(tx, userId) };
     });
-    const body: AuthResponse = { token, me: await loadMe(db, userId, email) };
+    const body: AuthResponse = { token, me: await me(userId, email) };
     return { status: 201, body };
   });
 
@@ -364,7 +408,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       throw new HttpError(401, "Email or password is incorrect");
     }
     const token = await createSession(db, user.id);
-    const body: AuthResponse = { token, me: await loadMe(db, user.id, user.email) };
+    const body: AuthResponse = { token, me: await me(user.id, user.email) };
     return { body };
   });
 
@@ -425,7 +469,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
     const token = await createSession(db, result.userId);
     const email = (await db.query<{ email: string }>("SELECT email FROM app_user WHERE id = $1", [result.userId])).rows[0].email;
-    const body: AuthResponse = { token, me: await loadMe(db, result.userId, email) };
+    const body: AuthResponse = { token, me: await me(result.userId, email) };
     return { status: result.created ? 201 : 200, body };
   });
 
@@ -437,7 +481,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
   router.add("GET", "/api/me", async (req) => {
     const { userId, email } = await requireUser(db, req);
-    return { body: await loadMe(db, userId, email) };
+    return { body: await me(userId, email) };
   });
 
   // --- family -----------------------------------------------------------
@@ -457,7 +501,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         throw err;
       }
     });
-    return { status: 201, body: await loadMe(db, userId, email) };
+    return { status: 201, body: await me(userId, email) };
   });
 
   router.add("PATCH", "/api/family", async (req) => {
@@ -465,6 +509,47 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const name = v.text(v.object(req.body).name, "Family name");
     await db.query("UPDATE family SET name = $1 WHERE id = $2", [name, member.family_id]);
     return { status: 204 };
+  });
+
+  router.add("PUT", "/api/family/address", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const a = address(v.object(req.body));
+    await db.query(
+      `UPDATE family SET address_line1 = $1, address_line2 = $2, address_town = $3, address_county = $4, address_postcode = $5,
+          address_latitude = $6, address_longitude = $7
+        WHERE id = $8`,
+      [a.line1, a.line2, a.town, a.county, a.postcode, a.latitude, a.longitude, member.family_id],
+    );
+    return { body: a };
+  });
+
+  router.add("DELETE", "/api/family/address", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    await db.query(
+      `UPDATE family SET address_line1 = NULL, address_line2 = NULL, address_town = NULL, address_county = NULL, address_postcode = NULL,
+          address_latitude = NULL, address_longitude = NULL
+        WHERE id = $1`,
+      [member.family_id],
+    );
+    return { status: 204 };
+  });
+
+  // Called from the API, not the browser, so the lookup service's key stays on the server.
+  router.add("POST", "/api/family/address/lookup", async (req) => {
+    await requireAdmin(db, req);
+    if (!options.lookupAddress) throw new HttpError(503, "Address lookup isn't set up, so type the address in");
+    const postcode = v.postcode(v.object(req.body).postcode);
+    let addresses: Address[];
+    try {
+      addresses = await options.lookupAddress(postcode);
+    } catch (err) {
+      if (!(err instanceof AddressLookupError)) throw err;
+      console.error("Address lookup failed", err.message);
+      throw new HttpError(502, "Couldn't look up addresses just now, so type the address in");
+    }
+    if (!addresses.length) throw new HttpError(404, `No addresses found for ${postcode}`);
+    const body: AddressLookupResponse = { addresses };
+    return { body };
   });
 
   // Add someone without a login. They can stay that way (a baby, a toddler) or be sent an
@@ -613,7 +698,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         throw err;
       }
     });
-    return { body: await loadMe(db, userId, email) };
+    return { body: await me(userId, email) };
   });
 
   // --- favourite recipes --------------------------------------------------

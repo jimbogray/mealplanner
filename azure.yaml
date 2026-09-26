@@ -33,3 +33,4 @@ pipeline:
   secrets:
     - POSTGRES_ADMIN_PASSWORD
     - ANTHROPIC_API_KEY
+    - IDEAL_POSTCODES_API_KEY

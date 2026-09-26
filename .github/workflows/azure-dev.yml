@@ -33,6 +33,7 @@ jobs:
       RECIPE_MODEL: ${{ vars.RECIPE_MODEL }}
       POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      IDEAL_POSTCODES_API_KEY: ${{ secrets.IDEAL_POSTCODES_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
