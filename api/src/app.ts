@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import {
   addDays,
   canSignIn,
+  daysToPlan,
   isIsoDate,
   mondayOf,
   nextWeekToAdd,
@@ -768,7 +769,8 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     }
 
     const familyIds = await familyMemberIds(db, member.family_id);
-    const days = weekDays(startsOn).map((date): ScheduleDay => ({ date, memberIds: familyIds, guests: 0 }));
+    // This week starts from today: days already gone aren't planned.
+    const days = daysToPlan(startsOn, today).map((date): ScheduleDay => ({ date, memberIds: familyIds, guests: 0 }));
     if (b.days !== undefined) {
       if (!Array.isArray(b.days)) throw new HttpError(400, "Days must be a list");
       const seen = new Set<string>();
@@ -776,6 +778,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         const d = v.object(raw);
         const date = v.isoDate(d.date, "Day");
         const i = days.findIndex((day) => day.date === date);
+        if (i < 0 && weekDays(startsOn).includes(date)) throw new HttpError(400, `${date} has already passed`);
         if (i < 0) throw new HttpError(400, `${date} isn't in the week starting ${startsOn}`);
         if (seen.has(date)) throw new HttpError(400, `${date} is listed twice`);
         seen.add(date);
@@ -817,6 +820,9 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         await tx.query<{ id: string }>("SELECT id FROM schedule_week WHERE family_id = $1 AND starts_on = $2", [member.family_id, startsOn])
       ).rows[0];
       if (!week) throw new HttpError(404, "That week isn't in your schedule");
+      // Only days in the schedule can change (a week added mid-week has no earlier days).
+      const exists = (await tx.query("SELECT 1 FROM schedule_day WHERE week_id = $1 AND day = $2", [week.id, date])).rowCount;
+      if (!exists) throw new HttpError(404, "That day isn't in this week");
       await saveDay(tx, week.id, day);
     });
     const body: ScheduleDay = (await loadWeeks(db, member.family_id, startsOn))[0].days.find((d) => d.date === date)!;

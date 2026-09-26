@@ -1,4 +1,4 @@
-import { MAX_GUESTS, mondayOf, nextWeekToAdd, weekDays, type FamilyMember, type ScheduleDay, type ScheduleWeek } from "@mealplanner/shared";
+import { daysToPlan, MAX_GUESTS, mondayOf, nextWeekToAdd, type FamilyMember, type ScheduleDay, type ScheduleWeek } from "@mealplanner/shared";
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
@@ -73,7 +73,7 @@ function Schedule({ members }: { members: FamilyMember[] }) {
           <WeekForm
             title={next === thisWeek ? "This week" : weekLabel(adding)}
             members={members}
-            days={weekDays(adding).map((date) => ({ date, memberIds: members.map((m) => m.id), guests: 0 }))}
+            days={daysToPlan(adding, today).map((date) => ({ date, memberIds: members.map((m) => m.id), guests: 0 }))}
             submitLabel="Add week"
             onCancel={() => setAdding(null)}
             onSave={async (days) => {
@@ -144,7 +144,7 @@ function Week({
     <section className="card">
       <div className="week-head">
         <h2>{title}</h2>
-        {isCurrent && <span className="note small">from {dayLabel(week.startsOn)}</span>}
+        {isCurrent && <span className="note small">from {dayLabel(week.days[0]?.date ?? week.startsOn)}</span>}
         <div className="week-actions">
           <button className="link" onClick={() => setEditing(true)}>
             Edit
