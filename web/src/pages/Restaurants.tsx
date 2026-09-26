@@ -3,6 +3,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
+import { PlaceInput, type PickedPlace } from "../components/PlaceInput";
 import { AverageRating, StarRating } from "../components/Stars";
 import { useSession } from "../session";
 
@@ -156,6 +157,8 @@ function RestaurantForm({
   const [url, setUrl] = useState(initial?.url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [address, setAddress] = useState(initial?.address ?? "");
+  const [picked, setPicked] = useState<PickedPlace | null>(null);
+  const addressSearch = useSession().me?.addressSearch ?? false;
   const [cuisine, setCuisine] = useState(initial?.cuisine ?? "");
   const [bookingUrl, setBookingUrl] = useState(initial?.bookingUrl ?? "");
   const [busy, setBusy] = useState(false);
@@ -173,6 +176,7 @@ function RestaurantForm({
         address: address.trim() || null,
         cuisine: cuisine.trim() || null,
         bookingUrl: bookingUrl.trim() || null,
+        ...picked,
       });
       onSaved(saved);
       if (!initial) {
@@ -180,6 +184,7 @@ function RestaurantForm({
         setUrl("");
         setNotes("");
         setAddress("");
+        setPicked(null);
         setCuisine("");
         setBookingUrl("");
       }
@@ -208,7 +213,15 @@ function RestaurantForm({
         htmlFor={`${id}-address`}
         hint="Leave blank to read it from the link, or find it by name near home. Used to work out the driving time."
       >
-        <input id={`${id}-address`} value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} autoComplete="off" />
+        <PlaceInput
+          id={`${id}-address`}
+          value={address}
+          search={addressSearch}
+          onChange={(value, place) => {
+            setAddress(value);
+            setPicked(place);
+          }}
+        />
       </Field>
       {initial && (
         <div className="row">

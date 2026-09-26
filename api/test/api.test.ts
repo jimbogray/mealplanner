@@ -94,6 +94,18 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
           if (!(placeId in places)) throw new AddressSearchError("unknown place");
           return places[placeId];
         },
+        // Restaurants: "Mill" finds one in Bristol (the only place nearer than London when searching from Bath).
+        suggestPlaces: async (input, _token, near) => {
+          if (!input.includes("Mill")) return [];
+          const bristol = { placeId: "place-mill", text: "The Mill", secondaryText: "3 Mill Lane, Bristol BS1 1AA" };
+          const london = { placeId: "place-mill-london", text: "Mill Kitchen", secondaryText: "London" };
+          return near ? [bristol, london] : [london, bristol];
+        },
+        place: async (placeId) => {
+          if (placeId === "place-nowhere") return null;
+          if (placeId !== "place-mill") throw new AddressSearchError("unknown place");
+          return { address: "3 Mill Lane, Bristol BS1 1AA", lat: 51.45, lng: -2.59 };
+        },
       },
       // A tiny map: a few known places, "broken" stands for the service being down.
       maps: {
@@ -931,6 +943,28 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual([res.body.notes, res.body.driveMinutes], ["Nice", 30]);
       res = await call<Restaurant>("PUT", path, { token, body: { name: "Moving Mill", address: "somewhere unknown" } });
       assert.deepEqual([res.body.address, res.body.driveMinutes], ["somewhere unknown", null]);
+    });
+
+    test("the address can be picked from suggestions, nearest home first", async () => {
+      const session = "restaurant-session-1";
+      // The home, with its coordinates, is where suggestions are centred.
+      assert.equal((await call("PUT", "/api/family/address", { token, body: { placeId: "place-bath", sessionToken: session } })).status, 200);
+      const res = await call<AddressSearchResponse>("POST", "/api/family/restaurants/address/search", {
+        token,
+        body: { input: "Mill", sessionToken: session },
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.suggestions.map((s) => s.placeId), ["place-mill", "place-mill-london"]);
+      const picked = await add({ name: "Picked Mill", address: "The Mill", placeId: "place-mill", sessionToken: session });
+      assert.deepEqual([picked.address, picked.driveMinutes], ["3 Mill Lane, Bristol BS1 1AA", 30]);
+      // Picking again when editing replaces the address.
+      const edited = await call<Restaurant>("PUT", `/api/family/restaurants/${picked.id}`, {
+        token,
+        body: { name: "Picked Mill", address: "The Mill", placeId: "place-nowhere", sessionToken: session },
+      });
+      assert.equal(edited.status, 400);
+      const missing = await call("POST", "/api/family/restaurants", { token, body: { name: "No Session", placeId: "place-mill" } });
+      assert.equal(missing.status, 400);
     });
 
     test("if the map service is down the restaurant is still saved", async () => {

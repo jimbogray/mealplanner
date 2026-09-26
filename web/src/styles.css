@@ -238,3 +238,4 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .cuisine { font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; background: #fdf3dd; color: #7a5510; }
 .book { font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; border: 1px solid var(--accent); text-decoration: none; font-weight: 500; }
 .book:hover { background: #e1f5ee; }
+.address-search { display: flex; flex-direction: column; }

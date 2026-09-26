@@ -416,4 +416,7 @@ export interface RestaurantInput {
   /** Left blank, these are read from the restaurant's web page (url) when there is one. */
   cuisine?: string | null;
   bookingUrl?: string | null;
+  /** An address suggestion picked from POST /api/family/restaurants/address/search, with that search's session. */
+  placeId?: string;
+  sessionToken?: string;
 }

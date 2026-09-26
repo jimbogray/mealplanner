@@ -23,7 +23,7 @@ import {
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
-import { AddressSearchError, type AddressSearch } from "./places.js";
+import { AddressSearchError, type AddressSearch, type FoundPlace } from "./places.js";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
@@ -361,6 +361,8 @@ interface RestaurantInput {
   address: string | null;
   cuisine: string | null;
   bookingUrl: string | null;
+  /** An address suggestion the person picked (see /api/family/restaurants/address/search). */
+  picked: { placeId: string; sessionToken: string } | null;
 }
 
 function optionalWebUrl(value: unknown, field: string): string | null {
@@ -377,6 +379,7 @@ function restaurantInput(body: unknown): RestaurantInput {
     address: v.optionalText(b.address, "Address", 200),
     cuisine: v.optionalText(b.cuisine, "Cuisine", 60),
     bookingUrl: optionalWebUrl(b.bookingUrl, "Booking link"),
+    picked: b.placeId == null ? null : { placeId: v.text(b.placeId, "Address", 1000), sessionToken: sessionToken(b.sessionToken) },
   };
 }
 
@@ -438,7 +441,20 @@ async function locateRestaurant(
   maps: Maps | undefined,
   home: { lat: number; lng: number } | null,
   r: { name: string; address: string | null },
+  picked: FoundPlace | null = null,
 ): Promise<RestaurantLocation> {
+  if (picked) {
+    // Picked from the address suggestions, so it's already on the map.
+    const location: RestaurantLocation = { address: picked.address, latitude: picked.lat, longitude: picked.lng, drive_minutes: null };
+    if (maps && home) {
+      try {
+        location.drive_minutes = await maps.driveMinutes(home, picked);
+      } catch (err) {
+        console.error("Working out a driving time failed", err);
+      }
+    }
+    return location;
+  }
   const location: RestaurantLocation = { address: r.address, latitude: null, longitude: null, drive_minutes: null };
   // Searching by name alone only makes sense near home.
   if (!maps || (!r.address && !home)) return location;
@@ -1015,6 +1031,27 @@ export function buildRouter(
   });
 
   // --- restaurants --------------------------------------------------------
+
+  /** Where the address suggestion someone picked is. */
+  const pickedPlace = async (r: RestaurantInput): Promise<FoundPlace | null> => {
+    if (!r.picked) return null;
+    const { placeId, sessionToken } = r.picked;
+    const place = await searching(() => requireAddressSearch().place(placeId, sessionToken));
+    if (!place) throw new HttpError(400, "Choose an address from the list, or type it in");
+    return place;
+  };
+
+  // Suggestions as someone types a restaurant's address (or its name), nearest home first.
+  router.add("POST", "/api/family/restaurants/address/search", async (req) => {
+    const { member } = await requireMember(db, req);
+    const search = requireAddressSearch();
+    const b = v.object(req.body);
+    const input = v.text(b.input, "Address", 200);
+    const token = sessionToken(b.sessionToken);
+    const near = await homeLocation(db, undefined, member.family_id);
+    const body: AddressSearchResponse = { suggestions: await searching(() => search.suggestPlaces(input, token, near)) };
+    return { body };
+  });
   // Like recipes, they belong to the family: anyone in it can add, edit or remove one.
 
   router.add("GET", "/api/family/restaurants", async (req) => {
@@ -1033,8 +1070,9 @@ export function buildRouter(
     const typed = restaurantInput(req.body);
     const taken = await db.query("SELECT 1 FROM restaurant WHERE family_id = $1 AND lower(name) = lower($2)", [member.family_id, typed.name]);
     if (taken.rowCount) throw new HttpError(409, `${typed.name} is already one of your restaurants`);
+    const picked = await pickedPlace(typed);
     const r = await fillFromPage(options, typed);
-    const at = await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r);
+    const at = await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r, picked);
     let id: string;
     try {
       id = (
@@ -1065,10 +1103,11 @@ export function buildRouter(
     // Only look it up again when where it is may have changed. A blank address means "find it by name".
     const typedAddressKept = r.address !== null && r.address === current.address && current.latitude !== null;
     const foundByNameKept = r.address === null && r.name === current.name && current.latitude !== null;
+    const picked = await pickedPlace(typed);
     const at: RestaurantLocation =
-      typedAddressKept || foundByNameKept
+      !picked && (typedAddressKept || foundByNameKept)
         ? current
-        : await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r);
+        : await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r, picked);
     let updated;
     try {
       updated = await db.query(

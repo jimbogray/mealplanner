@@ -160,6 +160,10 @@ a link has Claude read that page for the type of cuisine, the address and a link
 table (OpenTable, ResDiary and so on). It only fills in what was left blank, and a booking link
 is kept only if it really is on the page. The address it finds is then used for the driving time.
 
+With `GOOGLE_PLACES_API_KEY` set (the key used for the home address), the restaurant's address box
+suggests places as you type (restaurant names, streets or postcodes), nearest home first. Picking
+one saves its exact location, so the driving time needs no further map lookup.
+
 ## Deploying
 
 ### To Azure with azd
