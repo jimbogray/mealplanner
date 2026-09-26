@@ -1,9 +1,11 @@
 # Family app
 
 A simple starting point: someone signs up and creates a **family**, then invites the
-rest of the family with a shareable link. Every family member has a **life stage**:
-baby, toddler, child, teenager or adult. Members who won't sign in themselves (a baby,
-a toddler) can be added directly by an admin.
+rest of the family with a shareable link. Every family member has a **life stage**
+(baby, toddler, child, teenager or adult), a **diet** (no restriction, vegetarian or
+vegan) and any **allergies** from the UK's 14 major food allergens. Admins can add
+members whether or not they'll ever sign in, and later send an added member a link to
+sign in as themselves.
 
 The earlier meal-planning code (fridge inventory, SMS poll, AI recipes) is parked in
 [`legacy/`](legacy/NOTE.md).
@@ -24,16 +26,17 @@ everywhere (locally, in CI, in a container) without the Functions host.
 
 - `app_user`: a login: email plus a scrypt password hash, a linked Google account, or both.
 - `family`: a family, with a name.
-- `family_member`: a person in a family, with `name`, `life_stage` and `role`
-  (`admin` or `member`). `user_id` is set only for people with their own login.
-- `invite`: a one-time invite code for a family, valid for 14 days.
+- `family_member`: a person in a family, with `name`, `life_stage`, `diet`, `allergies`
+  and `role` (`admin` or `member`). `user_id` is set only for people with their own login.
+- `invite`: a one-time invite code for a family, valid for 14 days. If `member_id` is set,
+  accepting it gives that existing member a login instead of adding a new member.
 - `session`: sign-in tokens (only their SHA-256 hash is stored).
 
 ### Who can do what
 
 - The person who creates a family is its **admin**. Admins can add, edit and remove
   members, make other members with a login admins, and create or revoke invite links.
-- Everyone can edit their own name and life stage, and leave the family.
+- Everyone can edit their own name, life stage, diet and allergies, and leave the family.
 - A family always keeps at least one admin.
 
 ## API
@@ -42,18 +45,18 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 
 | Method & path | Who | Does |
 |---|---|---|
-| `POST /api/auth/signup` | anyone | `{email, password, name, lifeStage, familyName}` creates a family, or `{…, inviteCode}` joins one. Returns `{token, me}`. |
+| `POST /api/auth/signup` | anyone | `{email, password, name, lifeStage, familyName}` creates a family, or `{…, inviteCode}` joins one (`name`/`lifeStage` not needed for a member invite). Returns `{token, me}`. |
 | `POST /api/auth/login` | anyone | `{email, password}` → `{token, me}` |
 | `POST /api/auth/google` | anyone | `{credential}` (a Google ID token) signs in. To sign up, add `lifeStage` and `familyName` or `inviteCode` (`name` defaults to the Google name). |
 | `POST /api/auth/logout` | signed in | ends the session |
 | `GET /api/me` | signed in | you, your family and its members |
 | `POST /api/family` | signed in, no family | `{familyName, name, lifeStage}` starts a family |
 | `PATCH /api/family` | admin | `{name}` renames the family |
-| `POST /api/family/members` | admin | `{name, lifeStage}` adds a member without a login |
-| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, role?}` (role: admins only) |
+| `POST /api/family/members` | admin | `{name, lifeStage, diet?, allergies?}` adds a member without a login |
+| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, diet?, allergies?, role?}` (role: admins only) |
 | `DELETE /api/family/members/:id` | admin, or yourself | removes a member / leaves |
 | `GET /api/family/invites` | admin | open invites |
-| `POST /api/family/invites` | admin | creates an invite → `{code, expiresAt, …}` |
+| `POST /api/family/invites` | admin | creates an invite → `{code, expiresAt, …}`; `{memberId}` makes it an invite for that existing member to sign in as themselves |
 | `DELETE /api/family/invites/:id` | admin | revokes an invite |
 | `GET /api/invites/:code` | anyone | family name and inviter, for the join page |
 | `POST /api/invites/:code/accept` | signed in, no family | `{name, lifeStage}` joins the family |

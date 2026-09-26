@@ -79,10 +79,11 @@ export const api = {
   removeMember: (id: string) => request<void>("DELETE", `/api/family/members/${id}`),
 
   invites: () => request<Invite[]>("GET", "/api/family/invites"),
-  createInvite: () => request<Invite>("POST", "/api/family/invites"),
+  createInvite: (memberId?: string) => request<Invite>("POST", "/api/family/invites", memberId ? { memberId } : {}),
   revokeInvite: (id: string) => request<void>("DELETE", `/api/family/invites/${id}`),
   previewInvite: (code: string) => request<InvitePreview>("GET", `/api/invites/${encodeURIComponent(code)}`),
-  acceptInvite: (code: string, body: MemberInput) => request<Me>("POST", `/api/invites/${encodeURIComponent(code)}/accept`, body),
+  acceptInvite: (code: string, body: Partial<MemberInput>) => request<Me>("POST", `/api/invites/${encodeURIComponent(code)}/accept`, body),
+
 
   recipes: () => request<FavouriteRecipe[]>("GET", "/api/family/recipes"),
   previewRecipe: (url: string) => request<RecipePreview>("POST", "/api/family/recipes/preview", { url }),

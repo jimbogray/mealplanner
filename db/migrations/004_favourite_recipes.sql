@@ -1,5 +1,4 @@
 -- A family's favourite recipes, each a link to a recipe page on the web.
--- (003 is left for PR #6's diet and allergy fields.)
 
 CREATE TABLE favourite_recipe (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

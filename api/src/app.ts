@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import type { AuthResponse, Family, FamilyMember, FavouriteRecipe, Invite, InvitePreview, Me, RecipePreview } from "@mealplanner/shared";
+import type { AuthResponse, Family, FamilyMember, FavouriteRecipe, Invite, InvitePreview, LifeStage, Me, RecipePreview } from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
@@ -18,12 +18,14 @@ interface MemberRow {
   user_id: string | null;
   name: string;
   life_stage: FamilyMember["lifeStage"];
+  diet: FamilyMember["diet"];
+  allergies: FamilyMember["allergies"];
   role: FamilyMember["role"];
   email: string | null;
   created_at: Date;
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.life_stage, m.role, u.email, m.created_at
+const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.life_stage, m.diet, m.allergies, m.role, u.email, m.created_at
   FROM family_member m LEFT JOIN app_user u ON u.id = m.user_id`;
 
 function toMember(r: MemberRow): FamilyMember {
@@ -31,6 +33,8 @@ function toMember(r: MemberRow): FamilyMember {
     id: r.id,
     name: r.name,
     lifeStage: r.life_stage,
+    diet: r.diet,
+    allergies: r.allergies,
     role: r.role,
     hasAccount: r.user_id !== null,
     email: r.email,
@@ -85,7 +89,18 @@ async function adminCount(db: Queryable, familyId: string): Promise<number> {
   return rows[0].n;
 }
 
-async function createFamily(tx: Tx, userId: string, familyName: string, name: string, lifeStage: string): Promise<void> {
+/** The new member's name and life stage, validated only when a new member row is actually created. */
+type Profile = () => { name: string; lifeStage: LifeStage };
+
+function profileFrom(b: Record<string, unknown>, fallbackName: string | null = null): Profile {
+  return () => ({
+    name: v.text(typeof b.name === "string" && b.name.trim() ? b.name : fallbackName, "Your name"),
+    lifeStage: v.lifeStage(b.lifeStage),
+  });
+}
+
+async function createFamily(tx: Tx, userId: string, familyName: string, profile: Profile): Promise<void> {
+  const { name, lifeStage } = profile();
   const { rows } = await tx.query<{ id: string }>("INSERT INTO family (name) VALUES ($1) RETURNING id", [familyName]);
   await tx.query(
     "INSERT INTO family_member (family_id, user_id, name, life_stage, role) VALUES ($1, $2, $3, $4, 'admin')",
@@ -93,22 +108,57 @@ async function createFamily(tx: Tx, userId: string, familyName: string, name: st
   );
 }
 
-/** Uses up an invite and adds the user to its family. Locks the invite row so a code can't be used twice. */
-async function acceptInvite(tx: Tx, code: string, userId: string, name: string, lifeStage: string): Promise<void> {
+/**
+ * Uses up an invite and adds the user to its family: as the invite's existing member if it
+ * names one, otherwise as a new member. Locks the invite row so a code can't be used twice.
+ */
+async function acceptInvite(tx: Tx, code: string, userId: string, profile: Profile): Promise<void> {
   const invite = (
-    await tx.query<{ id: string; family_id: string; accepted_at: Date | null; expired: boolean }>(
-      "SELECT id, family_id, accepted_at, expires_at <= now() AS expired FROM invite WHERE code = $1 FOR UPDATE",
+    await tx.query<{ id: string; family_id: string; member_id: string | null; accepted_at: Date | null; expired: boolean }>(
+      "SELECT id, family_id, member_id, accepted_at, expires_at <= now() AS expired FROM invite WHERE code = $1 FOR UPDATE",
       [code.trim().toUpperCase()],
     )
   ).rows[0];
   if (!invite) throw new HttpError(404, "That invite link isn't valid");
   if (invite.accepted_at) throw new HttpError(410, "That invite link has already been used");
   if (invite.expired) throw new HttpError(410, "That invite link has expired, ask for a new one");
-  const { rows } = await tx.query<{ id: string }>(
-    "INSERT INTO family_member (family_id, user_id, name, life_stage, role) VALUES ($1, $2, $3, $4, 'member') RETURNING id",
-    [invite.family_id, userId, name, lifeStage],
-  );
-  await tx.query("UPDATE invite SET accepted_by = $1, accepted_at = now() WHERE id = $2", [rows[0].id, invite.id]);
+  let memberId: string;
+  if (invite.member_id) {
+    const { rows } = await tx.query<{ id: string }>(
+      "UPDATE family_member SET user_id = $1 WHERE id = $2 AND user_id IS NULL RETURNING id",
+      [userId, invite.member_id],
+    );
+    if (!rows[0]) throw new HttpError(410, "That person already has their own login");
+    memberId = rows[0].id;
+  } else {
+    const { name, lifeStage } = profile();
+    const { rows } = await tx.query<{ id: string }>(
+      "INSERT INTO family_member (family_id, user_id, name, life_stage, role) VALUES ($1, $2, $3, $4, 'member') RETURNING id",
+      [invite.family_id, userId, name, lifeStage],
+    );
+    memberId = rows[0].id;
+  }
+  await tx.query("UPDATE invite SET accepted_by = $1, accepted_at = now() WHERE id = $2", [memberId, invite.id]);
+}
+
+interface InviteRow {
+  id: string;
+  code: string;
+  member_id: string | null;
+  member_name: string | null;
+  created_at: Date;
+  expires_at: Date;
+}
+
+function toInvite(r: InviteRow): Invite {
+  return {
+    id: r.id,
+    code: r.code,
+    memberId: r.member_id,
+    memberName: r.member_name,
+    createdAt: r.created_at.toISOString(),
+    expiresAt: r.expires_at.toISOString(),
+  };
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -179,9 +229,9 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const b = v.object(req.body);
     const email = v.email(b.email);
     const password = v.password(b.password);
-    const name = v.text(b.name, "Your name");
-    const lifeStage = v.lifeStage(b.lifeStage);
+    const profile = profileFrom(b);
     const { familyName, inviteCode } = familyChoice(b);
+    if (!inviteCode) profile(); // Validate before the (slow) password hash.
     if (!familyName && !inviteCode) throw new HttpError(400, "Family name is required");
 
     const passwordHash = await hashPassword(password);
@@ -198,8 +248,8 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         if (isUniqueViolation(err)) throw new HttpError(409, "An account with that email already exists, sign in instead");
         throw err;
       }
-      if (inviteCode) await acceptInvite(tx, inviteCode, userId, name, lifeStage);
-      else await createFamily(tx, userId, familyName!, name, lifeStage);
+      if (inviteCode) await acceptInvite(tx, inviteCode, userId, profile);
+      else await createFamily(tx, userId, familyName!, profile);
       return { userId, token: await createSession(tx, userId) };
     });
     const body: AuthResponse = { token, me: await loadMe(db, userId, email) };
@@ -239,6 +289,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       throw err;
     }
     const { familyName, inviteCode } = familyChoice(b);
+    const profile = profileFrom(b, identity.name);
 
     const result = await withTransaction(db, async (tx) => {
       // Prefer the account already linked to this Google id; otherwise one with the same (Google-verified) email.
@@ -259,10 +310,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         // Opening an invite link while not in a family joins it.
         if (inviteCode) {
           const inFamily = (await tx.query("SELECT 1 FROM family_member WHERE user_id = $1", [existing.id])).rowCount;
-          if (!inFamily) {
-            const name = v.text(typeof b.name === "string" && b.name.trim() ? b.name : identity.name, "Your name");
-            await acceptInvite(tx, inviteCode, existing.id, name, v.lifeStage(b.lifeStage));
-          }
+          if (!inFamily) await acceptInvite(tx, inviteCode, existing.id, profile);
         }
         return { userId: existing.id, created: false };
       }
@@ -270,16 +318,14 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       if (!familyName && !inviteCode) {
         throw new HttpError(404, "No account uses that Google address yet. Create a family, or open your invite link, to sign up.");
       }
-      const name = v.text(typeof b.name === "string" && b.name.trim() ? b.name : identity.name, "Your name");
-      const lifeStage = v.lifeStage(b.lifeStage);
       const userId = (
         await tx.query<{ id: string }>("INSERT INTO app_user (email, google_sub) VALUES ($1, $2) RETURNING id", [
           identity.email,
           identity.sub,
         ])
       ).rows[0].id;
-      if (inviteCode) await acceptInvite(tx, inviteCode, userId, name, lifeStage);
-      else await createFamily(tx, userId, familyName!, name, lifeStage);
+      if (inviteCode) await acceptInvite(tx, inviteCode, userId, profile);
+      else await createFamily(tx, userId, familyName!, profile);
       return { userId, created: true };
     });
 
@@ -307,11 +353,11 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const { userId, email } = await requireUser(db, req);
     const b = v.object(req.body);
     const familyName = v.text(b.familyName, "Family name");
-    const name = v.text(b.name, "Your name");
-    const lifeStage = v.lifeStage(b.lifeStage);
+    const profile = profileFrom(b);
+    profile();
     await withTransaction(db, async (tx) => {
       try {
-        await createFamily(tx, userId, familyName, name, lifeStage);
+        await createFamily(tx, userId, familyName, profile);
       } catch (err) {
         if (isUniqueViolation(err)) throw new HttpError(409, "You're already part of a family");
         throw err;
@@ -327,20 +373,23 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     return { status: 204 };
   });
 
-  // Add someone without their own login (a baby, a toddler, a child without an email…).
+  // Add someone without a login. They can stay that way (a baby, a toddler) or be sent an
+  // invite for this member later to sign in as themselves.
   router.add("POST", "/api/family/members", async (req) => {
     const { member } = await requireAdmin(db, req);
     const b = v.object(req.body);
     const name = v.text(b.name, "Name");
     const lifeStage = v.lifeStage(b.lifeStage);
+    const diet = b.diet === undefined ? "none" : v.diet(b.diet);
+    const allergies = b.allergies === undefined ? [] : v.allergies(b.allergies);
     const { rows } = await db.query<{ id: string }>(
-      "INSERT INTO family_member (family_id, name, life_stage) VALUES ($1, $2, $3) RETURNING id",
-      [member.family_id, name, lifeStage],
+      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+      [member.family_id, name, lifeStage, diet, allergies],
     );
     return { status: 201, body: toMember(await familyMember(db, member.family_id, rows[0].id)) };
   });
 
-  // Admins can edit anyone; everyone can edit their own name and life stage.
+  // Admins can edit anyone; everyone can edit their own name, life stage, diet and allergies.
   router.add("PATCH", "/api/family/members/:id", async (req) => {
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
@@ -350,6 +399,8 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const b = v.object(req.body);
     const name = b.name === undefined ? target.name : v.text(b.name, "Name");
     const lifeStage = b.lifeStage === undefined ? target.life_stage : v.lifeStage(b.lifeStage);
+    const diet = b.diet === undefined ? target.diet : v.diet(b.diet);
+    const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
     let role = target.role;
     if (b.role !== undefined) {
       if (b.role !== "admin" && b.role !== "member") throw new HttpError(400, "Role must be admin or member");
@@ -360,12 +411,10 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       }
       role = b.role;
     }
-    await db.query("UPDATE family_member SET name = $1, life_stage = $2, role = $3 WHERE id = $4", [
-      name,
-      lifeStage,
-      role,
-      target.id,
-    ]);
+    await db.query(
+      "UPDATE family_member SET name = $1, life_stage = $2, diet = $3, allergies = $4, role = $5 WHERE id = $6",
+      [name, lifeStage, diet, allergies, role, target.id],
+    );
     return { body: toMember(await familyMember(db, self.family_id, target.id)) };
   });
 
@@ -385,29 +434,31 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
   router.add("GET", "/api/family/invites", async (req) => {
     const { member } = await requireAdmin(db, req);
-    const { rows } = await db.query<{ id: string; code: string; created_at: Date; expires_at: Date }>(
-      `SELECT id, code, created_at, expires_at FROM invite
-        WHERE family_id = $1 AND accepted_at IS NULL AND expires_at > now() ORDER BY created_at DESC`,
+    const { rows } = await db.query<InviteRow>(
+      `SELECT i.id, i.code, i.member_id, m.name AS member_name, i.created_at, i.expires_at
+         FROM invite i LEFT JOIN family_member m ON m.id = i.member_id
+        WHERE i.family_id = $1 AND i.accepted_at IS NULL AND i.expires_at > now() ORDER BY i.created_at DESC`,
       [member.family_id],
     );
-    const body: Invite[] = rows.map((r) => ({
-      id: r.id,
-      code: r.code,
-      createdAt: r.created_at.toISOString(),
-      expiresAt: r.expires_at.toISOString(),
-    }));
+    const body: Invite[] = rows.map(toInvite);
     return { body };
   });
 
   router.add("POST", "/api/family/invites", async (req) => {
     const { member } = await requireAdmin(db, req);
-    const { rows } = await db.query<{ id: string; code: string; created_at: Date; expires_at: Date }>(
-      `INSERT INTO invite (family_id, code, created_by, expires_at)
-       VALUES ($1, $2, $3, now() + make_interval(days => $4)) RETURNING id, code, created_at, expires_at`,
-      [member.family_id, newInviteCode(), member.id, INVITE_DAYS],
+    const b = req.body === undefined ? {} : v.object(req.body);
+    let target: MemberRow | null = null;
+    if (b.memberId !== undefined && b.memberId !== null) {
+      target = await familyMember(db, member.family_id, String(b.memberId));
+      if (target.user_id) throw new HttpError(400, `${target.name} already has their own login`);
+    }
+    const { rows } = await db.query<InviteRow>(
+      `INSERT INTO invite (family_id, code, created_by, member_id, expires_at)
+       VALUES ($1, $2, $3, $4, now() + make_interval(days => $5))
+       RETURNING id, code, member_id, NULL::text AS member_name, created_at, expires_at`,
+      [member.family_id, newInviteCode(), member.id, target?.id ?? null, INVITE_DAYS],
     );
-    const r = rows[0];
-    const body: Invite = { id: r.id, code: r.code, createdAt: r.created_at.toISOString(), expiresAt: r.expires_at.toISOString() };
+    const body = toInvite({ ...rows[0], member_name: target?.name ?? null });
     return { status: 201, body };
   });
 
@@ -423,9 +474,17 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
 
   // Public: shown on the join page before the invitee signs up.
   router.add("GET", "/api/invites/:code", async (req) => {
-    const { rows } = await db.query<{ family_name: string; invited_by: string | null; expires_at: Date; accepted_at: Date | null }>(
-      `SELECT f.name AS family_name, m.name AS invited_by, i.expires_at, i.accepted_at
-         FROM invite i JOIN family f ON f.id = i.family_id LEFT JOIN family_member m ON m.id = i.created_by
+    const { rows } = await db.query<{
+      family_name: string;
+      invited_by: string | null;
+      member_name: string | null;
+      expires_at: Date;
+      accepted_at: Date | null;
+    }>(
+      `SELECT f.name AS family_name, m.name AS invited_by, t.name AS member_name, i.expires_at, i.accepted_at
+         FROM invite i JOIN family f ON f.id = i.family_id
+         LEFT JOIN family_member m ON m.id = i.created_by
+         LEFT JOIN family_member t ON t.id = i.member_id
         WHERE i.code = $1`,
       [req.params.code.trim().toUpperCase()],
     );
@@ -433,19 +492,22 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     if (!r) throw new HttpError(404, "That invite link isn't valid");
     if (r.accepted_at) throw new HttpError(410, "That invite link has already been used");
     if (r.expires_at <= new Date()) throw new HttpError(410, "That invite link has expired, ask for a new one");
-    const body: InvitePreview = { familyName: r.family_name, invitedBy: r.invited_by ?? "A family member", expiresAt: r.expires_at.toISOString() };
+    const body: InvitePreview = {
+      familyName: r.family_name,
+      memberName: r.member_name,
+      invitedBy: r.invited_by ?? "A family member",
+      expiresAt: r.expires_at.toISOString(),
+    };
     return { body };
   });
 
   // For a signed-in user who isn't in a family yet.
   router.add("POST", "/api/invites/:code/accept", async (req) => {
     const { userId, email } = await requireUser(db, req);
-    const b = v.object(req.body);
-    const name = v.text(b.name, "Your name");
-    const lifeStage = v.lifeStage(b.lifeStage);
+    const profile = profileFrom(req.body === undefined ? {} : v.object(req.body));
     await withTransaction(db, async (tx) => {
       try {
-        await acceptInvite(tx, req.params.code, userId, name, lifeStage);
+        await acceptInvite(tx, req.params.code, userId, profile);
       } catch (err) {
         if (isUniqueViolation(err)) throw new HttpError(409, "You're already part of a family");
         throw err;

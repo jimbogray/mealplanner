@@ -1,6 +1,7 @@
-import type { FamilyMember, Invite, LifeStage, Me } from "@mealplanner/shared";
-import { useEffect, useState, type FormEvent } from "react";
+import type { Allergen, Diet, FamilyMember, Invite, LifeStage, Me } from "@mealplanner/shared";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, inviteUrl } from "../api";
+import { DietFields, dietSummary } from "../components/DietFields";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
 import { LifeStageBadge, LifeStageSelect } from "../components/LifeStageSelect";
 import { FavouriteRecipes } from "../components/FavouriteRecipes";
@@ -10,18 +11,47 @@ export function FamilyPage() {
   const { me } = useSession();
   if (!me) return null;
   if (!me.family || !me.member) return <NoFamily />;
-  const isAdmin = me.member.role === "admin";
+  return <FamilyView me={me} isAdmin={me.member.role === "admin"} />;
+}
+
+function FamilyView({ me, isAdmin }: { me: Me; isAdmin: boolean }) {
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isAdmin) api.invites().then(setInvites, (err) => setInviteError(errorMessage(err)));
+  }, [isAdmin, me.members.length]);
+
+  /** Creates an invite (for an existing member, if given) and returns it. */
+  const createInvite = useCallback(async (memberId?: string) => {
+    const invite = await api.createInvite(memberId);
+    setInvites((list) => [invite, ...list]);
+    return invite;
+  }, []);
+
   return (
     <div className="stack">
-      <Members me={me} isAdmin={isAdmin} />
+      <Members me={me} isAdmin={isAdmin} invites={invites} onInvite={createInvite} />
       <FavouriteRecipes />
       {isAdmin && <AddMember />}
-      {isAdmin && <Invites />}
+      {isAdmin && (
+        <Invites invites={invites} setInvites={setInvites} onCreate={() => createInvite()} error={inviteError} setError={setInviteError} />
+      )}
     </div>
   );
 }
 
-function Members({ me, isAdmin }: { me: Me; isAdmin: boolean }) {
+function Members({
+  me,
+  isAdmin,
+  invites,
+  onInvite,
+}: {
+  me: Me;
+  isAdmin: boolean;
+  invites: Invite[];
+  onInvite: (memberId: string) => Promise<Invite>;
+}) {
   return (
     <section className="card">
       <h1>{me.family!.name}</h1>
@@ -30,19 +60,52 @@ function Members({ me, isAdmin }: { me: Me; isAdmin: boolean }) {
       </p>
       <ul className="members">
         {me.members.map((m) => (
-          <MemberRow key={m.id} member={m} isSelf={m.id === me.member!.id} canEdit={isAdmin || m.id === me.member!.id} isAdmin={isAdmin} />
+          <MemberRow
+            key={m.id}
+            member={m}
+            isSelf={m.id === me.member!.id}
+            canEdit={isAdmin || m.id === me.member!.id}
+            isAdmin={isAdmin}
+            invite={invites.find((i) => i.memberId === m.id)}
+            onInvite={() => onInvite(m.id)}
+          />
         ))}
       </ul>
     </section>
   );
 }
 
-function MemberRow({ member, isSelf, canEdit, isAdmin }: { member: FamilyMember; isSelf: boolean; canEdit: boolean; isAdmin: boolean }) {
+function MemberRow({
+  member,
+  isSelf,
+  canEdit,
+  isAdmin,
+  invite,
+  onInvite,
+}: {
+  member: FamilyMember;
+  isSelf: boolean;
+  canEdit: boolean;
+  isAdmin: boolean;
+  invite: Invite | undefined;
+  onInvite: () => Promise<Invite>;
+}) {
   const { refresh } = useSession();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(member.name);
   const [lifeStage, setLifeStage] = useState<LifeStage>(member.lifeStage);
+  const [diet, setDiet] = useState<Diet>(member.diet);
+  const [allergies, setAllergies] = useState<Allergen[]>(member.allergies);
   const [error, setError] = useState<string | null>(null);
+  const summary = dietSummary(member.diet, member.allergies);
+
+  function startEditing() {
+    setName(member.name);
+    setLifeStage(member.lifeStage);
+    setDiet(member.diet);
+    setAllergies(member.allergies);
+    setEditing(true);
+  }
 
   async function run(action: () => Promise<unknown>) {
     setError(null);
@@ -57,7 +120,7 @@ function MemberRow({ member, isSelf, canEdit, isAdmin }: { member: FamilyMember;
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    await run(() => api.updateMember(member.id, { name, lifeStage }));
+    await run(() => api.updateMember(member.id, { name, lifeStage, diet, allergies }));
   }
 
   function remove() {
@@ -68,13 +131,18 @@ function MemberRow({ member, isSelf, canEdit, isAdmin }: { member: FamilyMember;
   if (editing) {
     return (
       <li>
-        <form className="row" onSubmit={save}>
-          <input aria-label="Name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
-          <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
-          <button type="submit">Save</button>
-          <button type="button" className="secondary" onClick={() => setEditing(false)}>
-            Cancel
-          </button>
+        <form className="stack" onSubmit={save}>
+          <div className="row">
+            <input aria-label="Name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+            <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
+          </div>
+          <DietFields idPrefix={`edit-${member.id}`} diet={diet} allergies={allergies} onDiet={setDiet} onAllergies={setAllergies} />
+          <div className="row">
+            <button type="submit">Save</button>
+            <button type="button" className="secondary" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
         </form>
         <ErrorNote error={error} />
       </li>
@@ -91,12 +159,18 @@ function MemberRow({ member, isSelf, canEdit, isAdmin }: { member: FamilyMember;
             {member.email ?? "No login"}
             {member.role === "admin" && " · Admin"}
           </div>
+          {summary && <div className="diet small">{summary}</div>}
         </div>
         <LifeStageBadge stage={member.lifeStage} />
         <div className="actions">
           {canEdit && (
-            <button className="link" onClick={() => setEditing(true)}>
+            <button className="link" onClick={startEditing}>
               Edit
+            </button>
+          )}
+          {isAdmin && !member.hasAccount && !invite && (
+            <button className="link" onClick={() => void run(onInvite)}>
+              Invite to sign in
             </button>
           )}
           {isAdmin && member.hasAccount && !isSelf && (
@@ -114,8 +188,29 @@ function MemberRow({ member, isSelf, canEdit, isAdmin }: { member: FamilyMember;
           )}
         </div>
       </div>
+      {invite && (
+        <p className="note small">
+          Sign-in link for {member.name}: <InviteLink invite={invite} />
+        </p>
+      )}
       <ErrorNote error={error} />
     </li>
+  );
+}
+
+function InviteLink({ invite }: { invite: Invite }) {
+  const [copied, setCopied] = useState(false);
+  const url = inviteUrl(invite.code);
+  return (
+    <span className="invite-link">
+      <code>{url}</code>
+      <button
+        className="link"
+        onClick={() => void navigator.clipboard.writeText(url).then(() => setCopied(true), () => setCopied(false))}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </span>
   );
 }
 
@@ -123,6 +218,8 @@ function AddMember() {
   const { refresh } = useSession();
   const [name, setName] = useState("");
   const [lifeStage, setLifeStage] = useState<LifeStage>("child");
+  const [diet, setDiet] = useState<Diet>("none");
+  const [allergies, setAllergies] = useState<Allergen[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,9 +228,11 @@ function AddMember() {
     setBusy(true);
     setError(null);
     try {
-      await api.addMember({ name, lifeStage });
+      await api.addMember({ name, lifeStage, diet, allergies });
       await refresh();
       setName("");
+      setDiet("none");
+      setAllergies([]);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -144,33 +243,45 @@ function AddMember() {
   return (
     <section className="card">
       <h2>Add a family member</h2>
-      <p className="note">For someone who won't sign in themselves, like a baby or young child.</p>
-      <form className="row" onSubmit={submit}>
-        <input aria-label="Name" placeholder="Name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
-        <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
-        <button type="submit" disabled={busy}>
-          Add
-        </button>
+      <p className="note">
+        Anyone in the family, whether or not they'll ever sign in. You can send them a link to sign in as themselves later.
+      </p>
+      <form className="stack" onSubmit={submit}>
+        <div className="row">
+          <input aria-label="Name" placeholder="Name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+          <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
+        </div>
+        <DietFields idPrefix="add" diet={diet} allergies={allergies} onDiet={setDiet} onAllergies={setAllergies} />
+        <div>
+          <button type="submit" disabled={busy}>
+            Add
+          </button>
+        </div>
       </form>
       <ErrorNote error={error} />
     </section>
   );
 }
 
-function Invites() {
-  const [invites, setInvites] = useState<Invite[]>([]);
+function Invites({
+  invites,
+  setInvites,
+  onCreate,
+  error,
+  setError,
+}: {
+  invites: Invite[];
+  setInvites: (update: (list: Invite[]) => Invite[]) => void;
+  onCreate: () => Promise<Invite>;
+  error: string | null;
+  setError: (error: string | null) => void;
+}) {
   const [copied, setCopied] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.invites().then(setInvites, (err) => setError(errorMessage(err)));
-  }, []);
 
   async function create() {
     setError(null);
     try {
-      const invite = await api.createInvite();
-      setInvites((list) => [invite, ...list]);
+      await onCreate();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -199,8 +310,9 @@ function Invites() {
     <section className="card">
       <h2>Invite family members</h2>
       <p className="note">
-        Create a link and send it to someone (by text, WhatsApp, email…). They'll set up their own login and join the family. Each link
-        works once and expires after 14 days.
+        Create a link and send it to someone (by text, WhatsApp, email…). They'll set up their own login and join the family. To
+        give someone you've already added their own login, use “Invite to sign in” next to their name. Each link works once and
+        expires after 14 days.
       </p>
       <button onClick={() => void create()}>Create invite link</button>
       <ErrorNote error={error} />
@@ -215,7 +327,9 @@ function Invites() {
               <button className="link danger" onClick={() => void revoke(invite.id)}>
                 Revoke
               </button>
-              <span className="note small">Expires {new Date(invite.expiresAt).toLocaleDateString()}</span>
+              <span className="note small">
+                {invite.memberName ? `For ${invite.memberName} · ` : ""}Expires {new Date(invite.expiresAt).toLocaleDateString()}
+              </span>
             </li>
           ))}
         </ul>

@@ -1,4 +1,4 @@
-import { isLifeStage, type LifeStage } from "@mealplanner/shared";
+import { ALLERGENS, isAllergen, isDiet, isLifeStage, type Allergen, type Diet, type LifeStage } from "@mealplanner/shared";
 import { HttpError } from "./http.js";
 
 export function object(body: unknown): Record<string, unknown> {
@@ -37,6 +37,18 @@ export function lifeStage(value: unknown): LifeStage {
 export function uuid(value: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new HttpError(404, "Not found");
   return value;
+}
+
+export function diet(value: unknown): Diet {
+  if (!isDiet(value)) throw new HttpError(400, "Diet must be none, vegetarian or vegan");
+  return value;
+}
+
+/** A de-duplicated list of known allergens, in ALLERGENS order. */
+export function allergies(value: unknown): Allergen[] {
+  if (!Array.isArray(value)) throw new HttpError(400, "Allergies must be a list");
+  for (const a of value) if (!isAllergen(a)) throw new HttpError(400, `Unknown allergy: ${String(a)}`);
+  return ALLERGENS.filter((a) => value.includes(a));
 }
 
 /** A web page address (http or https), without its #fragment. */
