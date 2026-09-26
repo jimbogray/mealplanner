@@ -152,6 +152,27 @@ After that, `azd up` or `azd deploy` both work. The API's allowed origin (`WEB_O
 wired up in the Bicep. For Google sign-in, add the `SERVICE_WEB_ENDPOINT` URL
 (`azd env get-values`) to the OAuth client's authorised origins.
 
+### From GitHub Actions
+
+**Deploy to production** (`.github/workflows/azure-dev.yml`) runs CI and then the same
+`azd provision` and `azd deploy` against the production azd environment. Start it from the
+repo's **Actions** tab → *Deploy to production* → *Run workflow* (on `main`). It never runs
+by itself.
+
+One-time setup, from a machine where `azd deploy` already works for `family-prod`:
+
+```bash
+azd pipeline config -e family-prod --provider github --auth-type federated
+```
+
+This creates a service principal that GitHub signs in as (OIDC, no stored password) with a
+federated credential for `main`, gives it access to the subscription, and sets the repo's
+Actions variables (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+`AZURE_ENV_NAME`, `AZURE_LOCATION`, `GOOGLE_CLIENT_ID`, `RECIPE_MODEL`) and secrets
+(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`) from your local azd environment, as listed
+under `pipeline:` in `azure.yaml`. If it offers to push, say no and merge the workflow
+through a pull request instead. Re-run it after changing any of those values locally.
+
 ### Elsewhere
 
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).

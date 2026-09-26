@@ -1,0 +1,60 @@
+name: Deploy to production
+
+# Runs CI, then `azd provision` and `azd deploy` against the production azd environment
+# (the same as running them locally). Start it from the Actions tab. One-time setup:
+# `azd pipeline config` (see README > Deploying to Azure > From GitHub Actions).
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    # The federated credential azd creates only trusts main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+      RECIPE_MODEL: ${{ vars.RECIPE_MODEL }}
+      POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: Azure/setup-azd@v2
+
+      - name: Sign in to Azure
+        run: |
+          azd auth login --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID" \
+            --federated-credential-provider github
+
+      # Applies any infra changes and refreshes the outputs the web build needs (VITE_API_URL).
+      - name: Provision
+        run: azd provision --no-prompt
+
+      # Builds the API image in the registry and the web app, then deploys both. The API
+      # applies database migrations when it starts.
+      - name: Deploy
+        run: azd deploy --no-prompt
+
+      - name: Summary
+        run: |
+          azd env get-values | grep -E '^SERVICE_(WEB|API)_ENDPOINT' | tee -a "$GITHUB_STEP_SUMMARY"

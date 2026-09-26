@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Also run first by "Deploy to production".
+  workflow_call:
 
 jobs:
   build-test:

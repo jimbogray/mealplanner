@@ -22,3 +22,12 @@ services:
     language: js
     host: staticwebapp
     dist: dist
+# What `azd pipeline config` copies from the azd environment into GitHub for the
+# "Deploy to production" workflow (.github/workflows/azure-dev.yml).
+pipeline:
+  variables:
+    - GOOGLE_CLIENT_ID
+    - RECIPE_MODEL
+  secrets:
+    - POSTGRES_ADMIN_PASSWORD
+    - ANTHROPIC_API_KEY
