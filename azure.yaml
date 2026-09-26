@@ -1,12 +1,6 @@
 # Azure Developer CLI (azd) configuration. Deploy with:  azd up
 # See README > Deploying to Azure.
 name: family
-hooks:
-  # Runs once before any service is packaged. Services are packaged in parallel, so
-  # installing (npm ci wipes node_modules) and building shared must happen here.
-  prepackage:
-    shell: sh
-    run: npm ci && npm run build --workspace shared
 services:
   api:
     project: ./api
@@ -22,6 +16,14 @@ services:
     language: js
     host: staticwebapp
     dist: dist
+    hooks:
+      # The web app imports @mealplanner/shared, so rebuild it first (a project-level
+      # hook doesn't run on `azd deploy`). npm install, not npm ci: ci would wipe
+      # node_modules while other services may be packaging in parallel. The API is
+      # built separately, inside its Docker image.
+      prepackage:
+        shell: sh
+        run: cd .. && npm install --no-audit --no-fund && npm run build --workspace shared
 # What `azd pipeline config` copies from the azd environment into GitHub for the
 # "Deploy to production" workflow (.github/workflows/azure-dev.yml).
 pipeline:
