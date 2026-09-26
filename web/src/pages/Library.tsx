@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { AddRecipe, recipeFacts, Thumb } from "../components/AddRecipe";
 import { ErrorNote, errorMessage } from "../components/Field";
+import { AverageRating, StarRating } from "../components/Stars";
 import { useSession } from "../session";
 
 /** The family's recipe library: add a recipe by its link, and browse them all as tiles. */
@@ -47,8 +48,7 @@ function Library({ isManager }: { isManager: boolean }) {
   async function rate(recipe: FavouriteRecipe, stars: number) {
     setError(null);
     try {
-      // Pressing your current rating again clears it.
-      const updated = await api.rateRecipe(recipe.id, recipe.myRating === stars ? 0 : stars);
+      const updated = await api.rateRecipe(recipe.id, stars);
       setRecipes((list) => (list ?? []).map((r) => (r.id === updated.id ? updated : r)));
     } catch (err) {
       setError(errorMessage(err));
@@ -67,15 +67,7 @@ function Library({ isManager }: { isManager: boolean }) {
           </span>
         </a>
         <div className="tile-corner">
-          {r.averageRating !== null && (
-            <span
-              className="tile-average"
-              title={`Family average from ${r.ratingCount} ${r.ratingCount === 1 ? "rating" : "ratings"}`}
-              aria-label={`Family average ${r.averageRating} out of 5`}
-            >
-              ★ {r.averageRating.toFixed(1)}
-            </span>
-          )}
+          <AverageRating average={r.averageRating} count={r.ratingCount} />
           <button
             className="tile-prepared"
             aria-pressed={r.prepared}
@@ -90,20 +82,7 @@ function Library({ isManager }: { isManager: boolean }) {
           ×
         </button>
         <div className="tile-foot">
-          <span className="stars" role="group" aria-label="Your rating">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                className={r.myRating !== null && n <= r.myRating ? "star on" : "star"}
-                aria-label={`${n} ${n === 1 ? "star" : "stars"}`}
-                aria-pressed={r.myRating === n}
-                title={r.myRating === n ? "Clear your rating" : `Rate ${n} out of 5`}
-                onClick={() => void rate(r, n)}
-              >
-                ★
-              </button>
-            ))}
-          </span>
+          <StarRating mine={r.myRating} onRate={(stars) => void rate(r, stars)} />
         </div>
       </li>
     );
