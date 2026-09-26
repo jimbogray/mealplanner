@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createSign, type KeyObject } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
-import type { AuthResponse, FamilyMember, Invite, InvitePreview, Me } from "@mealplanner/shared";
+import type { AuthResponse, FamilyMember, FavouriteRecipe, Invite, InvitePreview, Me, RecipePreview } from "@mealplanner/shared";
 import { createApp } from "../src/app.js";
 import { createPool, migrate, type Db } from "../src/db.js";
 
@@ -39,6 +39,29 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     server = createApp(db, {
       webOrigins: ["http://web.test"],
       google: { clientId: GOOGLE_CLIENT_ID, keys: async () => new Map([["test-kid", googleKey.publicKey]]) },
+      // Stand in for the web and for Claude, so tests stay offline.
+      fetchPage: async (url) => {
+        if (url.includes("unreachable")) throw new Error("offline");
+        // "noimage" pages have no share image, just photos in the page for Claude to choose from.
+        const head = url.includes("noimage")
+          ? `<title>Page title</title>`
+          : `<title>Page title</title><meta property="og:image" content="/p.jpg"><meta property="og:site_name" content="Good Food">`;
+        return {
+          url,
+          html: `${head}<h1>${url.includes("shop") ? "Buy pans" : "Easy pancakes"}</h1>
+            <img src="/step-1.jpg" alt="Whisking"><img src="/done.jpg" alt="A stack of pancakes">`,
+        };
+      },
+      readRecipe: async ({ url, text, images }) => {
+        const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
+        if (text.includes("Buy pans")) return { isRecipe: false, ...none };
+        if (text.includes("Easy pancakes")) {
+          // Claude picks the finished-dish photo, or (for "badpick") a URL that isn't on the page.
+          const pick = url.includes("badpick") ? "https://evil.example.com/x.jpg" : images.find((i) => i.alt?.includes("stack"))?.url ?? null;
+          return { isRecipe: true, name: "Easy pancakes", description: "Thin, lemony pancakes.", cookingMinutes: 25, mainProtein: "Eggs", imageUrl: pick };
+        }
+        throw new Error("unexpected page text: " + text);
+      },
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     base = `http://localhost:${(server.address() as AddressInfo).port}`;
@@ -271,6 +294,115 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     });
     assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: other.body.token, body: { name: "X" } })).status, 404);
     assert.equal((await call("DELETE", `/api/family/members/${babyId}`, { token: other.body.token })).status, 404);
+  });
+
+  describe("favourite recipes", () => {
+    let pancakesId: string;
+    const pancakes = "https://www.example.com/recipes/pancakes";
+
+    test("previewing a recipe link reads its details from the page", async () => {
+      const res = await call<RecipePreview>("POST", "/api/family/recipes/preview", { token: teenToken, body: { url: `${pancakes}#method` } });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, {
+        url: pancakes,
+        isRecipe: true,
+        name: "Easy pancakes",
+        description: "Thin, lemony pancakes.",
+        cookingMinutes: 25,
+        mainProtein: "Eggs",
+        imageUrl: "https://www.example.com/p.jpg",
+        siteName: "Good Food",
+        alreadySaved: false,
+      });
+    });
+
+    test("without a share image, Claude's pick of the page's photos is used", async () => {
+      const res = await call<RecipePreview>("POST", "/api/family/recipes/preview", {
+        token: teenToken,
+        body: { url: "https://www.example.com/noimage/pancakes" },
+      });
+      assert.equal(res.body.imageUrl, "https://www.example.com/done.jpg");
+      const bad = await call<RecipePreview>("POST", "/api/family/recipes/preview", {
+        token: teenToken,
+        body: { url: "https://www.example.com/noimage/badpick" },
+      });
+      assert.equal(bad.body.imageUrl, null);
+    });
+
+    test("any family member can save one, and the whole family sees it", async () => {
+      const preview = (await call<RecipePreview>("POST", "/api/family/recipes/preview", { token: teenToken, body: { url: pancakes } })).body;
+      const res = await call<FavouriteRecipe>("POST", "/api/family/recipes", { token: teenToken, body: preview });
+      assert.equal(res.status, 201);
+      pancakesId = res.body.id;
+      assert.equal(res.body.name, "Easy pancakes");
+      assert.equal(res.body.cookingMinutes, 25);
+      assert.equal(res.body.mainProtein, "Eggs");
+      assert.equal(res.body.addedBy, "Sam");
+      const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
+      assert.deepEqual(list.body.map((r) => r.id), [pancakesId]);
+    });
+
+    test("the same link can't be saved twice", async () => {
+      const preview = await call<RecipePreview>("POST", "/api/family/recipes/preview", { token: parentToken, body: { url: pancakes } });
+      assert.equal(preview.body.alreadySaved, true);
+      const res = await call("POST", "/api/family/recipes", { token: parentToken, body: { url: pancakes, name: "Again" } });
+      assert.equal(res.status, 409);
+    });
+
+    test("a page that isn't a recipe is flagged, and can still be saved with typed-in details", async () => {
+      const url = "https://shop.example.com/pans";
+      const preview = await call<RecipePreview>("POST", "/api/family/recipes/preview", { token: parentToken, body: { url } });
+      assert.equal(preview.body.isRecipe, false);
+      assert.equal(preview.body.name, null);
+      assert.equal(preview.body.cookingMinutes, null);
+      const saved = await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+        token: parentToken,
+        body: { ...preview.body, name: "Granny's pan curry", mainProtein: "Lamb", cookingMinutes: 90, description: "" },
+      });
+      assert.equal(saved.status, 201);
+      assert.equal(saved.body.description, null);
+      assert.equal(saved.body.cookingMinutes, 90);
+    });
+
+    test("a page that can't be read comes back empty for the person to fill in", async () => {
+      const preview = await call<RecipePreview>("POST", "/api/family/recipes/preview", {
+        token: parentToken,
+        body: { url: "unreachable.example.com/stew/" },
+      });
+      assert.equal(preview.body.url, "https://unreachable.example.com/stew/");
+      assert.equal(preview.body.isRecipe, null);
+      assert.equal(preview.body.name, null);
+    });
+
+    test("saved details are validated", async () => {
+      for (const body of [
+        { url: "javascript:alert(1)", name: "X" },
+        { url: "ftp://example.com/x", name: "X" },
+        { url: "not a link", name: "X" },
+        { url: "https://user:pw@example.com/", name: "X" },
+        { url: "https://example.com/a", name: "" },
+        { url: "https://example.com/a", name: "X", cookingMinutes: 12.5 },
+        { url: "https://example.com/a", name: "X", imageUrl: "javascript:alert(1)" },
+      ]) {
+        assert.equal((await call("POST", "/api/family/recipes", { token: parentToken, body })).status, 400, JSON.stringify(body));
+      }
+    });
+
+    test("other families can't see or remove them", async () => {
+      const other = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "recipes-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
+      });
+      assert.deepEqual((await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: other.body.token })).body, []);
+      assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: other.body.token })).status, 404);
+      assert.equal((await call("GET", "/api/family/recipes")).status, 401);
+    });
+
+    test("any family member can remove one", async () => {
+      assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 404);
+      const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
+      assert.equal(list.body.length, 1);
+    });
   });
 
   test("the last admin can't step down or leave", async () => {

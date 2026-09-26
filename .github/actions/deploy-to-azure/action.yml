@@ -1,0 +1,141 @@
+name: Deploy to Azure
+description: >
+  Runs database migrations, deploys the API image to Container Apps and the web build to
+  Static Web Apps in one environment. Expects azure/login to have run already.
+
+inputs:
+  environment:
+    description: staging or production
+    required: true
+  resource-group:
+    description: The environment's resource group
+    required: true
+  image:
+    description: API image to deploy (registry/repo@sha256:...)
+    required: true
+  web-dist:
+    description: Path to the web build made with placeholder values
+    required: true
+  google-client-id:
+    description: OAuth client id for Sign in with Google (empty turns it off)
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: API key for reading recipe pages with Claude (empty turns it off)
+    required: false
+    default: ""
+
+outputs:
+  web-url:
+    description: The environment's web app URL
+    value: ${{ steps.web.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run database migrations
+      shell: bash
+      env:
+        RG: ${{ inputs.resource-group }}
+        IMAGE: ${{ inputs.image }}
+      run: |
+        job=caj-mealplanner-migrate
+        az containerapp job update -n "$job" -g "$RG" --image "$IMAGE" -o none
+        execution=$(az containerapp job start -n "$job" -g "$RG" --query name -o tsv)
+        echo "Started $execution"
+        for _ in $(seq 60); do
+          status=$(az containerapp job execution show -n "$job" -g "$RG" \
+            --job-execution-name "$execution" --query properties.status -o tsv)
+          echo "Migrations: $status"
+          case "$status" in
+            Succeeded) exit 0 ;;
+            Failed|Stopped|Degraded)
+              echo "::error::Migration job $execution $status. Logs: Container Apps job $job > Execution history in the Azure portal."
+              exit 1 ;;
+          esac
+          sleep 10
+        done
+        echo "::error::Migration job $execution did not finish in 10 minutes"
+        exit 1
+
+    - name: Deploy API
+      id: api
+      shell: bash
+      env:
+        RG: ${{ inputs.resource-group }}
+        IMAGE: ${{ inputs.image }}
+        GOOGLE_CLIENT_ID: ${{ inputs.google-client-id }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        app=ca-mealplanner-api
+        env_args=(--set-env-vars "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID")
+        if [ -n "$ANTHROPIC_API_KEY" ]; then
+          # Kept as a Container Apps secret; the env var only references it.
+          az containerapp secret set -n "$app" -g "$RG" \
+            --secrets "anthropic-api-key=$ANTHROPIC_API_KEY" -o none
+          env_args+=("ANTHROPIC_API_KEY=secretref:anthropic-api-key")
+        else
+          env_args+=(--remove-env-vars ANTHROPIC_API_KEY)
+        fi
+        az containerapp update -n "$app" -g "$RG" --image "$IMAGE" "${env_args[@]}" -o none
+        # Wait for the new revision to be ready (it takes over all traffic once it is).
+        for _ in $(seq 30); do
+          read -r latest ready < <(az containerapp show -n "$app" -g "$RG" \
+            --query "[properties.latestRevisionName, properties.latestReadyRevisionName]" -o tsv | tr '\n' ' ')
+          [ "$latest" = "$ready" ] && break
+          echo "Waiting for revision $latest"
+          sleep 10
+        done
+        [ "$latest" = "$ready" ] || { echo "::error::Revision $latest did not become ready"; exit 1; }
+        url="https://$(az containerapp show -n "$app" -g "$RG" --query properties.configuration.ingress.fqdn -o tsv)"
+        curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "$url/api/health"
+        echo
+        echo "url=$url" >> "$GITHUB_OUTPUT"
+
+    - name: Configure web build
+      shell: bash
+      env:
+        WEB_DIST: ${{ inputs.web-dist }}
+        API_URL: ${{ steps.api.outputs.url }}
+        GOOGLE_CLIENT_ID: ${{ inputs.google-client-id }}
+      run: |
+        rm -rf .deploy-web
+        cp -r "$WEB_DIST" .deploy-web
+        node "$GITHUB_ACTION_PATH/configure-web.mjs" .deploy-web
+
+    - name: Get Static Web App deploy token
+      id: swa
+      shell: bash
+      env:
+        RG: ${{ inputs.resource-group }}
+        NAME: swa-mealplanner-${{ inputs.environment }}
+      run: |
+        token=$(az staticwebapp secrets list -n "$NAME" -g "$RG" --query properties.apiKey -o tsv)
+        echo "::add-mask::$token"
+        echo "token=$token" >> "$GITHUB_OUTPUT"
+        echo "url=https://$(az staticwebapp show -n "$NAME" -g "$RG" --query defaultHostname -o tsv)" >> "$GITHUB_OUTPUT"
+
+    - name: Deploy web
+      uses: Azure/static-web-apps-deploy@v1
+      with:
+        azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
+        action: upload
+        app_location: .deploy-web
+        skip_app_build: true
+        skip_api_build: true
+
+    - name: Summary
+      id: web
+      shell: bash
+      env:
+        WEB_URL: ${{ steps.swa.outputs.url }}
+        API_URL: ${{ steps.api.outputs.url }}
+        IMAGE: ${{ inputs.image }}
+      run: |
+        echo "url=$WEB_URL" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Deployed to ${{ inputs.environment }}"
+          echo "- Web: $WEB_URL"
+          echo "- API: $API_URL"
+          echo "- Image: \`$IMAGE\`"
+        } >> "$GITHUB_STEP_SUMMARY"

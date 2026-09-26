@@ -187,3 +187,50 @@ export interface CreateFamilyRequest {
 export interface ApiError {
   error: string;
 }
+
+/** What's known about a recipe: read from its page, or typed in. */
+export interface RecipeDetails {
+  /** The dish, e.g. "Chicken tikka masala". */
+  name: string;
+  description: string | null;
+  /** Approximate total time to make it. */
+  cookingMinutes: number | null;
+  /** e.g. "Chicken", "Tofu"; null when there isn't one. */
+  mainProtein: string | null;
+  imageUrl: string | null;
+  /** e.g. "BBC Good Food", from the page's metadata. */
+  siteName: string | null;
+}
+
+/** A recipe page a family has saved as a favourite. */
+export interface FavouriteRecipe extends RecipeDetails {
+  id: Uuid;
+  url: string;
+  /** Name of the member who added it; null if they've since left. */
+  addedBy: string | null;
+  createdAt: string;
+}
+
+/**
+ * What POST /api/family/recipes/preview found on a page, before it's saved.
+ * isRecipe is null when the page couldn't be read (or automatic reading is off);
+ * fields that couldn't be found are null (name is null rather than a guess).
+ */
+export interface RecipePreview extends Omit<RecipeDetails, "name"> {
+  url: string;
+  isRecipe: boolean | null;
+  name: string | null;
+  /** Already one of this family's favourites. */
+  alreadySaved: boolean;
+}
+
+/** Save a favourite: the preview's details, as confirmed or filled in by the person adding it. */
+export interface AddFavouriteRequest {
+  url: string;
+  name: string;
+  description?: string | null;
+  cookingMinutes?: number | null;
+  mainProtein?: string | null;
+  imageUrl?: string | null;
+  siteName?: string | null;
+}
