@@ -125,6 +125,15 @@ Set `ANTHROPIC_API_KEY` for the API (create one at
 still be added: the name and photo come from the page's metadata and the rest is typed in.
 Pages on private or loopback addresses are never fetched.
 
+### Home address lookup (optional)
+
+A Family Manager can add the family's home address on the Family page. With
+`IDEAL_POSTCODES_API_KEY` set on the API, they type a postcode and pick their address from a
+list, and its latitude and longitude are stored too (for travel times). The API calls
+[Ideal Postcodes](https://ideal-postcodes.co.uk) itself, so the key never reaches the browser.
+It's pay as you go, a few pence per lookup. Without the key, the address is typed in and has
+no coordinates.
+
 ## Deploying
 
 ### To Azure with azd
@@ -142,6 +151,7 @@ azd env new family-prod --location eastus2
 azd env set POSTGRES_ADMIN_PASSWORD "$(openssl rand -hex 24)"
 azd env set GOOGLE_CLIENT_ID <client-id>   # optional
 azd env set ANTHROPIC_API_KEY <key>        # optional, for reading recipe pages
+azd env set IDEAL_POSTCODES_API_KEY <key>  # optional, for finding addresses by postcode
 azd provision
 azd deploy
 ```
@@ -169,7 +179,7 @@ This creates a service principal that GitHub signs in as (OIDC, no stored passwo
 federated credential for `main`, gives it access to the subscription, and sets the repo's
 Actions variables (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `AZURE_ENV_NAME`, `AZURE_LOCATION`, `GOOGLE_CLIENT_ID`, `RECIPE_MODEL`) and secrets
-(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`) from your local azd environment, as listed
+(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`, `IDEAL_POSTCODES_API_KEY`) from your local azd environment, as listed
 under `pipeline:` in `azure.yaml`. If it offers to push, say no and merge the workflow
 through a pull request instead. Re-run it after changing any of those values locally.
 
@@ -178,7 +188,7 @@ through a pull request instead. Re-run it after changing any of those values loc
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
 - **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
   then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT`, `WEB_ORIGIN` (the web
-  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` and `ANTHROPIC_API_KEY` set.
+  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID`, `ANTHROPIC_API_KEY` and `IDEAL_POSTCODES_API_KEY` set.
 - **Web**: `VITE_API_URL=https://<api-host> VITE_GOOGLE_CLIENT_ID=<id> npm run build --workspace web` and upload
   `web/dist` to a static host. `web/public/staticwebapp.config.json` (copied into `dist`) makes deep links like
   `/join/<code>` work on Azure Static Web Apps.

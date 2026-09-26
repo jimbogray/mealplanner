@@ -19,6 +19,10 @@ param googleClientId string = ''
 @description('Anthropic API key for reading recipe pages with Claude. Empty turns it off.')
 param anthropicApiKey string = ''
 
+@secure()
+@description('Ideal Postcodes API key for finding addresses by postcode. Empty turns it off.')
+param idealPostcodesApiKey string = ''
+
 @description('Claude model for reading recipe pages. Empty uses the API default.')
 param recipeModel string = ''
 
@@ -44,6 +48,7 @@ module resources 'resources.bicep' = {
     postgresAdminPassword: postgresAdminPassword
     googleClientId: googleClientId
     anthropicApiKey: anthropicApiKey
+    idealPostcodesApiKey: idealPostcodesApiKey
     recipeModel: recipeModel
     apiExists: apiExists
   }

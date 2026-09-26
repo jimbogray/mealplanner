@@ -7,6 +7,7 @@ import { after, before, describe, test } from "node:test";
 import {
   addDays,
   mondayOf,
+  type AddressLookupResponse,
   type AuthResponse,
   type FamilyMember,
   type FavouriteRecipe,
@@ -18,6 +19,7 @@ import {
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
+import { AddressLookupError } from "../src/address-lookup.js";
 import { createApp } from "../src/app.js";
 import { createPool, migrate, type Db } from "../src/db.js";
 
@@ -64,6 +66,15 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
           html: `${head}<h1>${url.includes("shop") ? "Buy pans" : "Easy pancakes"}</h1>
             <img src="/step-1.jpg" alt="Whisking"><img src="/done.jpg" alt="A stack of pancakes">`,
         };
+      },
+      // Only SW1A 2AA has addresses; "ZZ" postcodes stand for the lookup service being down.
+      lookupAddress: async (postcode) => {
+        if (postcode.startsWith("ZZ")) throw new AddressLookupError("down");
+        if (postcode !== "SW1A 2AA") return [];
+        return [
+          { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode, latitude: 51.5034, longitude: -0.1276 },
+          { line1: "11 Downing Street", line2: null, town: "London", county: null, postcode, latitude: 51.5033, longitude: -0.1277 },
+        ];
       },
       readRecipe: async ({ url, text, images }) => {
         const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
@@ -653,6 +664,55 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("DELETE", `/api/family/weeks/${addDays(thisWeek, 7)}`, { token: parentToken })).status, 204);
       const weeks = await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken });
       assert.deepEqual(weeks.body.map((w) => w.startsOn), [thisWeek]);
+    });
+  });
+
+  describe("home address", () => {
+    test("a family starts with no address, and the app says lookup is available", async () => {
+      const me = (await call<Me>("GET", "/api/me", { token: parentToken })).body;
+      assert.equal(me.family?.address, null);
+      assert.equal(me.addressLookup, true);
+    });
+
+    test("a Family Manager can look addresses up by postcode", async () => {
+      const res = await call<AddressLookupResponse>("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: " sw1a2aa " } });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.addresses.map((a) => a.line1), ["10 Downing Street", "11 Downing Street"]);
+      assert.equal((await call("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: "SW1A 1AA" } })).status, 404);
+      assert.equal((await call("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: "hello" } })).status, 400);
+      assert.equal((await call("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: "ZZ1 1ZZ" } })).status, 502);
+    });
+
+    test("a picked address is saved with its coordinates, and a typed one without", async () => {
+      const picked = { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode: "SW1A 2AA", latitude: 51.5034, longitude: -0.1276 };
+      assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: picked })).status, 200);
+      assert.deepEqual((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, picked);
+
+      const typed = { line1: " 1 High Street ", town: "Bath", county: "Somerset", postcode: "ba1 1aa" };
+      assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: typed })).status, 200);
+      assert.deepEqual((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, {
+        line1: "1 High Street", line2: null, town: "Bath", county: "Somerset", postcode: "BA1 1AA", latitude: null, longitude: null,
+      });
+    });
+
+    test("addresses are validated", async () => {
+      const ok = { line1: "1 High Street", town: "Bath", postcode: "BA1 1AA" };
+      for (const bad of [{ ...ok, line1: "" }, { ...ok, town: " " }, { ...ok, postcode: "12345" }, { ...ok, latitude: 51 }, { ...ok, latitude: "x", longitude: 1 }]) {
+        assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: bad })).status, 400, JSON.stringify(bad));
+      }
+    });
+
+    test("everyone in the family sees the address, but only a Family Manager can change or look it up", async () => {
+      const token = teenToken;
+      assert.equal((await call<Me>("GET", "/api/me", { token })).body.family?.address?.town, "Bath");
+      assert.equal((await call("PUT", "/api/family/address", { token, body: { line1: "x", town: "y", postcode: "BA1 1AA" } })).status, 403);
+      assert.equal((await call("DELETE", "/api/family/address", { token })).status, 403);
+      assert.equal((await call("POST", "/api/family/address/lookup", { token, body: { postcode: "SW1A 2AA" } })).status, 403);
+    });
+
+    test("the address can be removed", async () => {
+      assert.equal((await call("DELETE", "/api/family/address", { token: parentToken })).status, 204);
+      assert.equal((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, null);
     });
   });
 

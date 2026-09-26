@@ -1,5 +1,7 @@
 import type {
   AddFavouriteRequest,
+  Address,
+  AddressLookupResponse,
   AddWeekRequest,
   AuthResponse,
   CreateFamilyRequest,
@@ -80,6 +82,9 @@ export const api = {
 
   createFamily: (body: CreateFamilyRequest) => request<Me>("POST", "/api/family", body),
   renameFamily: (name: string) => request<void>("PATCH", "/api/family", { name }),
+  setAddress: (body: Address) => request<Address>("PUT", "/api/family/address", body),
+  removeAddress: () => request<void>("DELETE", "/api/family/address"),
+  lookupAddress: (postcode: string) => request<AddressLookupResponse>("POST", "/api/family/address/lookup", { postcode }),
   addMember: (body: MemberInput) => request<FamilyMember>("POST", "/api/family/members", body),
   updateMember: (id: string, body: MemberUpdate) => request<FamilyMember>("PATCH", `/api/family/members/${id}`, body),
   removeMember: (id: string) => request<void>("DELETE", `/api/family/members/${id}`),
