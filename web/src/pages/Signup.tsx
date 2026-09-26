@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
+import { GoogleButton, OrDivider } from "../components/GoogleButton";
 import { LifeStageSelect } from "../components/LifeStageSelect";
 import { useSession } from "../session";
 
@@ -32,6 +33,29 @@ export function AccountForm({ inviteCode, submitLabel }: { inviteCode?: string; 
     }
   }
 
+  // Google supplies the email (and a name if "Your name" is blank); the family and life stage come from this form.
+  async function withGoogle(credential: string) {
+    setError(null);
+    if (!inviteCode && !familyName.trim()) {
+      setError("Enter your family name first, then continue with Google.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.google({
+        credential,
+        lifeStage,
+        ...(name.trim() ? { name } : {}),
+        ...(inviteCode ? { inviteCode } : { familyName }),
+      });
+      signIn(res.token, res.me);
+      navigate("/family");
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
   return (
     <form className="stack" onSubmit={submit}>
       {!inviteCode && (
@@ -45,6 +69,8 @@ export function AccountForm({ inviteCode, submitLabel }: { inviteCode?: string; 
       <Field label="You are" htmlFor="lifeStage">
         <LifeStageSelect id="lifeStage" value={lifeStage} onChange={setLifeStage} />
       </Field>
+      <GoogleButton text={inviteCode ? "continue_with" : "signup_with"} onCredential={(c) => void withGoogle(c)} />
+      <OrDivider label="or use an email and password" />
       <Field label="Email" htmlFor="email">
         <input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       </Field>

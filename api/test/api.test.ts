@@ -1,6 +1,7 @@
 // End-to-end tests against a real Postgres. Each run gets its own schema, so any
 // database works; set TEST_DATABASE_URL (or DATABASE_URL). Skipped when neither is set.
 import assert from "node:assert/strict";
+import { generateKeyPairSync, createSign, type KeyObject } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import type { AuthResponse, FamilyMember, Invite, InvitePreview, Me } from "@mealplanner/shared";
@@ -9,6 +10,20 @@ import { createPool, migrate, type Db } from "../src/db.js";
 
 const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const schema = `test_${process.pid}_${Date.now()}`;
+
+// A stand-in for Google's signing key, so Google sign-in can be tested offline.
+const GOOGLE_CLIENT_ID = "test-client.apps.googleusercontent.com";
+const googleKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
+
+function googleToken(claims: Record<string, unknown>, opts: { key?: KeyObject; kid?: string } = {}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", kid: opts.kid ?? "test-kid", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({ iss: "https://accounts.google.com", aud: GOOGLE_CLIENT_ID, iat: now, exp: now + 3600, email_verified: true, ...claims }),
+  ).toString("base64url");
+  const signature = createSign("RSA-SHA256").update(`${header}.${payload}`).sign(opts.key ?? googleKey.privateKey);
+  return `${header}.${payload}.${signature.toString("base64url")}`;
+}
 
 describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }, () => {
   let admin: Db;
@@ -21,7 +36,10 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     await admin.query(`CREATE SCHEMA ${schema}`);
     db = createPool(url!, { options: `-c search_path=${schema}` });
     await migrate(db);
-    server = createApp(db, ["http://web.test"]);
+    server = createApp(db, {
+      webOrigins: ["http://web.test"],
+      google: { clientId: GOOGLE_CLIENT_ID, keys: async () => new Map([["test-kid", googleKey.publicKey]]) },
+    });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     base = `http://localhost:${(server.address() as AddressInfo).port}`;
   });
@@ -218,6 +236,69 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     assert.equal(ok.headers.get("access-control-allow-origin"), "http://web.test");
     const no = await fetch(`${base}/api/me`, { method: "OPTIONS", headers: { origin: "http://evil.test" } });
     assert.equal(no.headers.get("access-control-allow-origin"), null);
+  });
+
+  describe("Sign in with Google", () => {
+    const google = (body: Record<string, unknown>) => call<AuthResponse>("POST", "/api/auth/google", { body });
+
+    test("an unknown Google account can't just sign in", async () => {
+      const res = await google({ credential: googleToken({ sub: "g-new", email: "new@gmail.com" }) });
+      assert.equal(res.status, 404);
+    });
+
+    test("signing up with Google creates a family, then signs in", async () => {
+      const credential = googleToken({ sub: "g-1", email: "Kim@Gmail.com", name: "Kim Park" });
+      const res = await google({ credential, lifeStage: "adult", familyName: "The Parks" });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.me.user.email, "kim@gmail.com");
+      assert.equal(res.body.me.member?.name, "Kim Park");
+      assert.equal(res.body.me.member?.role, "admin");
+      assert.equal(res.body.me.family?.name, "The Parks");
+
+      const again = await google({ credential: googleToken({ sub: "g-1", email: "kim@gmail.com" }) });
+      assert.equal(again.status, 200);
+      assert.equal(again.body.me.family?.id, res.body.me.family?.id);
+      // No password on this account, so password sign-in never works.
+      assert.equal((await call("POST", "/api/auth/login", { body: { email: "kim@gmail.com", password: "" } })).status, 401);
+    });
+
+    test("joining through an invite with Google", async () => {
+      const invite = await call<Invite>("POST", "/api/family/invites", { token: parentToken });
+      const res = await google({
+        credential: googleToken({ sub: "g-2", email: "gran@gmail.com", name: "Gran" }),
+        lifeStage: "adult",
+        inviteCode: invite.body.code,
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.me.family?.id, parentMe.family?.id);
+      assert.equal(res.body.me.member?.role, "member");
+    });
+
+    test("Google links to an existing password account with the same email", async () => {
+      const res = await google({ credential: googleToken({ sub: "g-parent", email: "parent@example.com" }) });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.me.member?.id, parentMe.member?.id);
+      // The password still works too.
+      assert.equal((await call("POST", "/api/auth/login", { body: { email: "parent@example.com", password: "password123" } })).status, 200);
+      // A different Google account claiming the same email is refused.
+      assert.equal((await google({ credential: googleToken({ sub: "g-other", email: "parent@example.com" }) })).status, 409);
+    });
+
+    test("bad Google tokens are rejected", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const other = generateKeyPairSync("rsa", { modulusLength: 2048 });
+      const bad = [
+        googleToken({ sub: "g-1", email: "kim@gmail.com" }, { key: other.privateKey }),
+        googleToken({ sub: "g-1", email: "kim@gmail.com" }, { kid: "unknown" }),
+        googleToken({ sub: "g-1", email: "kim@gmail.com", aud: "someone-else" }),
+        googleToken({ sub: "g-1", email: "kim@gmail.com", iss: "https://evil.example" }),
+        googleToken({ sub: "g-1", email: "kim@gmail.com", exp: now - 3600 }),
+        googleToken({ sub: "g-1", email: "kim@gmail.com", email_verified: false }),
+        "not.a.token",
+      ];
+      for (const credential of bad) assert.equal((await google({ credential })).status, 401, credential.slice(0, 40));
+      assert.equal((await google({})).status, 400);
+    });
   });
 
   test("unknown routes and methods", async () => {

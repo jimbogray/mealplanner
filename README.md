@@ -22,7 +22,7 @@ everywhere (locally, in CI, in a container) without the Functions host.
 
 ### Data model
 
-- `app_user`: a login (email + scrypt password hash).
+- `app_user`: a login: email plus a scrypt password hash, a linked Google account, or both.
 - `family`: a family, with a name.
 - `family_member`: a person in a family, with `name`, `life_stage` and `role`
   (`admin` or `member`). `user_id` is set only for people with their own login.
@@ -44,6 +44,7 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 |---|---|---|
 | `POST /api/auth/signup` | anyone | `{email, password, name, lifeStage, familyName}` creates a family, or `{…, inviteCode}` joins one. Returns `{token, me}`. |
 | `POST /api/auth/login` | anyone | `{email, password}` → `{token, me}` |
+| `POST /api/auth/google` | anyone | `{credential}` (a Google ID token) signs in. To sign up, add `lifeStage` and `familyName` or `inviteCode` (`name` defaults to the Google name). |
 | `POST /api/auth/logout` | signed in | ends the session |
 | `GET /api/me` | signed in | you, your family and its members |
 | `POST /api/family` | signed in, no family | `{familyName, name, lifeStage}` starts a family |
@@ -89,13 +90,26 @@ TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/mealplanner npm te
 The API tests run against a real Postgres in a throwaway schema (they're skipped if
 `TEST_DATABASE_URL` isn't set). CI runs them against a Postgres 16 service.
 
+### Sign in with Google (optional)
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an
+   **OAuth client ID** of type *Web application*.
+2. Under **Authorised JavaScript origins**, add each web app URL (e.g. `http://localhost:5173`
+   and your production URL). No redirect URI is needed; the button uses a popup.
+3. Set the client id as `GOOGLE_CLIENT_ID` for the API and `VITE_GOOGLE_CLIENT_ID` for the web
+   app. Without them the Google button is hidden and `/api/auth/google` returns 404.
+
+The API verifies Google's ID token itself (signature against Google's published keys,
+issuer, audience, expiry, verified email). A Google sign-in whose email matches an existing
+account is linked to that account.
+
 ## Deploying
 
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
 - **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
-  then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT` and `WEB_ORIGIN` (the web
-  app's URL, for CORS) set.
-- **Web**: `VITE_API_URL=https://<api-host> npm run build --workspace web` and upload
+  then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT`, `WEB_ORIGIN` (the web
+  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` set.
+- **Web**: `VITE_API_URL=https://<api-host> VITE_GOOGLE_CLIENT_ID=<id> npm run build --workspace web` and upload
   `web/dist` to a static host. `web/staticwebapp.config.json` makes deep links like
   `/join/<code>` work on Azure Static Web Apps.
 

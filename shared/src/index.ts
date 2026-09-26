@@ -77,6 +77,18 @@ export interface SignupRequest {
   inviteCode?: string;
 }
 
+/**
+ * Sign in with a Google ID token. To sign up at the same time, also send lifeStage and
+ * familyName or inviteCode (name defaults to the Google profile name).
+ */
+export interface GoogleAuthRequest {
+  credential: string;
+  name?: string;
+  lifeStage?: LifeStage;
+  familyName?: string;
+  inviteCode?: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;

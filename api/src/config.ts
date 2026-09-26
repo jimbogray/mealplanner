@@ -5,6 +5,8 @@ export interface Config {
   webOrigins: string[];
   /** Apply pending migrations when the server starts. */
   migrateOnStart: boolean;
+  /** OAuth client id from Google Cloud Console; enables Sign in with Google. */
+  googleClientId: string | null;
 }
 
 /** Loads api/.env into process.env if it exists (real environment variables win). */
@@ -27,5 +29,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .map((o) => o.trim())
       .filter(Boolean),
     migrateOnStart: env.MIGRATE_ON_START !== "false",
+    googleClientId: env.GOOGLE_CLIENT_ID?.trim() || null,
   };
 }

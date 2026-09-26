@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AuthResponse, Family, FamilyMember, Invite, InvitePreview, Me } from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
+import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
 import * as v from "./validate.js";
 
@@ -112,7 +113,21 @@ function isUniqueViolation(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
 }
 
-export function buildRouter(db: Db): Router {
+export interface AppOptions {
+  /** Origins allowed to call the API from a browser. */
+  webOrigins: string[];
+  /** Enables Sign in with Google when set. */
+  google?: { clientId: string; keys: KeySource };
+}
+
+/** Optional sign-up fields: a new family name, or an invite code to join one. */
+function familyChoice(b: Record<string, unknown>): { familyName: string | null; inviteCode: string | null } {
+  const familyName = typeof b.familyName === "string" && b.familyName.trim() ? v.text(b.familyName, "Family name") : null;
+  const inviteCode = typeof b.inviteCode === "string" && b.inviteCode.trim() ? b.inviteCode : null;
+  return { familyName, inviteCode };
+}
+
+export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): Router {
   const router = new Router();
 
   router.add("GET", "/api/health", async () => {
@@ -128,8 +143,7 @@ export function buildRouter(db: Db): Router {
     const password = v.password(b.password);
     const name = v.text(b.name, "Your name");
     const lifeStage = v.lifeStage(b.lifeStage);
-    const familyName = typeof b.familyName === "string" && b.familyName.trim() ? v.text(b.familyName, "Family name") : null;
-    const inviteCode = typeof b.inviteCode === "string" && b.inviteCode.trim() ? b.inviteCode : null;
+    const { familyName, inviteCode } = familyChoice(b);
     if (!familyName && !inviteCode) throw new HttpError(400, "Family name is required");
 
     const passwordHash = await hashPassword(password);
@@ -159,17 +173,82 @@ export function buildRouter(db: Db): Router {
     const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
     const password = typeof b.password === "string" ? b.password : "";
     const user = (
-      await db.query<{ id: string; email: string; password_hash: string }>(
+      await db.query<{ id: string; email: string; password_hash: string | null }>(
         "SELECT id, email, password_hash FROM app_user WHERE lower(email) = $1",
         [email],
       )
     ).rows[0];
-    if (!user || !(await verifyPassword(password, user.password_hash))) {
+    if (!user?.password_hash || !(await verifyPassword(password, user.password_hash))) {
       throw new HttpError(401, "Email or password is incorrect");
     }
     const token = await createSession(db, user.id);
     const body: AuthResponse = { token, me: await loadMe(db, user.id, user.email) };
     return { body };
+  });
+
+  // Sign in (or sign up) with a Google ID token from the web app's Google button.
+  // Signing up also needs lifeStage plus familyName or inviteCode, like /api/auth/signup.
+  router.add("POST", "/api/auth/google", async (req) => {
+    const google = options.google;
+    if (!google) throw new HttpError(404, "Google sign-in isn't set up");
+    const b = v.object(req.body);
+    if (typeof b.credential !== "string" || !b.credential) throw new HttpError(400, "Missing Google credential");
+    let identity: GoogleIdentity;
+    try {
+      identity = await verifyGoogleIdToken(b.credential, google.clientId, google.keys);
+    } catch (err) {
+      if (err instanceof GoogleTokenError) throw new HttpError(401, `Google sign-in failed: ${err.message}`);
+      throw err;
+    }
+    const { familyName, inviteCode } = familyChoice(b);
+
+    const result = await withTransaction(db, async (tx) => {
+      // Prefer the account already linked to this Google id; otherwise one with the same (Google-verified) email.
+      const existing = (
+        await tx.query<{ id: string; google_sub: string | null }>(
+          `SELECT id, google_sub FROM app_user WHERE google_sub = $1 OR lower(email) = $2
+            ORDER BY (google_sub = $1) DESC NULLS LAST LIMIT 1 FOR UPDATE`,
+          [identity.sub, identity.email],
+        )
+      ).rows[0];
+
+      if (existing) {
+        if (existing.google_sub === null) {
+          await tx.query("UPDATE app_user SET google_sub = $1 WHERE id = $2", [identity.sub, existing.id]);
+        } else if (existing.google_sub !== identity.sub) {
+          throw new HttpError(409, "That email is already linked to a different Google account");
+        }
+        // Opening an invite link while not in a family joins it.
+        if (inviteCode) {
+          const inFamily = (await tx.query("SELECT 1 FROM family_member WHERE user_id = $1", [existing.id])).rowCount;
+          if (!inFamily) {
+            const name = v.text(typeof b.name === "string" && b.name.trim() ? b.name : identity.name, "Your name");
+            await acceptInvite(tx, inviteCode, existing.id, name, v.lifeStage(b.lifeStage));
+          }
+        }
+        return { userId: existing.id, created: false };
+      }
+
+      if (!familyName && !inviteCode) {
+        throw new HttpError(404, "No account uses that Google address yet. Create a family, or open your invite link, to sign up.");
+      }
+      const name = v.text(typeof b.name === "string" && b.name.trim() ? b.name : identity.name, "Your name");
+      const lifeStage = v.lifeStage(b.lifeStage);
+      const userId = (
+        await tx.query<{ id: string }>("INSERT INTO app_user (email, google_sub) VALUES ($1, $2) RETURNING id", [
+          identity.email,
+          identity.sub,
+        ])
+      ).rows[0].id;
+      if (inviteCode) await acceptInvite(tx, inviteCode, userId, name, lifeStage);
+      else await createFamily(tx, userId, familyName!, name, lifeStage);
+      return { userId, created: true };
+    });
+
+    const token = await createSession(db, result.userId);
+    const email = (await db.query<{ email: string }>("SELECT email FROM app_user WHERE id = $1", [result.userId])).rows[0].email;
+    const body: AuthResponse = { token, me: await loadMe(db, result.userId, email) };
+    return { status: result.created ? 201 : 200, body };
   });
 
   router.add("POST", "/api/auth/logout", async (req) => {
@@ -340,6 +419,6 @@ export function buildRouter(db: Db): Router {
   return router;
 }
 
-export function createApp(db: Db, webOrigins: string[]): Server {
-  return createServer(listener(buildRouter(db), webOrigins));
+export function createApp(db: Db, options: AppOptions): Server {
+  return createServer(listener(buildRouter(db, options), options.webOrigins));
 }

@@ -2,6 +2,7 @@ import type {
   AuthResponse,
   CreateFamilyRequest,
   FamilyMember,
+  GoogleAuthRequest,
   Invite,
   InvitePreview,
   LoginRequest,
@@ -64,6 +65,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   signup: (body: SignupRequest) => request<AuthResponse>("POST", "/api/auth/signup", body),
   login: (body: LoginRequest) => request<AuthResponse>("POST", "/api/auth/login", body),
+  google: (body: GoogleAuthRequest) => request<AuthResponse>("POST", "/api/auth/google", body),
   logout: () => request<void>("POST", "/api/auth/logout"),
   me: () => request<Me>("GET", "/api/me"),
 

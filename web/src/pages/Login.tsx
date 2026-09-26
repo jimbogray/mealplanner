@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
+import { GoogleButton, OrDivider } from "../components/GoogleButton";
 import { useSession } from "../session";
 
 export function LoginPage() {
@@ -27,9 +28,24 @@ export function LoginPage() {
     }
   }
 
+  async function withGoogle(credential: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.google({ credential });
+      signIn(res.token, res.me);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="card narrow">
       <h1>Sign in</h1>
+      <GoogleButton text="signin_with" onCredential={(c) => void withGoogle(c)} />
+      <OrDivider />
       <form className="stack" onSubmit={submit}>
         <Field label="Email" htmlFor="email">
           <input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />

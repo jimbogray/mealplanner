@@ -1,6 +1,7 @@
 import { createApp } from "./app.js";
 import { loadConfig, loadDotEnv } from "./config.js";
 import { createPool, migrate } from "./db.js";
+import { googleKeySource } from "./google.js";
 
 loadDotEnv();
 const config = loadConfig();
@@ -11,9 +12,12 @@ if (config.migrateOnStart) {
   if (applied.length) console.log(`[migrate] applied ${applied.length} migration(s)`);
 }
 
-const server = createApp(db, config.webOrigins);
+const server = createApp(db, {
+  webOrigins: config.webOrigins,
+  google: config.googleClientId ? { clientId: config.googleClientId, keys: googleKeySource() } : undefined,
+});
 server.listen(config.port, () => {
-  console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")})`);
+  console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")}; Google sign-in ${config.googleClientId ? "on" : "off"})`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
