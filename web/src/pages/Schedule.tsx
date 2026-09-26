@@ -290,8 +290,13 @@ function WeekForm({
               <fieldset>
                 <div className="day-legend">
                   <legend>{dayLabel(d.date, "long")}</legend>
-                  <button type="button" className="link danger small" onClick={() => removeDay(d.date)}>
-                    Remove day
+                  <button
+                    type="button"
+                    className="link danger small"
+                    aria-label={`Remove ${dayLabel(d.date, "long")}`}
+                    onClick={() => removeDay(d.date)}
+                  >
+                    Remove
                   </button>
                 </div>
                 <div className="day-fields">
