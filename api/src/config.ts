@@ -13,8 +13,8 @@ export interface Config {
   anthropicApiKey: string | null;
   /** Claude model for reading recipe pages. */
   recipeModel: string;
-  /** Ideal Postcodes API key; enables looking addresses up by postcode. */
-  idealPostcodesApiKey: string | null;
+  /** Google Maps Platform key with the Places API (New) enabled; enables searching for the home address. */
+  googlePlacesApiKey: string | null;
   /** Azure Maps key; enables finding restaurants on the map and driving times from home. */
   azureMapsKey: string | null;
 }
@@ -42,7 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || null,
     anthropicApiKey: env.ANTHROPIC_API_KEY?.trim() || null,
     recipeModel: env.RECIPE_MODEL?.trim() || DEFAULT_RECIPE_MODEL,
-    idealPostcodesApiKey: env.IDEAL_POSTCODES_API_KEY?.trim() || null,
+    googlePlacesApiKey: env.GOOGLE_PLACES_API_KEY?.trim() || null,
     azureMapsKey: env.AZURE_MAPS_KEY?.trim() || null,
   };
 }

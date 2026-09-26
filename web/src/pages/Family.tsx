@@ -32,7 +32,7 @@ function FamilyView({ me, isAdmin }: { me: Me; isAdmin: boolean }) {
   return (
     <div className="stack">
       <Members me={me} isAdmin={isAdmin} invites={invites} onInvite={createInvite} />
-      <HomeAddress address={me.family!.address} isAdmin={isAdmin} lookup={me.addressLookup} />
+      <HomeAddress address={me.family!.address} isAdmin={isAdmin} search={me.addressSearch} />
       {isAdmin && <AddMember />}
       {isAdmin && (
         <Invites invites={invites} setInvites={setInvites} onCreate={() => createInvite()} error={inviteError} setError={setInviteError} />

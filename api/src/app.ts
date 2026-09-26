@@ -8,7 +8,7 @@ import {
   nextWeekToAdd,
   normalisePostcode,
   type Address,
-  type AddressLookupResponse,
+  type AddressSearchResponse,
   weekDays,
   type AuthResponse,
   type Family,
@@ -23,7 +23,7 @@ import {
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
-import { AddressLookupError, type AddressLookup } from "./address-lookup.js";
+import { AddressSearchError, type AddressSearch } from "./places.js";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
@@ -93,10 +93,10 @@ function toAddress(r: FamilyRow): Address | null {
   };
 }
 
-async function loadMe(db: Queryable, userId: string, email: string, addressLookup: boolean): Promise<Me> {
+async function loadMe(db: Queryable, userId: string, email: string, addressSearch: boolean): Promise<Me> {
   const user = { id: userId, email };
   const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [userId])).rows[0];
-  if (!self) return { user, family: null, member: null, members: [], addressLookup };
+  if (!self) return { user, family: null, member: null, members: [], addressSearch };
   const fam = (await db.query<FamilyRow>("SELECT * FROM family WHERE id = $1", [self.family_id])).rows[0];
   const members = (
     await db.query<MemberRow>(
@@ -106,7 +106,7 @@ async function loadMe(db: Queryable, userId: string, email: string, addressLooku
     )
   ).rows.map(toMember);
   const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), createdAt: fam.created_at.toISOString() };
-  return { user, family, member: toMember(self), members, addressLookup };
+  return { user, family, member: toMember(self), members, addressSearch };
 }
 
 /** The signed-in user's own family_member row, or 403 if they aren't in a family. */
@@ -227,19 +227,25 @@ export interface AppOptions {
   readRecipe?: RecipeReader;
   /** Finds restaurants on the map and times the drive from home. Without it, there are no driving times. */
   maps?: Maps;
-  /** Finds the addresses at a UK postcode. Without it, people type their address in. */
-  lookupAddress?: AddressLookup;
+  /** Finds UK addresses as people type (Google Places). Without it, the home address can't be set. */
+  addressSearch?: AddressSearch;
 }
 
-function address(b: Record<string, unknown>): Address {
-  return {
-    line1: v.text(b.line1, "Address line 1", 120),
-    line2: v.optionalText(b.line2, "Address line 2", 120),
-    town: v.text(b.town, "Town or city", 80),
-    county: v.optionalText(b.county, "County", 80),
-    postcode: v.postcode(b.postcode),
-    ...v.coordinates(b.latitude, b.longitude),
-  };
+/** A web app's random id for one address search (see AddressSearchRequest). */
+function sessionToken(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(value)) throw new HttpError(400, "Missing search session");
+  return value;
+}
+
+/** Runs a Google Places call, turning its failures into a friendly 502. */
+async function searching<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (!(err instanceof AddressSearchError)) throw err;
+    console.error("Address search failed", err.message);
+    throw new HttpError(502, "Couldn't search for addresses just now, try again in a moment");
+  }
 }
 
 /** Optional sign-up fields: a new family name, or an invite code to join one. */
@@ -354,7 +360,7 @@ function restaurantInput(body: unknown): { name: string; url: string | null; not
 
 /**
  * Where the family lives, for driving times: the coordinates saved with the home address, or (for an address
- * typed in rather than picked from the postcode lookup) the address found on the map. Null without a home address.
+ * typed in before address search) the address found on the map. Null without a home address.
  */
 async function homeLocation(db: Queryable, maps: Maps | undefined, familyId: string): Promise<{ lat: number; lng: number } | null> {
   const home = (
@@ -465,10 +471,14 @@ function weekStart(value: string): string {
 
 export function buildRouter(
   db: Db,
-  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "lookupAddress" | "maps"> = {},
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "addressSearch" | "maps"> = {},
 ): Router {
   const router = new Router();
-  const me = (userId: string, email: string) => loadMe(db, userId, email, options.lookupAddress !== undefined);
+  const me = (userId: string, email: string) => loadMe(db, userId, email, options.addressSearch !== undefined);
+  const requireAddressSearch = (): AddressSearch => {
+    if (!options.addressSearch) throw new HttpError(503, "Address search isn't set up yet");
+    return options.addressSearch;
+  };
 
   router.add("GET", "/api/health", async () => {
     await db.query("SELECT 1");
@@ -625,9 +635,15 @@ export function buildRouter(
     return { status: 204 };
   });
 
+  // Google is called from the API, not the browser, so its key stays on the server and the
+  // coordinates saved are Google's own.
   router.add("PUT", "/api/family/address", async (req) => {
     const { member } = await requireAdmin(db, req);
-    const a = address(v.object(req.body));
+    const search = requireAddressSearch();
+    const b = v.object(req.body);
+    const placeId = v.text(b.placeId, "Address", 1000);
+    const a = await searching(() => search.details(placeId, sessionToken(b.sessionToken)));
+    if (!a) throw new HttpError(400, "Choose a full UK address with a postcode");
     await db.query(
       `UPDATE family SET address_line1 = $1, address_line2 = $2, address_town = $3, address_county = $4, address_postcode = $5,
           address_latitude = $6, address_longitude = $7
@@ -648,21 +664,12 @@ export function buildRouter(
     return { status: 204 };
   });
 
-  // Called from the API, not the browser, so the lookup service's key stays on the server.
-  router.add("POST", "/api/family/address/lookup", async (req) => {
+  router.add("POST", "/api/family/address/search", async (req) => {
     await requireAdmin(db, req);
-    if (!options.lookupAddress) throw new HttpError(503, "Address lookup isn't set up, so type the address in");
-    const postcode = v.postcode(v.object(req.body).postcode);
-    let addresses: Address[];
-    try {
-      addresses = await options.lookupAddress(postcode);
-    } catch (err) {
-      if (!(err instanceof AddressLookupError)) throw err;
-      console.error("Address lookup failed", err.message);
-      throw new HttpError(502, "Couldn't look up addresses just now, so type the address in");
-    }
-    if (!addresses.length) throw new HttpError(404, `No addresses found for ${postcode}`);
-    const body: AddressLookupResponse = { addresses };
+    const search = requireAddressSearch();
+    const b = v.object(req.body);
+    const input = v.text(b.input, "Address", 200);
+    const body: AddressSearchResponse = { suggestions: await searching(() => search.suggest(input, sessionToken(b.sessionToken))) };
     return { body };
   });
 
