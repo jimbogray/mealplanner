@@ -1,0 +1,101 @@
+name: Deploy to staging
+
+# Every push to main is tested, built once, and deployed to staging. The API image and the
+# web build made here are what "Promote to production" later deploys, unchanged.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build-web:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace shared
+      # Environment-specific values are placeholders here and filled in at deploy time, so the
+      # same build can go to staging and then production.
+      - run: npm run build --workspace web
+        env:
+          VITE_API_URL: __MEALPLANNER_API_URL__
+          VITE_GOOGLE_CLIENT_ID: __MEALPLANNER_GOOGLE_CLIENT_ID__
+      - run: cp web/staticwebapp.config.json web/dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 90
+
+  deploy:
+    needs: build-web
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.web-url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push API image
+        id: image
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: |
+          az acr login --name "$ACR_NAME"
+          repo="$ACR_NAME.azurecr.io/mealplanner-api"
+          docker build -f infra/api.Dockerfile \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            -t "$repo:$GITHUB_SHA" .
+          docker push "$repo:$GITHUB_SHA"
+          # Deploy by digest so production gets byte-for-byte the same image.
+          echo "ref=$(docker inspect --format '{{index .RepoDigests 0}}' "$repo:$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web-dist
+
+      - name: Deploy
+        id: deploy
+        uses: ./.github/actions/deploy-to-azure
+        with:
+          environment: staging
+          resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+          image: ${{ steps.image.outputs.ref }}
+          web-dist: web-dist
+          google-client-id: ${{ vars.GOOGLE_CLIENT_ID }}
+
+      - name: Record release
+        run: |
+          jq -n --arg sha "$GITHUB_SHA" --arg image "${{ steps.image.outputs.ref }}" \
+            '{sha: $sha, image: $image}' > release.json
+          cat release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release.json
+          retention-days: 90
