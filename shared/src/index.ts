@@ -103,7 +103,7 @@ export interface Address {
   county: string | null;
   /** Upper case with a single space, e.g. "SW1A 2AA". */
   postcode: string;
-  /** WGS84 coordinates from the postcode lookup; null when the address was typed in. */
+  /** WGS84 coordinates from Google; null for an address typed in before address search. */
   latitude: number | null;
   longitude: number | null;
 }
@@ -139,8 +139,8 @@ export interface Me {
   family: Family | null;
   member: FamilyMember | null;
   members: FamilyMember[];
-  /** True when the API can look addresses up by postcode; otherwise addresses are typed in. */
-  addressLookup: boolean;
+  /** True when the API can search for addresses (Google Places is set up). */
+  addressSearch: boolean;
 }
 
 /** Public details about an invite, shown on the join page before sign-up. */
@@ -215,13 +215,30 @@ export interface CreateFamilyRequest {
   lifeStage: LifeStage;
 }
 
-/** POST /api/family/address/lookup */
-export interface AddressLookupRequest {
-  postcode: string;
+/** One match while searching for an address, e.g. "10 Downing Street" / "London SW1A 2AA, UK". */
+export interface AddressSuggestion {
+  placeId: string;
+  text: string;
+  secondaryText: string | null;
 }
 
-export interface AddressLookupResponse {
-  addresses: Address[];
+/**
+ * POST /api/family/address/search. sessionToken is a random id the web app makes for one search,
+ * sent with each keystroke's search and with the pick (Google bills them together).
+ */
+export interface AddressSearchRequest {
+  input: string;
+  sessionToken: string;
+}
+
+export interface AddressSearchResponse {
+  suggestions: AddressSuggestion[];
+}
+
+/** PUT /api/family/address: saves the picked suggestion's full address. */
+export interface SetAddressRequest {
+  placeId: string;
+  sessionToken: string;
 }
 
 export interface ApiError {

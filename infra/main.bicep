@@ -20,8 +20,8 @@ param googleClientId string = ''
 param anthropicApiKey string = ''
 
 @secure()
-@description('Ideal Postcodes API key for finding addresses by postcode. Empty turns it off.')
-param idealPostcodesApiKey string = ''
+@description('Google Maps Platform key with Places API (New) enabled, for searching for the home address. Empty turns it off.')
+param googlePlacesApiKey string = ''
 
 @secure()
 @description('Azure Maps key for finding restaurants and driving times from home. Empty turns it off.')
@@ -52,7 +52,7 @@ module resources 'resources.bicep' = {
     postgresAdminPassword: postgresAdminPassword
     googleClientId: googleClientId
     anthropicApiKey: anthropicApiKey
-    idealPostcodesApiKey: idealPostcodesApiKey
+    googlePlacesApiKey: googlePlacesApiKey
     azureMapsKey: azureMapsKey
     recipeModel: recipeModel
     apiExists: apiExists

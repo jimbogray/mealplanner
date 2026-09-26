@@ -5,7 +5,6 @@ import {
   isIsoDate,
   isLifeStage,
   MAX_GUESTS,
-  normalisePostcode,
   type Allergen,
   type Diet,
   type IsoDate,
@@ -40,22 +39,6 @@ export function password(value: unknown): string {
   }
   if (value.length > 200) throw new HttpError(400, "Password is too long");
   return value;
-}
-
-/** A UK postcode, tidied to e.g. "SW1A 2AA". */
-export function postcode(value: unknown): string {
-  const p = normalisePostcode(text(value, "Postcode", 10));
-  if (!p) throw new HttpError(400, "Enter a UK postcode, like SW1A 2AA");
-  return p;
-}
-
-/** Latitude and longitude, both given or both left out. */
-export function coordinates(lat: unknown, lng: unknown): { latitude: number | null; longitude: number | null } {
-  if ((lat === undefined || lat === null) && (lng === undefined || lng === null)) return { latitude: null, longitude: null };
-  if (typeof lat !== "number" || typeof lng !== "number" || !(Math.abs(lat) <= 90) || !(Math.abs(lng) <= 180)) {
-    throw new HttpError(400, "Latitude and longitude must be numbers");
-  }
-  return { latitude: lat, longitude: lng };
 }
 
 export function lifeStage(value: unknown): LifeStage {

@@ -6,8 +6,9 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import {
   addDays,
+  type Address,
   mondayOf,
-  type AddressLookupResponse,
+  type AddressSearchResponse,
   type AuthResponse,
   type FamilyMember,
   type FavouriteRecipe,
@@ -19,7 +20,7 @@ import {
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
-import { AddressLookupError } from "../src/address-lookup.js";
+import { AddressSearchError } from "../src/places.js";
 import { createApp } from "../src/app.js";
 import { createPool, migrate, type Db } from "../src/db.js";
 
@@ -67,14 +68,25 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
             <img src="/step-1.jpg" alt="Whisking"><img src="/done.jpg" alt="A stack of pancakes">`,
         };
       },
-      // Only SW1A 2AA has addresses; "ZZ" postcodes stand for the lookup service being down.
-      lookupAddress: async (postcode) => {
-        if (postcode.startsWith("ZZ")) throw new AddressLookupError("down");
-        if (postcode !== "SW1A 2AA") return [];
-        return [
-          { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode, latitude: 51.5034, longitude: -0.1276 },
-          { line1: "11 Downing Street", line2: null, town: "London", county: null, postcode, latitude: 51.5033, longitude: -0.1277 },
-        ];
+      // Stands in for Google Places: typing "Downing" finds two houses and "broken" means Google is down.
+      addressSearch: {
+        suggest: async (input) => {
+          if (input.includes("broken")) throw new AddressSearchError("down");
+          if (!input.includes("Downing")) return [];
+          return [
+            { placeId: "place-10", text: "10 Downing Street", secondaryText: "London SW1A 2AA, UK" },
+            { placeId: "place-downing", text: "Downing Street", secondaryText: "London, UK" },
+          ];
+        },
+        details: async (placeId) => {
+          const places: Record<string, Address | null> = {
+            "place-10": { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode: "SW1A 2AA", latitude: 51.5034, longitude: -0.1276 },
+            "place-bath": { line1: "1 High Street", line2: null, town: "Bath", county: "Somerset", postcode: "BA1 1AA", latitude: 51.38, longitude: -2.36 },
+            "place-downing": null,
+          };
+          if (!(placeId in places)) throw new AddressSearchError("unknown place");
+          return places[placeId];
+        },
       },
       // A tiny map: a few known places, "broken" stands for the service being down.
       maps: {
@@ -770,46 +782,47 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   });
 
   describe("home address", () => {
-    test("a family starts with no address, and the app says lookup is available", async () => {
+    const session = "session-token-1";
+
+    test("a family starts with no address, and the app says address search is available", async () => {
       const me = (await call<Me>("GET", "/api/me", { token: parentToken })).body;
       assert.equal(me.family?.address, null);
-      assert.equal(me.addressLookup, true);
+      assert.equal(me.addressSearch, true);
     });
 
-    test("a Family Manager can look addresses up by postcode", async () => {
-      const res = await call<AddressLookupResponse>("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: " sw1a2aa " } });
+    test("a Family Manager can search for addresses as they type", async () => {
+      const search = (input: string, sessionToken = session) =>
+        call<AddressSearchResponse>("POST", "/api/family/address/search", { token: parentToken, body: { input, sessionToken } });
+      const res = await search("10 Downing");
       assert.equal(res.status, 200);
-      assert.deepEqual(res.body.addresses.map((a) => a.line1), ["10 Downing Street", "11 Downing Street"]);
-      assert.equal((await call("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: "SW1A 1AA" } })).status, 404);
-      assert.equal((await call("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: "hello" } })).status, 400);
-      assert.equal((await call("POST", "/api/family/address/lookup", { token: parentToken, body: { postcode: "ZZ1 1ZZ" } })).status, 502);
+      assert.deepEqual(res.body.suggestions.map((s) => s.text), ["10 Downing Street", "Downing Street"]);
+      assert.deepEqual((await search("nowhere")).body.suggestions, []);
+      assert.equal((await search(" ")).status, 400);
+      assert.equal((await search("10 Downing", "")).status, 400);
+      assert.equal((await search("broken")).status, 502);
     });
 
-    test("a picked address is saved with its coordinates, and a typed one without", async () => {
-      const picked = { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode: "SW1A 2AA", latitude: 51.5034, longitude: -0.1276 };
-      assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: picked })).status, 200);
-      assert.deepEqual((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, picked);
-
-      const typed = { line1: " 1 High Street ", town: "Bath", county: "Somerset", postcode: "ba1 1aa" };
-      assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: typed })).status, 200);
-      assert.deepEqual((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, {
-        line1: "1 High Street", line2: null, town: "Bath", county: "Somerset", postcode: "BA1 1AA", latitude: null, longitude: null,
-      });
+    test("picking a suggestion saves its full address and coordinates", async () => {
+      const res = await call("PUT", "/api/family/address", { token: parentToken, body: { placeId: "place-10", sessionToken: session } });
+      assert.equal(res.status, 200);
+      const saved = { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode: "SW1A 2AA", latitude: 51.5034, longitude: -0.1276 };
+      assert.deepEqual((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, saved);
     });
 
-    test("addresses are validated", async () => {
-      const ok = { line1: "1 High Street", town: "Bath", postcode: "BA1 1AA" };
-      for (const bad of [{ ...ok, line1: "" }, { ...ok, town: " " }, { ...ok, postcode: "12345" }, { ...ok, latitude: 51 }, { ...ok, latitude: "x", longitude: 1 }]) {
-        assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: bad })).status, 400, JSON.stringify(bad));
-      }
+    test("a pick that isn't a full UK address is refused", async () => {
+      const street = await call("PUT", "/api/family/address", { token: parentToken, body: { placeId: "place-downing", sessionToken: session } });
+      assert.equal(street.status, 400);
+      assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: { sessionToken: session } })).status, 400);
+      assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: { placeId: "gone", sessionToken: session } })).status, 502);
+      assert.equal((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address?.town, "London");
     });
 
-    test("everyone in the family sees the address, but only a Family Manager can change or look it up", async () => {
+    test("everyone in the family sees the address, but only a Family Manager can change or search", async () => {
       const token = teenToken;
-      assert.equal((await call<Me>("GET", "/api/me", { token })).body.family?.address?.town, "Bath");
-      assert.equal((await call("PUT", "/api/family/address", { token, body: { line1: "x", town: "y", postcode: "BA1 1AA" } })).status, 403);
+      assert.equal((await call<Me>("GET", "/api/me", { token })).body.family?.address?.town, "London");
+      assert.equal((await call("PUT", "/api/family/address", { token, body: { placeId: "place-bath", sessionToken: session } })).status, 403);
       assert.equal((await call("DELETE", "/api/family/address", { token })).status, 403);
-      assert.equal((await call("POST", "/api/family/address/lookup", { token, body: { postcode: "SW1A 2AA" } })).status, 403);
+      assert.equal((await call("POST", "/api/family/address/search", { token, body: { input: "Downing", sessionToken: session } })).status, 403);
     });
 
     test("the address can be removed", async () => {
@@ -842,7 +855,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     });
 
     test("with a home address, adding one works out the drive from home", async () => {
-      const home = { line1: "1 High Street", town: "Bath", postcode: "BA1 1AA", latitude: 51.38, longitude: -2.36 };
+      const home = { placeId: "place-bath", sessionToken: "session-token-2" };
       assert.equal((await call("PUT", "/api/family/address", { token, body: home })).status, 200);
       // Found by name near home.
       const found = await add({ name: "Pizza Place Two" });
@@ -857,9 +870,9 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual([bristol.address, bristol.driveMinutes], ["3 Mill Lane, Bristol", 30]);
     });
 
-    test("a typed home address without coordinates is found on the map", async () => {
-      const home = { line1: "1 High Street", town: "Bath", postcode: "BA1 1AA" };
-      assert.equal((await call("PUT", "/api/family/address", { token, body: home })).status, 200);
+    test("a home address typed in before address search (no coordinates) is found on the map", async () => {
+      const me = (await call<Me>("GET", "/api/me", { token })).body;
+      await db.query("UPDATE family SET address_latitude = NULL, address_longitude = NULL WHERE id = $1", [me.family!.id]);
       const r = await add({ name: "Another Mill", address: "3 Mill Lane, Bristol" });
       assert.equal(r.driveMinutes, 30);
     });

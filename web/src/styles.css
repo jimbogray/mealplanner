@@ -86,7 +86,15 @@ legend { font-weight: 500; font-size: 0.95rem; padding: 0; margin-bottom: 0.35re
 .chip input { margin: 0; accent-color: var(--accent); }
 .diet { color: #7a5510; margin-top: 0.15rem; }
 .address { display: flex; flex-direction: column; font-style: normal; }
-input.postcode { width: 9rem; text-transform: uppercase; }
+input[type="search"] { width: 100%; }
+.suggestions { list-style: none; margin: 0.25rem 0 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.suggestions li + li { border-top: 1px solid var(--border); }
+.suggestions li.note { padding: 0.6rem 0.75rem; }
+.suggestions button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; width: 100%; text-align: left;
+  background: var(--card); color: var(--ink); border: none; border-radius: 0; padding: 0.6rem 0.75rem; font-weight: normal;
+}
+.suggestions button:hover, .suggestions button:focus-visible { background: #e1f5ee; }
 .invite-link { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
 .invite-link code { font-size: 0.8rem; word-break: break-all; }
 
