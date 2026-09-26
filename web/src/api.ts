@@ -10,6 +10,7 @@ import type {
   LoginRequest,
   Me,
   MemberInput,
+  RecipePreview,
   MemberUpdate,
   SignupRequest,
 } from "@mealplanner/shared";
@@ -84,6 +85,7 @@ export const api = {
   acceptInvite: (code: string, body: MemberInput) => request<Me>("POST", `/api/invites/${encodeURIComponent(code)}/accept`, body),
 
   recipes: () => request<FavouriteRecipe[]>("GET", "/api/family/recipes"),
+  previewRecipe: (url: string) => request<RecipePreview>("POST", "/api/family/recipes/preview", { url }),
   addRecipe: (body: AddFavouriteRequest) => request<FavouriteRecipe>("POST", "/api/family/recipes", body),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
 };

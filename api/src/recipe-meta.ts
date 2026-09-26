@@ -1,5 +1,6 @@
-// Reads a recipe page's title, image and site name so a favourite shows more than a bare link.
-// Looks for a schema.org Recipe in JSON-LD first, then Open Graph / Twitter tags, then <title>.
+// Fetches a recipe page safely, and reads what can be read without an LLM: the page's title,
+// image and site name (schema.org Recipe in JSON-LD first, then Open Graph / Twitter tags, then
+// <title>), plus its readable text for the LLM to work from.
 import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from "node:dns";
 import http from "node:http";
 import https from "node:https";
@@ -11,8 +12,14 @@ export interface RecipeMeta {
   siteName: string | null;
 }
 
-/** Looks up a page's metadata. Throws if the page can't be read; callers fall back to the URL. */
-export type RecipeMetaFetcher = (url: string) => Promise<RecipeMeta>;
+export interface Page {
+  /** Where the page ended up after redirects. */
+  url: string;
+  html: string;
+}
+
+/** Downloads a web page. Throws if it can't be read. */
+export type PageFetcher = (url: string) => Promise<Page>;
 
 const TIMEOUT_MS = 8000;
 const MAX_BYTES = 1024 * 1024;
@@ -122,8 +129,8 @@ async function readHtml(res: http.IncomingMessage): Promise<string> {
   return decoder.decode(Buffer.concat(chunks));
 }
 
-/** Fetches a public web page (following redirects) and reads its recipe metadata. */
-export const fetchRecipeMeta: RecipeMetaFetcher = async (pageUrl) => {
+/** Fetches a public web page's HTML, following redirects. */
+export const fetchPage: PageFetcher = async (pageUrl) => {
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   let url = new URL(pageUrl);
   for (let hops = 0; ; hops++) {
@@ -144,7 +151,7 @@ export const fetchRecipeMeta: RecipeMetaFetcher = async (pageUrl) => {
       res.resume();
       throw new Error("Not an HTML page");
     }
-    return parseRecipeMeta(await readHtml(res), url.href);
+    return { url: url.href, html: await readHtml(res) };
   }
 };
 
@@ -244,9 +251,24 @@ export function parseRecipeMeta(html: string, pageUrl: string): RecipeMeta {
   };
 }
 
-/** A readable stand-in title when a page can't be read: "example.com/recipes/pancakes". */
-export function fallbackTitle(url: string): string {
-  const u = new URL(url);
-  const title = (u.hostname.replace(/^www\./, "") + u.pathname).replace(/\/+$/, "");
-  return title.length > 200 ? `${title.slice(0, 199)}…` : title;
+const MAX_TEXT = 60_000;
+
+/**
+ * The page as plain text for the LLM: any JSON-LD (often a complete structured recipe) followed by
+ * the visible text. Capped so an enormous page (long comment threads…) can't run up the bill.
+ */
+export function pageText(html: string): string {
+  const jsonLd = [...html.matchAll(/<script\b[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1].trim());
+  const visible = decodeEntities(
+    html
+      .replace(/<(script|style|noscript|svg|template|iframe)\b[\s\S]*?<\/\1\s*>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<\/?(p|div|br|li|h[1-6]|tr|section|article|header|footer)\b[^>]*>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/[ \t\f\v\r]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+  const text = [...jsonLd.map((j) => `Structured data:\n${j}`), `Page text:\n${visible}`].join("\n\n");
+  return text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text;
 }

@@ -54,3 +54,18 @@ export function webUrl(value: unknown, field = "Link"): string {
   u.hash = "";
   return u.href;
 }
+
+/** A text field that may be left out, null or blank. */
+export function optionalText(value: unknown, field: string, max: number): string | null {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return null;
+  return text(value, field, max);
+}
+
+/** Cooking time in whole minutes (up to two days), or null. */
+export function optionalMinutes(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 2880) {
+    throw new HttpError(400, "Cooking time must be a whole number of minutes");
+  }
+  return value;
+}

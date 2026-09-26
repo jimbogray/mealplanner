@@ -1,3 +1,5 @@
+import { DEFAULT_RECIPE_MODEL } from "./recipe-reader.js";
+
 export interface Config {
   port: number;
   databaseUrl: string;
@@ -7,6 +9,10 @@ export interface Config {
   migrateOnStart: boolean;
   /** OAuth client id from Google Cloud Console; enables Sign in with Google. */
   googleClientId: string | null;
+  /** Anthropic API key; enables reading recipe pages with Claude. */
+  anthropicApiKey: string | null;
+  /** Claude model for reading recipe pages. */
+  recipeModel: string;
 }
 
 /** Loads api/.env into process.env if it exists (real environment variables win). */
@@ -30,5 +36,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter(Boolean),
     migrateOnStart: env.MIGRATE_ON_START !== "false",
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || null,
+    anthropicApiKey: env.ANTHROPIC_API_KEY?.trim() || null,
+    recipeModel: env.RECIPE_MODEL?.trim() || DEFAULT_RECIPE_MODEL,
   };
 }

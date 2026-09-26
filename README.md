@@ -103,12 +103,25 @@ The API verifies Google's ID token itself (signature against Google's published 
 issuer, audience, expiry, verified email). A Google sign-in whose email matches an existing
 account is linked to that account.
 
+### Favourite recipes read by Claude (optional)
+
+When someone adds a favourite recipe by its link, the API downloads the page and asks Claude
+(`claude-haiku-4-5` by default, the cheapest current model; override with `RECIPE_MODEL`) for
+the dish's name, a short description, the approximate cooking time and the main protein. If the
+page doesn't look like a recipe, the web app asks whether to add it anyway and has the person
+type in whatever couldn't be read.
+
+Set `ANTHROPIC_API_KEY` for the API (create one at
+[console.anthropic.com](https://console.anthropic.com/settings/keys)). Without it, recipes can
+still be added: the name and photo come from the page's metadata and the rest is typed in.
+Pages on private or loopback addresses are never fetched.
+
 ## Deploying
 
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
 - **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
   then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT`, `WEB_ORIGIN` (the web
-  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` set.
+  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` and `ANTHROPIC_API_KEY` set.
 - **Web**: `VITE_API_URL=https://<api-host> VITE_GOOGLE_CLIENT_ID=<id> npm run build --workspace web` and upload
   `web/dist` to a static host. `web/staticwebapp.config.json` makes deep links like
   `/join/<code>` work on Azure Static Web Apps.

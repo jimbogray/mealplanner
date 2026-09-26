@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, test } from "node:test";
-import { fallbackTitle, fetchRecipeMeta, isPublicAddress, parseRecipeMeta } from "../src/recipe-meta.js";
+import { fetchPage, isPublicAddress, pageText, parseRecipeMeta } from "../src/recipe-meta.js";
 
 const PAGE = "https://www.example.com/recipes/pancakes";
 
@@ -36,11 +36,14 @@ describe("parseRecipeMeta", () => {
   });
 });
 
-test("fallbackTitle is the link without the scheme or www", () => {
-  assert.equal(fallbackTitle("https://www.example.com/recipes/stew/"), "example.com/recipes/stew");
+test("pageText keeps JSON-LD and visible text, and drops scripts and styles", () => {
+  const text = pageText(`<head><style>p{color:red}</style><script>track()</script>
+    <script type="application/ld+json">{"@type":"Recipe","name":"Stew"}</script></head>
+    <body><h1>Beef stew</h1><p>Serves 4 &amp; takes <b>2 hours</b>.</p><!-- ad --></body>`);
+  assert.equal(text, 'Structured data:\n{"@type":"Recipe","name":"Stew"}\n\nPage text:\nBeef stew\nServes 4 & takes 2 hours .');
 });
 
-describe("fetchRecipeMeta", () => {
+describe("fetchPage", () => {
   test("refuses private and loopback addresses", async () => {
     for (const a of ["127.0.0.1", "10.1.2.3", "192.168.0.1", "169.254.169.254", "::1", "fd00::1", "::ffff:127.0.0.1", "::ffff:7f00:1"]) {
       assert.equal(isPublicAddress(a), false, a);
@@ -51,9 +54,9 @@ describe("fetchRecipeMeta", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address() as AddressInfo;
     try {
-      await assert.rejects(fetchRecipeMeta(`http://127.0.0.1:${port}/`), /isn't a public address/);
-      await assert.rejects(fetchRecipeMeta(`http://localhost:${port}/`), /isn't a public address/);
-      await assert.rejects(fetchRecipeMeta(`http://[::ffff:127.0.0.1]:${port}/`), /isn't a public address/);
+      await assert.rejects(fetchPage(`http://127.0.0.1:${port}/`), /isn't a public address/);
+      await assert.rejects(fetchPage(`http://localhost:${port}/`), /isn't a public address/);
+      await assert.rejects(fetchPage(`http://[::ffff:127.0.0.1]:${port}/`), /isn't a public address/);
     } finally {
       server.close();
     }

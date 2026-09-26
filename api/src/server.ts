@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { loadConfig, loadDotEnv } from "./config.js";
 import { createPool, migrate } from "./db.js";
 import { googleKeySource } from "./google.js";
+import { claudeRecipeReader } from "./recipe-reader.js";
 
 loadDotEnv();
 const config = loadConfig();
@@ -15,9 +16,10 @@ if (config.migrateOnStart) {
 const server = createApp(db, {
   webOrigins: config.webOrigins,
   google: config.googleClientId ? { clientId: config.googleClientId, keys: googleKeySource() } : undefined,
+  readRecipe: config.anthropicApiKey ? claudeRecipeReader(config.anthropicApiKey, config.recipeModel) : undefined,
 });
 server.listen(config.port, () => {
-  console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")}; Google sign-in ${config.googleClientId ? "on" : "off"})`);
+  console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")}; Google sign-in ${config.googleClientId ? "on" : "off"}; recipe reading ${config.anthropicApiKey ? `on with ${config.recipeModel}` : "off"})`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
