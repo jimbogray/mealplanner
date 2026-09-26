@@ -107,6 +107,7 @@ export const api = {
   restaurants: () => request<Restaurant[]>("GET", "/api/family/restaurants"),
   addRestaurant: (body: RestaurantInput) => request<Restaurant>("POST", "/api/family/restaurants", body),
   updateRestaurant: (id: string, body: RestaurantInput) => request<Restaurant>("PUT", `/api/family/restaurants/${id}`, body),
+  rateRestaurant: (id: string, stars: number) => request<Restaurant>("PUT", `/api/family/restaurants/${id}/rating`, { stars }),
   removeRestaurant: (id: string) => request<void>("DELETE", `/api/family/restaurants/${id}`),
 
   weeks: () => request<ScheduleWeek[]>("GET", "/api/family/weeks"),

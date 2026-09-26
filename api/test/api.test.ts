@@ -542,6 +542,30 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal(clash.status, 409);
     });
 
+    test("each family member can rate one, and everyone sees the average", async () => {
+      const path = `/api/family/restaurants/${pizzaId}/rating`;
+      let res = await call<Restaurant>("PUT", path, { token: teenToken, body: { stars: 5 } });
+      assert.equal(res.status, 200);
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [5, 5, 1]);
+      res = await call<Restaurant>("PUT", path, { token: parentToken, body: { stars: 2 } });
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [2, 3.5, 2]);
+      // Rating again replaces the member's own rating.
+      res = await call<Restaurant>("PUT", path, { token: teenToken, body: { stars: 3 } });
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [3, 2.5, 2]);
+      const list = await call<Restaurant[]>("GET", "/api/family/restaurants", { token: parentToken });
+      const listed = list.body.find((r) => r.id === pizzaId)!;
+      assert.deepEqual([listed.myRating, listed.averageRating], [2, 2.5]);
+      // Editing keeps the ratings.
+      const edited = await call<Restaurant>("PUT", `/api/family/restaurants/${pizzaId}`, { token: parentToken, body: { name: "Luigi's" } });
+      assert.deepEqual([edited.body.myRating, edited.body.ratingCount], [2, 2]);
+      // 0 stars clears it.
+      res = await call<Restaurant>("PUT", path, { token: parentToken, body: { stars: 0 } });
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [null, 3, 1]);
+      for (const stars of [6, -1, 2.5, "4", null]) {
+        assert.equal((await call("PUT", path, { token: parentToken, body: { stars } })).status, 400, String(stars));
+      }
+    });
+
     test("other families can't see, edit or remove them", async () => {
       const other = await call<AuthResponse>("POST", "/api/auth/signup", {
         body: { email: "restaurants-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
@@ -552,6 +576,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("POST", "/api/family/restaurants", { token, body: { name: "Luigi's" } })).status, 201);
       assert.equal((await call("PUT", `/api/family/restaurants/${pizzaId}`, { token, body: { name: "Mine" } })).status, 404);
       assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token })).status, 404);
+      assert.equal((await call("PUT", `/api/family/restaurants/${pizzaId}/rating`, { token, body: { stars: 1 } })).status, 404);
       assert.equal((await call("GET", "/api/family/restaurants")).status, 401);
     });
 

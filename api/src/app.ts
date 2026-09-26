@@ -302,12 +302,21 @@ interface RestaurantRow {
   notes: string | null;
   address: string | null;
   drive_minutes: number | null;
+  average_rating: string | null;
+  rating_count: number;
+  my_rating: number | null;
   added_by: string | null;
   created_at: Date;
 }
 
-const RESTAURANT_SELECT = `SELECT r.id, r.name, r.url, r.notes, r.address, r.drive_minutes, m.name AS added_by, r.created_at
+/** Selects restaurants with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
+function restaurantSelect(me: string): string {
+  return `SELECT r.id, r.name, r.url, r.notes, r.address, r.drive_minutes, m.name AS added_by, r.created_at,
+    (SELECT round(avg(stars), 1) FROM restaurant_rating WHERE restaurant_id = r.id) AS average_rating,
+    (SELECT count(*)::int FROM restaurant_rating WHERE restaurant_id = r.id) AS rating_count,
+    (SELECT stars FROM restaurant_rating WHERE restaurant_id = r.id AND member_id = ${me}) AS my_rating
   FROM restaurant r LEFT JOIN family_member m ON m.id = r.added_by`;
+}
 
 function toRestaurant(r: RestaurantRow): Restaurant {
   return {
@@ -317,6 +326,9 @@ function toRestaurant(r: RestaurantRow): Restaurant {
     notes: r.notes,
     address: r.address,
     driveMinutes: r.drive_minutes,
+    averageRating: r.average_rating === null ? null : Number(r.average_rating),
+    ratingCount: r.rating_count,
+    myRating: r.my_rating,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };
@@ -939,8 +951,9 @@ export function buildRouter(
 
   router.add("GET", "/api/family/restaurants", async (req) => {
     const { member } = await requireMember(db, req);
-    const { rows } = await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.family_id = $1 ORDER BY lower(r.name)`, [
+    const { rows } = await db.query<RestaurantRow>(`${restaurantSelect("$2")} WHERE r.family_id = $1 ORDER BY lower(r.name)`, [
       member.family_id,
+      member.id,
     ]);
     const body: Restaurant[] = rows.map(toRestaurant);
     return { body };
@@ -966,7 +979,7 @@ export function buildRouter(
       if (isUniqueViolation(err)) throw new HttpError(409, `${r.name} is already one of your restaurants`);
       throw err;
     }
-    const saved = (await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.id = $1`, [id])).rows[0];
+    const saved = (await db.query<RestaurantRow>(`${restaurantSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
     return { status: 201, body: toRestaurant(saved) };
   });
 
@@ -997,8 +1010,28 @@ export function buildRouter(
       throw err;
     }
     if (!updated.rowCount) throw new HttpError(404, "That restaurant isn't in your list");
-    const saved = (await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.id = $1`, [id])).rows[0];
+    const saved = (await db.query<RestaurantRow>(`${restaurantSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
     return { body: toRestaurant(saved) };
+  });
+
+  // Anyone in the family can rate a restaurant; 0 stars clears their rating.
+  router.add("PUT", "/api/family/restaurants/:id/rating", async (req) => {
+    const { member } = await requireMember(db, req);
+    const stars = v.stars(v.object(req.body).stars);
+    const id = v.uuid(req.params.id);
+    const found = await db.query("SELECT 1 FROM restaurant WHERE id = $1 AND family_id = $2", [id, member.family_id]);
+    if (!found.rowCount) throw new HttpError(404, "That restaurant isn't in your list");
+    if (stars === 0) {
+      await db.query("DELETE FROM restaurant_rating WHERE restaurant_id = $1 AND member_id = $2", [id, member.id]);
+    } else {
+      await db.query(
+        `INSERT INTO restaurant_rating (restaurant_id, member_id, stars) VALUES ($1, $2, $3)
+         ON CONFLICT (restaurant_id, member_id) DO UPDATE SET stars = EXCLUDED.stars, updated_at = now()`,
+        [id, member.id, stars],
+      );
+    }
+    const updated = (await db.query<RestaurantRow>(`${restaurantSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
+    return { body: toRestaurant(updated) };
   });
 
   router.add("DELETE", "/api/family/restaurants/:id", async (req) => {

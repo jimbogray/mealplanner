@@ -222,3 +222,6 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .restaurant-notes { margin: 0; white-space: pre-line; }
 .restaurant .actions { display: flex; gap: 0.25rem; }
 .drive { align-self: flex-start; font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; background: #e6f1fb; color: #1d4f7c; }
+.restaurant-name { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.average { padding: 0.1rem 0.55rem; border-radius: 999px; background: var(--ink); color: #fff; font-size: 0.8rem; font-weight: 600; }
+.restaurant .stars { margin-left: -0.15rem; }

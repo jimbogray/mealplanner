@@ -375,6 +375,11 @@ export interface Restaurant {
   address: string | null;
   /** Driving time from the family's home; null when there's no home address or it couldn't be worked out. */
   driveMinutes: number | null;
+  /** The family's average star rating (1 to 5, to one decimal place); null if nobody has rated it. */
+  averageRating: number | null;
+  ratingCount: number;
+  /** The signed-in member's own rating (1 to 5); null if they haven't rated it. */
+  myRating: number | null;
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;

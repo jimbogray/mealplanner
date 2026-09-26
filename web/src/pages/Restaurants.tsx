@@ -3,6 +3,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
+import { AverageRating, StarRating } from "../components/Stars";
 import { useSession } from "../session";
 
 /** The family's favourite restaurants: a name, an optional link and notes. */
@@ -28,6 +29,15 @@ function Restaurants() {
 
   function saved(restaurant: Restaurant) {
     setRestaurants((list) => [...(list ?? []).filter((r) => r.id !== restaurant.id), restaurant].sort(byName));
+  }
+
+  async function rate(restaurant: Restaurant, stars: number) {
+    setError(null);
+    try {
+      saved(await api.rateRestaurant(restaurant.id, stars));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }
 
   async function remove(restaurant: Restaurant) {
@@ -70,7 +80,8 @@ function Restaurants() {
               ) : (
                 <li key={r.id} className="restaurant">
                   <div className="restaurant-body">
-                    <strong>
+                    <strong className="restaurant-name">
+                      <AverageRating average={r.averageRating} count={r.ratingCount} className="average" />
                       {r.url ? (
                         <a href={r.url} target="_blank" rel="noopener noreferrer">
                           {r.name}
@@ -90,6 +101,7 @@ function Restaurants() {
                         .filter(Boolean)
                         .join(" · ")}
                     </p>
+                    <StarRating mine={r.myRating} onRate={(stars) => void rate(r, stars)} />
                   </div>
                   <div className="actions">
                     <button className="link" onClick={() => setEditing(r.id)}>
