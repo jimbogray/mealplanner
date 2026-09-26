@@ -4,6 +4,7 @@ import { FamilyPage } from "./pages/Family";
 import { JoinPage } from "./pages/Join";
 import { LibraryPage } from "./pages/Library";
 import { LoginPage } from "./pages/Login";
+import { SchedulePage } from "./pages/Schedule";
 import { SignupPage } from "./pages/Signup";
 import { useSession } from "./session";
 
@@ -20,6 +21,7 @@ export function App() {
           <nav className="nav">
             <NavLink to="/family">Family</NavLink>
             <NavLink to="/library">Library</NavLink>
+            <NavLink to="/schedule">Schedule</NavLink>
           </nav>
         )}
         {me && (
@@ -53,6 +55,14 @@ export function App() {
               element={
                 <RequireSignIn>
                   <LibraryPage />
+                </RequireSignIn>
+              }
+            />
+            <Route
+              path="/schedule"
+              element={
+                <RequireSignIn>
+                  <SchedulePage />
                 </RequireSignIn>
               }
             />

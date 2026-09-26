@@ -60,6 +60,10 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `DELETE /api/family/invites/:id` | admin | revokes an invite |
 | `GET /api/invites/:code` | anyone | family name and inviter, for the join page |
 | `POST /api/invites/:code/accept` | signed in, no family | `{name, lifeStage}` joins the family |
+| `GET /api/family/weeks` | family member | the weekly schedule: weeks (Monday to Sunday), each day with who's joining for dinner and guests |
+| `POST /api/family/weeks` | family member | `{startsOn, today, days?}` adds this week (if missing) or the week after the last one; days default to everyone joining, no guests |
+| `PATCH /api/family/weeks/:startsOn/days/:date` | family member | `{memberIds, guests}` changes one day |
+| `DELETE /api/family/weeks/:startsOn` | family member | removes a week |
 | `GET /api/health` | anyone | checks the database connection |
 
 ## Local development

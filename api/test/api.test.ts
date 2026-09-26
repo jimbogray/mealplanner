@@ -4,7 +4,19 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createSign, type KeyObject } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
-import type { AuthResponse, FamilyMember, FavouriteRecipe, Invite, InvitePreview, Me, RecipePreview } from "@mealplanner/shared";
+import {
+  addDays,
+  mondayOf,
+  type AuthResponse,
+  type FamilyMember,
+  type FavouriteRecipe,
+  type Invite,
+  type InvitePreview,
+  type Me,
+  type RecipePreview,
+  type ScheduleDay,
+  type ScheduleWeek,
+} from "@mealplanner/shared";
 import { createApp } from "../src/app.js";
 import { createPool, migrate, type Db } from "../src/db.js";
 
@@ -413,6 +425,110 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 404);
       const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
       assert.equal(list.body.length, 1);
+    });
+  });
+
+  describe("weekly schedule", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const thisWeek = mondayOf(today);
+    let everyone: string[];
+
+    before(async () => {
+      everyone = (await call<Me>("GET", "/api/me", { token: parentToken })).body.members.map((m) => m.id).sort();
+    });
+
+    test("starts empty, and weeks must start on a Monday", async () => {
+      assert.deepEqual((await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken })).body, []);
+      const tuesday = addDays(thisWeek, 1);
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: tuesday, today } })).status, 400);
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: "2026-02-30", today } })).status, 400);
+    });
+
+    test("only this week can be added first", async () => {
+      const res = await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: addDays(thisWeek, 7), today } });
+      assert.equal(res.status, 409);
+      const stale = await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: thisWeek, today: "2020-01-01" } });
+      assert.equal(stale.status, 400);
+    });
+
+    test("adding a week defaults to everyone joining with no guests, unless days say otherwise", async () => {
+      const friday = addDays(thisWeek, 4);
+      const res = await call<ScheduleWeek>("POST", "/api/family/weeks", {
+        token: teenToken,
+        body: { startsOn: thisWeek, today, days: [{ date: friday, memberIds: [everyone[0]], guests: 3 }] },
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.startsOn, thisWeek);
+      assert.deepEqual(
+        res.body.days.map((d) => d.date),
+        Array.from({ length: 7 }, (_, i) => addDays(thisWeek, i)),
+      );
+      for (const d of res.body.days) {
+        if (d.date === friday) assert.deepEqual(d, { date: friday, memberIds: [everyone[0]], guests: 3 });
+        else assert.deepEqual(d, { date: d.date, memberIds: everyone, guests: 0 });
+      }
+    });
+
+    test("then only the week after the last one, once", async () => {
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: thisWeek, today } })).status, 409);
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: addDays(thisWeek, 14), today } })).status, 409);
+      const next = await call<ScheduleWeek>("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: addDays(thisWeek, 7), today } });
+      assert.equal(next.status, 201);
+      const weeks = await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: teenToken });
+      assert.deepEqual(weeks.body.map((w) => w.startsOn), [thisWeek, addDays(thisWeek, 7)]);
+    });
+
+    test("days are validated", async () => {
+      const startsOn = addDays(thisWeek, 14);
+      for (const days of [
+        [{ date: addDays(thisWeek, 7), memberIds: [], guests: 0 }],
+        [{ date: startsOn, memberIds: [], guests: -1 }],
+        [{ date: startsOn, memberIds: [], guests: 1.5 }],
+        [{ date: startsOn, memberIds: ["00000000-0000-0000-0000-000000000000"], guests: 0 }],
+        [
+          { date: startsOn, memberIds: [], guests: 0 },
+          { date: startsOn, memberIds: [], guests: 1 },
+        ],
+      ]) {
+        assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days } })).status, 400, JSON.stringify(days));
+      }
+    });
+
+    test("anyone in the family can change a day", async () => {
+      const monday = addDays(thisWeek, 7);
+      const res = await call<ScheduleDay>("PATCH", `/api/family/weeks/${monday}/days/${monday}`, {
+        token: teenToken,
+        body: { memberIds: [], guests: 2 },
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { date: monday, memberIds: [], guests: 2 });
+      const outside = await call("PATCH", `/api/family/weeks/${monday}/days/${thisWeek}`, { token: teenToken, body: { memberIds: [], guests: 0 } });
+      assert.equal(outside.status, 404);
+      const missing = addDays(thisWeek, 21);
+      assert.equal((await call("PATCH", `/api/family/weeks/${missing}/days/${missing}`, { token: teenToken, body: { memberIds: [], guests: 0 } })).status, 404);
+    });
+
+    test("other families can't see or change it", async () => {
+      const other = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "schedule-other@example.com", password: "password123", name: "Pat", lifeStage: "adult", familyName: "The Others" },
+      });
+      const token = other.body.token;
+      assert.deepEqual((await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token })).body, []);
+      assert.equal((await call("PATCH", `/api/family/weeks/${thisWeek}/days/${thisWeek}`, { token, body: { memberIds: [], guests: 0 } })).status, 404);
+      assert.equal((await call("DELETE", `/api/family/weeks/${thisWeek}`, { token })).status, 404);
+      // Their own week can't include our members.
+      const res = await call("POST", "/api/family/weeks", {
+        token,
+        body: { startsOn: thisWeek, today, days: [{ date: thisWeek, memberIds: [everyone[0]], guests: 0 }] },
+      });
+      assert.equal(res.status, 400);
+      assert.equal((await call("GET", "/api/family/weeks")).status, 401);
+    });
+
+    test("a week can be removed", async () => {
+      assert.equal((await call("DELETE", `/api/family/weeks/${addDays(thisWeek, 7)}`, { token: parentToken })).status, 204);
+      const weeks = await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken });
+      assert.deepEqual(weeks.body.map((w) => w.startsOn), [thisWeek]);
     });
   });
 

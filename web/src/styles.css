@@ -126,9 +126,37 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   font-size: 1.25rem; line-height: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 @media (max-width: 480px) {
+  .topbar { gap: 0.5rem; }
+  .brand { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav a { padding: 0.3rem 0.45rem; }
+  .topbar .auth button { white-space: nowrap; }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
   .topbar .auth .note { display: none; }
 }
 
 .check { display: flex; gap: 0.5rem; align-items: flex-start; cursor: pointer; }
 .check input { margin-top: 0.3rem; accent-color: var(--accent); }
+
+.week-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; }
+.week-head h2 { margin: 0; }
+.week-actions { margin-left: auto; display: flex; gap: 0.5rem; }
+.days { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.days li {
+  display: grid; grid-template-columns: 6.5rem 1fr auto; gap: 0.75rem; align-items: baseline;
+  border-top: 1px solid var(--border); padding: 0.5rem 0;
+}
+.day-name { font-weight: 500; }
+.diners { min-width: 0; overflow-wrap: anywhere; }
+.diner-count { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+.day-form { list-style: none; margin: 0; padding: 0; }
+.day-form li { border-top: 1px solid var(--border); padding: 0.75rem 0; }
+.day-form li:first-child { border-top: none; padding-top: 0; }
+.day-fields { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; justify-content: space-between; }
+.guests { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; color: var(--muted); }
+.guests input { width: 4.5rem; }
+.past-weeks summary { cursor: pointer; color: var(--muted); padding: 0.25rem 0; }
+.past-weeks > .stack { margin-top: 0.75rem; }
+@media (max-width: 480px) {
+  .days li { grid-template-columns: 1fr auto; gap: 0.1rem 0.75rem; }
+  .days .diners { grid-column: 1 / -1; grid-row: 2; }
+}
