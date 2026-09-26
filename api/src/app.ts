@@ -16,6 +16,7 @@ import {
   type LifeStage,
   type Me,
   type RecipePreview,
+  type Restaurant,
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
@@ -246,6 +247,32 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     myRating: r.my_rating,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
+  };
+}
+
+interface RestaurantRow {
+  id: string;
+  name: string;
+  url: string | null;
+  notes: string | null;
+  added_by: string | null;
+  created_at: Date;
+}
+
+const RESTAURANT_SELECT = `SELECT r.id, r.name, r.url, r.notes, m.name AS added_by, r.created_at
+  FROM restaurant r LEFT JOIN family_member m ON m.id = r.added_by`;
+
+function toRestaurant(r: RestaurantRow): Restaurant {
+  return { id: r.id, name: r.name, url: r.url, notes: r.notes, addedBy: r.added_by, createdAt: r.created_at.toISOString() };
+}
+
+/** A restaurant's name, link and notes, as added or edited. */
+function restaurantInput(body: unknown): { name: string; url: string | null; notes: string | null } {
+  const b = v.object(body);
+  return {
+    name: v.text(b.name, "Restaurant name", 120),
+    url: b.url == null || (typeof b.url === "string" && !b.url.trim()) ? null : v.webUrl(b.url, "Restaurant link"),
+    notes: v.optionalText(b.notes, "Notes", 1000),
   };
 }
 
@@ -744,6 +771,69 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       member.family_id,
     ]);
     if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    return { status: 204 };
+  });
+
+  // --- restaurants --------------------------------------------------------
+  // Like recipes, they belong to the family: anyone in it can add, edit or remove one.
+
+  router.add("GET", "/api/family/restaurants", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rows } = await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.family_id = $1 ORDER BY lower(r.name)`, [
+      member.family_id,
+    ]);
+    const body: Restaurant[] = rows.map(toRestaurant);
+    return { body };
+  });
+
+  router.add("POST", "/api/family/restaurants", async (req) => {
+    const { member } = await requireMember(db, req);
+    const r = restaurantInput(req.body);
+    let id: string;
+    try {
+      id = (
+        await db.query<{ id: string }>(
+          "INSERT INTO restaurant (family_id, name, url, notes, added_by) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+          [member.family_id, r.name, r.url, r.notes, member.id],
+        )
+      ).rows[0].id;
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new HttpError(409, `${r.name} is already one of your restaurants`);
+      throw err;
+    }
+    const saved = (await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.id = $1`, [id])).rows[0];
+    return { status: 201, body: toRestaurant(saved) };
+  });
+
+  router.add("PUT", "/api/family/restaurants/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = v.uuid(req.params.id);
+    const r = restaurantInput(req.body);
+    let updated;
+    try {
+      updated = await db.query("UPDATE restaurant SET name = $1, url = $2, notes = $3 WHERE id = $4 AND family_id = $5", [
+        r.name,
+        r.url,
+        r.notes,
+        id,
+        member.family_id,
+      ]);
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new HttpError(409, `${r.name} is already one of your restaurants`);
+      throw err;
+    }
+    if (!updated.rowCount) throw new HttpError(404, "That restaurant isn't in your list");
+    const saved = (await db.query<RestaurantRow>(`${RESTAURANT_SELECT} WHERE r.id = $1`, [id])).rows[0];
+    return { body: toRestaurant(saved) };
+  });
+
+  router.add("DELETE", "/api/family/restaurants/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM restaurant WHERE id = $1 AND family_id = $2", [
+      v.uuid(req.params.id),
+      member.family_id,
+    ]);
+    if (!rowCount) throw new HttpError(404, "That restaurant isn't in your list");
     return { status: 204 };
   });
 

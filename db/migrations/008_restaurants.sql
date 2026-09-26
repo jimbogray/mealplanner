@@ -1,0 +1,14 @@
+-- A family's favourite restaurants.
+
+CREATE TABLE restaurant (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id   UUID NOT NULL REFERENCES family(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    -- The restaurant's website, menu or map listing.
+    url         TEXT,
+    notes       TEXT,
+    added_by    UUID REFERENCES family_member(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX restaurant_family_name ON restaurant (family_id, lower(name));

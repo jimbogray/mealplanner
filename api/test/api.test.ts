@@ -14,6 +14,7 @@ import {
   type InvitePreview,
   type Me,
   type RecipePreview,
+  type Restaurant,
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
@@ -466,6 +467,74 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 404);
       const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
       assert.equal(list.body.length, 1);
+    });
+  });
+
+  describe("restaurants", () => {
+    let pizzaId: string;
+
+    test("any family member can add one, with an optional link and notes", async () => {
+      const res = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: teenToken,
+        body: { name: "  Luigi's Pizza ", url: "luigis.example.com/menu#mains", notes: "Kids eat free on Tuesdays." },
+      });
+      assert.equal(res.status, 201);
+      pizzaId = res.body.id;
+      assert.equal(res.body.name, "Luigi's Pizza");
+      assert.equal(res.body.url, "https://luigis.example.com/menu");
+      assert.equal(res.body.notes, "Kids eat free on Tuesdays.");
+      assert.ok(res.body.addedBy);
+      const plain = await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { name: "Anchor Fish Bar", url: "", notes: " " } });
+      assert.equal(plain.status, 201);
+      assert.deepEqual([plain.body.url, plain.body.notes], [null, null]);
+      const list = await call<Restaurant[]>("GET", "/api/family/restaurants", { token: parentToken });
+      assert.deepEqual(
+        list.body.map((r) => r.name),
+        ["Anchor Fish Bar", "Luigi's Pizza"],
+      );
+    });
+
+    test("names are unique within the family, ignoring case", async () => {
+      const res = await call("POST", "/api/family/restaurants", { token: parentToken, body: { name: "luigi's pizza" } });
+      assert.equal(res.status, 409);
+    });
+
+    test("details are validated", async () => {
+      for (const body of [{ name: "" }, { name: "X", url: "javascript:alert(1)" }, { name: "X", url: "not a link" }, { name: "X".repeat(121) }]) {
+        assert.equal((await call("POST", "/api/family/restaurants", { token: parentToken, body })).status, 400, JSON.stringify(body));
+      }
+    });
+
+    test("any family member can edit one", async () => {
+      const path = `/api/family/restaurants/${pizzaId}`;
+      const res = await call<Restaurant>("PUT", path, { token: parentToken, body: { name: "Luigi's", notes: "Book ahead at weekends." } });
+      assert.equal(res.status, 200);
+      assert.deepEqual([res.body.name, res.body.url, res.body.notes], ["Luigi's", null, "Book ahead at weekends."]);
+      const clash = await call("PUT", path, { token: parentToken, body: { name: "ANCHOR FISH BAR" } });
+      assert.equal(clash.status, 409);
+    });
+
+    test("other families can't see, edit or remove them", async () => {
+      const other = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "restaurants-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
+      });
+      const token = other.body.token;
+      assert.deepEqual((await call<Restaurant[]>("GET", "/api/family/restaurants", { token })).body, []);
+      // Another family can use the same name.
+      assert.equal((await call("POST", "/api/family/restaurants", { token, body: { name: "Luigi's" } })).status, 201);
+      assert.equal((await call("PUT", `/api/family/restaurants/${pizzaId}`, { token, body: { name: "Mine" } })).status, 404);
+      assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token })).status, 404);
+      assert.equal((await call("GET", "/api/family/restaurants")).status, 401);
+    });
+
+    test("any family member can remove one", async () => {
+      assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token: teenToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token: teenToken })).status, 404);
+      const list = await call<Restaurant[]>("GET", "/api/family/restaurants", { token: parentToken });
+      assert.deepEqual(
+        list.body.map((r) => r.name),
+        ["Anchor Fish Bar"],
+      );
     });
   });
 

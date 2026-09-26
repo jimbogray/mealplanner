@@ -322,3 +322,23 @@ export interface UpdateDayRequest {
   memberIds: Uuid[];
   guests: number;
 }
+
+/** A restaurant the family likes. */
+export interface Restaurant {
+  id: Uuid;
+  name: string;
+  /** Its website, menu or map listing. */
+  url: string | null;
+  /** e.g. "Ask for the window table. Kids love the pizza." */
+  notes: string | null;
+  /** Name of the member who added it; null if they've since left. */
+  addedBy: string | null;
+  createdAt: string;
+}
+
+/** Add a restaurant, or change one (the whole thing is replaced). */
+export interface RestaurantInput {
+  name: string;
+  url?: string | null;
+  notes?: string | null;
+}

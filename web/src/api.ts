@@ -12,6 +12,8 @@ import type {
   Me,
   MemberInput,
   RecipePreview,
+  Restaurant,
+  RestaurantInput,
   MemberUpdate,
   ScheduleDay,
   ScheduleWeek,
@@ -96,6 +98,11 @@ export const api = {
     request<FavouriteRecipe>("PATCH", `/api/family/recipes/${id}`, { prepared }),
   rateRecipe: (id: string, stars: number) => request<FavouriteRecipe>("PUT", `/api/family/recipes/${id}/rating`, { stars }),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
+
+  restaurants: () => request<Restaurant[]>("GET", "/api/family/restaurants"),
+  addRestaurant: (body: RestaurantInput) => request<Restaurant>("POST", "/api/family/restaurants", body),
+  updateRestaurant: (id: string, body: RestaurantInput) => request<Restaurant>("PUT", `/api/family/restaurants/${id}`, body),
+  removeRestaurant: (id: string) => request<void>("DELETE", `/api/family/restaurants/${id}`),
 
   weeks: () => request<ScheduleWeek[]>("GET", "/api/family/weeks"),
   addWeek: (body: AddWeekRequest) => request<ScheduleWeek>("POST", "/api/family/weeks", body),
