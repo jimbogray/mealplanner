@@ -1,4 +1,4 @@
-import { daysToPlan, MAX_GUESTS, mondayOf, nextWeekToAdd, type FamilyMember, type ScheduleDay, type ScheduleWeek } from "@mealplanner/shared";
+import { daysToPlan, MAX_GUESTS, mondayOf, nextWeekToAdd, weekDays, type FamilyMember, type ScheduleDay, type ScheduleWeek } from "@mealplanner/shared";
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
@@ -73,7 +73,8 @@ function Schedule({ members }: { members: FamilyMember[] }) {
           <WeekForm
             title={next === thisWeek ? "This week" : weekLabel(adding)}
             members={members}
-            days={daysToPlan(adding, today).map((date) => ({ date, memberIds: members.map((m) => m.id), guests: 0 }))}
+            dates={daysToPlan(adding, today)}
+            days={daysToPlan(adding, today).map((date) => everyone(date, members))}
             submitLabel="Add week"
             onCancel={() => setAdding(null)}
             onSave={async (days) => {
@@ -87,14 +88,22 @@ function Schedule({ members }: { members: FamilyMember[] }) {
       <ErrorNote error={error} />
       {weeks && upcoming.length === 0 && !adding && <p className="note center">No weeks planned yet. Add this week above.</p>}
       {upcoming.map((w) => (
-        <Week key={w.startsOn} week={w} members={members} isCurrent={w.startsOn === thisWeek} onChange={replace} onRemove={() => void remove(w)} />
+        <Week
+          key={w.startsOn}
+          week={w}
+          members={members}
+          today={today}
+          isCurrent={w.startsOn === thisWeek}
+          onChange={replace}
+          onRemove={() => void remove(w)}
+        />
       ))}
       {past.length > 0 && (
         <details className="past-weeks">
           <summary>Earlier weeks ({past.length})</summary>
           <div className="stack">
             {past.map((w) => (
-              <Week key={w.startsOn} week={w} members={members} isCurrent={false} onChange={replace} onRemove={() => void remove(w)} />
+              <Week key={w.startsOn} week={w} members={members} today={today} isCurrent={false} onChange={replace} onRemove={() => void remove(w)} />
             ))}
           </div>
         </details>
@@ -103,15 +112,22 @@ function Schedule({ members }: { members: FamilyMember[] }) {
   );
 }
 
+/** A day with the whole family joining and no guests. */
+function everyone(date: string, members: FamilyMember[]): ScheduleDay {
+  return { date, memberIds: members.map((m) => m.id), guests: 0 };
+}
+
 function Week({
   week,
   members,
+  today,
   isCurrent,
   onChange,
   onRemove,
 }: {
   week: ScheduleWeek;
   members: FamilyMember[];
+  today: string;
   isCurrent: boolean;
   onChange: (week: ScheduleWeek) => void;
   onRemove: () => void;
@@ -125,14 +141,21 @@ function Week({
         <WeekForm
           title={title}
           members={members}
+          // Days already in the schedule, plus any removed ones that haven't passed yet (so they can be added back).
+          dates={weekDays(week.startsOn).filter((date) => date >= today || week.days.some((d) => d.date === date))}
           days={week.days}
           submitLabel="Save"
           onCancel={() => setEditing(false)}
           onSave={async (days) => {
-            // Only send the days that changed.
-            const changed = days.filter((d, i) => !sameDay(d, week.days[i]));
+            // Only send what changed: new or edited days first, then removals (a week must keep a day).
+            const changed = days.filter((d) => {
+              const before = week.days.find((b) => b.date === d.date);
+              return !before || !sameDay(d, before);
+            });
+            const removed = week.days.filter((b) => !days.some((d) => d.date === b.date));
             const saved = await Promise.all(changed.map((d) => api.updateDay(week.startsOn, d.date, { memberIds: d.memberIds, guests: d.guests })));
-            onChange({ ...week, days: week.days.map((d) => saved.find((s) => s.date === d.date) ?? d) });
+            await Promise.all(removed.map((d) => api.removeDay(week.startsOn, d.date)));
+            onChange({ ...week, days: days.map((d) => saved.find((s) => s.date === d.date) ?? d) });
             setEditing(false);
           }}
         />
@@ -178,10 +201,14 @@ function dinersSummary(day: ScheduleDay, members: FamilyMember[]): string {
   return [names, guests].filter(Boolean).join(" + ") || "No one";
 }
 
-/** A week's days, each with who's joining for dinner (tick boxes) and a number of guests. */
+/**
+ * A week's days, each with who's joining for dinner (toggle pills) and a number of guests.
+ * Any of `dates` can be taken out of the schedule, or put back in; saving passes the days still in it.
+ */
 function WeekForm({
   title,
   members,
+  dates,
   days: initial,
   submitLabel,
   onSave,
@@ -189,6 +216,7 @@ function WeekForm({
 }: {
   title: string;
   members: FamilyMember[];
+  dates: string[];
   days: ScheduleDay[];
   submitLabel: string;
   onSave: (days: ScheduleDay[]) => Promise<void>;
@@ -206,8 +234,20 @@ function WeekForm({
     update(day.date, { memberIds: joining ? [...day.memberIds, memberId] : day.memberIds.filter((id) => id !== memberId) });
   }
 
+  function removeDay(date: string) {
+    setDays((list) => list.filter((d) => d.date !== date));
+  }
+
+  function addBack(date: string) {
+    setDays((list) => [...list, everyone(date, members)].sort((a, b) => a.date.localeCompare(b.date)));
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (days.length === 0) {
+      setError("Keep at least one day, or remove the whole week instead.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -225,34 +265,54 @@ function WeekForm({
         <p className="hint">Tap who's joining for dinner each day, and add any guests.</p>
       </div>
       <ul className="day-form">
-        {days.map((d) => (
-          <li key={d.date}>
-            <fieldset>
-              <legend>{dayLabel(d.date, "long")}</legend>
-              <div className="day-fields">
-                <div className="chips">
-                  {members.map((m) => (
-                    <label key={m.id} className="chip toggle">
-                      <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
-                      {m.name}
-                    </label>
-                  ))}
+        {dates.map((date) => {
+          const d = days.find((day) => day.date === date);
+          if (!d) {
+            return (
+              <li key={date} className="day-removed">
+                <span>
+                  <s>{dayLabel(date, "long")}</s> <span className="note small">not in the schedule</span>
+                </span>
+                <button type="button" className="link" onClick={() => addBack(date)}>
+                  Add back
+                </button>
+              </li>
+            );
+          }
+          return (
+            <li key={d.date}>
+              <fieldset>
+                <div className="day-legend">
+                  <legend>{dayLabel(d.date, "long")}</legend>
+                  <button type="button" className="link danger small" onClick={() => removeDay(d.date)}>
+                    Remove day
+                  </button>
                 </div>
-                <label className="guests">
-                  Guests
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    max={MAX_GUESTS}
-                    value={d.guests}
-                    onChange={(e) => update(d.date, { guests: Math.min(MAX_GUESTS, Math.max(0, Math.floor(Number(e.target.value) || 0))) })}
-                  />
-                </label>
-              </div>
-            </fieldset>
-          </li>
-        ))}
+                <div className="day-fields">
+                  <div className="chips">
+                    {members.map((m) => (
+                      <label key={m.id} className="chip toggle">
+                        <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
+                        {m.name}
+                      </label>
+                    ))}
+                  </div>
+                  <label className="guests">
+                    Guests
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={MAX_GUESTS}
+                      value={d.guests}
+                      onChange={(e) => update(d.date, { guests: Math.min(MAX_GUESTS, Math.max(0, Math.floor(Number(e.target.value) || 0))) })}
+                    />
+                  </label>
+                </div>
+              </fieldset>
+            </li>
+          );
+        })}
       </ul>
       <ErrorNote error={error} />
       <div className="row">

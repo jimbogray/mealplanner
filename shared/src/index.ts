@@ -310,7 +310,10 @@ export interface ScheduleWeek {
   days: ScheduleDay[];
 }
 
-/** Add a week. Days that have already passed are left out; others not listed default to everyone joining and no guests. */
+/**
+ * Add a week. Days that have already passed are left out. Without `days`, every other day is planned with
+ * everyone joining and no guests; with `days`, only the days listed are planned.
+ */
 export interface AddWeekRequest {
   startsOn: IsoDate;
   /** The person's local date, so "this week" is theirs rather than the server's. */

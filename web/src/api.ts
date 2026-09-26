@@ -101,6 +101,7 @@ export const api = {
   addWeek: (body: AddWeekRequest) => request<ScheduleWeek>("POST", "/api/family/weeks", body),
   updateDay: (startsOn: string, date: string, body: UpdateDayRequest) =>
     request<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, body),
+  removeDay: (startsOn: string, date: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}/days/${date}`),
   removeWeek: (startsOn: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}`),
 };
 

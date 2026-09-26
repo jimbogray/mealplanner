@@ -771,20 +771,23 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const familyIds = await familyMemberIds(db, member.family_id);
     // This week starts from today: days already gone aren't planned.
     const days = daysToPlan(startsOn, today).map((date): ScheduleDay => ({ date, memberIds: familyIds, guests: 0 }));
+    // When days are listed, only those days are planned (the rest are left out of the schedule).
     if (b.days !== undefined) {
       if (!Array.isArray(b.days)) throw new HttpError(400, "Days must be a list");
-      const seen = new Set<string>();
+      const planned = new Map<string, ScheduleDay>();
       for (const raw of b.days) {
         const d = v.object(raw);
         const date = v.isoDate(d.date, "Day");
-        const i = days.findIndex((day) => day.date === date);
-        if (i < 0 && weekDays(startsOn).includes(date)) throw new HttpError(400, `${date} has already passed`);
-        if (i < 0) throw new HttpError(400, `${date} isn't in the week starting ${startsOn}`);
-        if (seen.has(date)) throw new HttpError(400, `${date} is listed twice`);
-        seen.add(date);
-        days[i] = { date, ...dinner(d, familyIds) };
+        if (!days.some((day) => day.date === date)) {
+          if (weekDays(startsOn).includes(date)) throw new HttpError(400, `${date} has already passed`);
+          throw new HttpError(400, `${date} isn't in the week starting ${startsOn}`);
+        }
+        if (planned.has(date)) throw new HttpError(400, `${date} is listed twice`);
+        planned.set(date, { date, ...dinner(d, familyIds) });
       }
+      days.splice(0, days.length, ...days.filter((d) => planned.has(d.date)).map((d) => planned.get(d.date)!));
     }
+    if (days.length === 0) throw new HttpError(400, "Plan at least one day");
 
     await withTransaction(db, async (tx) => {
       // One week added at a time per family, so two people can't both add "next week".
@@ -820,13 +823,35 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
         await tx.query<{ id: string }>("SELECT id FROM schedule_week WHERE family_id = $1 AND starts_on = $2", [member.family_id, startsOn])
       ).rows[0];
       if (!week) throw new HttpError(404, "That week isn't in your schedule");
-      // Only days in the schedule can change (a week added mid-week has no earlier days).
+      // A day that isn't in the schedule (removed, or before the week was added) can be added back until it has passed.
       const exists = (await tx.query("SELECT 1 FROM schedule_day WHERE week_id = $1 AND day = $2", [week.id, date])).rowCount;
-      if (!exists) throw new HttpError(404, "That day isn't in this week");
+      if (!exists && date < addDays(new Date().toISOString().slice(0, 10), -1)) throw new HttpError(404, "That day has already passed");
       await saveDay(tx, week.id, day);
     });
     const body: ScheduleDay = (await loadWeeks(db, member.family_id, startsOn))[0].days.find((d) => d.date === date)!;
     return { body };
+  });
+
+  // Takes a day out of the schedule altogether (e.g. everyone's away).
+  router.add("DELETE", "/api/family/weeks/:startsOn/days/:date", async (req) => {
+    const { member } = await requireMember(db, req);
+    const startsOn = weekStart(req.params.startsOn);
+    await withTransaction(db, async (tx) => {
+      const week = (
+        await tx.query<{ id: string }>("SELECT id FROM schedule_week WHERE family_id = $1 AND starts_on = $2 FOR UPDATE", [
+          member.family_id,
+          startsOn,
+        ])
+      ).rows[0];
+      if (!week) throw new HttpError(404, "That week isn't in your schedule");
+      const { rows } = await tx.query<{ day: string }>("SELECT to_char(day, 'YYYY-MM-DD') AS day FROM schedule_day WHERE week_id = $1", [
+        week.id,
+      ]);
+      if (!rows.some((r) => r.day === req.params.date)) throw new HttpError(404, "That day isn't in this week");
+      if (rows.length === 1) throw new HttpError(400, "That's the week's only day; remove the week instead");
+      await tx.query("DELETE FROM schedule_day WHERE week_id = $1 AND day = $2", [week.id, req.params.date]);
+    });
+    return { status: 204 };
   });
 
   router.add("DELETE", "/api/family/weeks/:startsOn", async (req) => {

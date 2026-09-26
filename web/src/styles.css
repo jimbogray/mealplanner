@@ -197,3 +197,7 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .chip.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .chip.toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chip.toggle:not(:has(input:checked)) { color: var(--muted); }
+.day-legend { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.day-legend legend { float: left; margin-bottom: 0.35rem; }
+.day-legend + * { clear: both; }
+.day-form li.day-removed { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; color: var(--muted); }

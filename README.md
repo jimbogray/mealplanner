@@ -61,8 +61,9 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `GET /api/invites/:code` | anyone | family name and inviter, for the join page |
 | `POST /api/invites/:code/accept` | signed in, no family | `{name, lifeStage}` joins the family |
 | `GET /api/family/weeks` | family member | the weekly schedule: weeks (Monday to Sunday), each day with who's joining for dinner and guests |
-| `POST /api/family/weeks` | family member | `{startsOn, today, days?}` adds this week (if missing) or the week after the last one; days default to everyone joining, no guests |
+| `POST /api/family/weeks` | family member | `{startsOn, today, days?}` adds this week (if missing, from today) or the week after the last one; without `days`, every day is planned with everyone joining, no guests; with `days`, only those days |
 | `PATCH /api/family/weeks/:startsOn/days/:date` | family member | `{memberIds, guests}` changes one day |
+| `DELETE /api/family/weeks/:startsOn/days/:date` | family member | takes a day out of the schedule (a week keeps at least one); `PATCH` adds it back |
 | `DELETE /api/family/weeks/:startsOn` | family member | removes a week |
 | `GET /api/health` | anyone | checks the database connection |
 
