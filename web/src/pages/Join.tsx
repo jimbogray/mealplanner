@@ -33,7 +33,11 @@ export function JoinPage() {
   const heading = (
     <>
       <h1>Join {invite.familyName}</h1>
-      <p className="note">{invite.invitedBy} invited you to join the family.</p>
+      <p className="note">
+        {invite.memberName
+          ? `${invite.invitedBy} added you to the family as ${invite.memberName}. Set up your login to sign in as ${invite.memberName}.`
+          : `${invite.invitedBy} invited you to join the family.`}
+      </p>
     </>
   );
 
@@ -54,10 +58,10 @@ export function JoinPage() {
     <div className="card narrow">
       {heading}
       {me ? (
-        <AcceptForm code={code} />
+        <AcceptForm code={code} forMember={invite.memberName} />
       ) : (
         <>
-          <AccountForm inviteCode={code} submitLabel={`Join ${invite.familyName}`} />
+          <AccountForm inviteCode={code} forMember={invite.memberName} submitLabel={`Join ${invite.familyName}`} />
           <p className="note center">
             Already have an account?{" "}
             <Link to="/login" state={{ from: `/join/${code}` }}>
@@ -71,7 +75,7 @@ export function JoinPage() {
 }
 
 /** For someone already signed in who isn't in a family. */
-function AcceptForm({ code }: { code: string }) {
+function AcceptForm({ code, forMember }: { code: string; forMember: string | null }) {
   const { setMe } = useSession();
   const navigate = useNavigate();
   const [name, setName] = useState("");
@@ -84,7 +88,7 @@ function AcceptForm({ code }: { code: string }) {
     setBusy(true);
     setError(null);
     try {
-      setMe(await api.acceptInvite(code, { name, lifeStage }));
+      setMe(await api.acceptInvite(code, forMember ? {} : { name, lifeStage }));
       navigate("/family");
     } catch (err) {
       setError(errorMessage(err));
@@ -94,12 +98,16 @@ function AcceptForm({ code }: { code: string }) {
 
   return (
     <form className="stack" onSubmit={submit}>
-      <Field label="Your name" htmlFor="name">
-        <input id="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      <Field label="You are" htmlFor="lifeStage">
-        <LifeStageSelect id="lifeStage" value={lifeStage} onChange={setLifeStage} />
-      </Field>
+      {!forMember && (
+        <>
+          <Field label="Your name" htmlFor="name">
+            <input id="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="You are" htmlFor="lifeStage">
+            <LifeStageSelect id="lifeStage" value={lifeStage} onChange={setLifeStage} />
+          </Field>
+        </>
+      )}
       <ErrorNote error={error} />
       <button type="submit" disabled={busy}>
         Join family

@@ -19,6 +19,60 @@ export function isLifeStage(value: unknown): value is LifeStage {
   return typeof value === "string" && (LIFE_STAGES as readonly string[]).includes(value);
 }
 
+/** Eating pattern; "none" means no restriction. */
+export const DIETS = ["none", "vegetarian", "vegan"] as const;
+export type Diet = (typeof DIETS)[number];
+
+export const DIET_LABELS: Record<Diet, string> = {
+  none: "No restriction",
+  vegetarian: "Vegetarian",
+  vegan: "Vegan",
+};
+
+export function isDiet(value: unknown): value is Diet {
+  return typeof value === "string" && (DIETS as readonly string[]).includes(value);
+}
+
+/** The UK's 14 major food allergens (also the database's allowed values). */
+export const ALLERGENS = [
+  "gluten",
+  "dairy",
+  "egg",
+  "peanut",
+  "tree_nuts",
+  "soy",
+  "fish",
+  "crustaceans",
+  "molluscs",
+  "sesame",
+  "mustard",
+  "celery",
+  "lupin",
+  "sulphites",
+] as const;
+export type Allergen = (typeof ALLERGENS)[number];
+
+export const ALLERGEN_LABELS: Record<Allergen, string> = {
+  gluten: "Gluten",
+  dairy: "Dairy (milk)",
+  egg: "Egg",
+  peanut: "Peanuts",
+  tree_nuts: "Tree nuts",
+  soy: "Soya",
+  fish: "Fish",
+  crustaceans: "Shellfish (crustaceans)",
+  molluscs: "Molluscs",
+  sesame: "Sesame",
+  mustard: "Mustard",
+  celery: "Celery",
+  lupin: "Lupin",
+  sulphites: "Sulphites",
+};
+
+export function isAllergen(value: unknown): value is Allergen {
+  return typeof value === "string" && (ALLERGENS as readonly string[]).includes(value);
+}
+
 /** "admin" can add, edit and remove members and create invites. */
 export type MemberRole = "admin" | "member";
 
@@ -26,6 +80,9 @@ export interface FamilyMember {
   id: Uuid;
   name: string;
   lifeStage: LifeStage;
+  diet: Diet;
+  /** In ALLERGENS order. */
+  allergies: Allergen[];
   role: MemberRole;
   /** True when the member has their own login (joined via sign-up or an invite). */
   hasAccount: boolean;
@@ -42,6 +99,9 @@ export interface Family {
 export interface Invite {
   id: Uuid;
   code: string;
+  /** Set when the invite is for an existing member (added by an admin) to get their own login. */
+  memberId: Uuid | null;
+  memberName: string | null;
   createdAt: string;
   expiresAt: string;
 }
@@ -57,6 +117,8 @@ export interface Me {
 /** Public details about an invite, shown on the join page before sign-up. */
 export interface InvitePreview {
   familyName: string;
+  /** The existing member this invite signs in as, if any; name and life stage are then already set. */
+  memberName: string | null;
   invitedBy: string;
   expiresAt: string;
 }
@@ -69,8 +131,9 @@ export interface AuthResponse {
 export interface SignupRequest {
   email: string;
   password: string;
-  name: string;
-  lifeStage: LifeStage;
+  /** name and lifeStage are ignored when the invite is for an existing member. */
+  name?: string;
+  lifeStage?: LifeStage;
   /** Create a new family with this name… */
   familyName?: string;
   /** …or join an existing family through an invite code. */
@@ -97,17 +160,28 @@ export interface LoginRequest {
 export interface MemberInput {
   name: string;
   lifeStage: LifeStage;
+  diet?: Diet;
+  allergies?: Allergen[];
 }
 
 export interface MemberUpdate {
   name?: string;
   lifeStage?: LifeStage;
+  diet?: Diet;
+  allergies?: Allergen[];
   role?: MemberRole;
 }
 
+export interface CreateInviteRequest {
+  /** Invite this existing member (who has no login yet) to sign in as themselves. */
+  memberId?: Uuid;
+}
+
 /** Create a family for a signed-in user who isn't in one. */
-export interface CreateFamilyRequest extends MemberInput {
+export interface CreateFamilyRequest {
   familyName: string;
+  name: string;
+  lifeStage: LifeStage;
 }
 
 export interface ApiError {

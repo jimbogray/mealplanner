@@ -141,6 +141,76 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     assert.equal(res.body.name, "Bea");
   });
 
+  test("members have a diet and allergies, editable by an admin", async () => {
+    const added = await call<FamilyMember>("POST", "/api/family/members", {
+      token: parentToken,
+      body: { name: "Val", lifeStage: "child", diet: "vegan", allergies: ["sesame", "peanut", "peanut"] },
+    });
+    assert.equal(added.status, 201);
+    assert.equal(added.body.diet, "vegan");
+    assert.deepEqual(added.body.allergies, ["peanut", "sesame"]);
+
+    const baby = await call<FamilyMember>("PATCH", `/api/family/members/${babyId}`, {
+      token: parentToken,
+      body: { diet: "vegetarian", allergies: ["dairy", "egg"] },
+    });
+    assert.equal(baby.body.diet, "vegetarian");
+    assert.deepEqual(baby.body.allergies, ["dairy", "egg"]);
+    assert.equal(baby.body.lifeStage, "toddler");
+
+    const cleared = await call<FamilyMember>("PATCH", `/api/family/members/${added.body.id}`, {
+      token: parentToken,
+      body: { diet: "none", allergies: [] },
+    });
+    assert.equal(cleared.body.diet, "none");
+    assert.deepEqual(cleared.body.allergies, []);
+
+    for (const body of [{ diet: "keto" }, { allergies: ["kryptonite"] }, { allergies: "peanut" }]) {
+      assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body })).status, 400, JSON.stringify(body));
+    }
+    assert.equal((await call("DELETE", `/api/family/members/${added.body.id}`, { token: parentToken })).status, 204);
+  });
+
+  test("an admin-added member can later be invited to sign in as themselves", async () => {
+    const dad = await call<FamilyMember>("POST", "/api/family/members", {
+      token: parentToken,
+      body: { name: "Dad", lifeStage: "adult", diet: "vegetarian", allergies: ["fish"] },
+    });
+    assert.equal(dad.body.hasAccount, false);
+    const invite = await call<Invite>("POST", "/api/family/invites", { token: parentToken, body: { memberId: dad.body.id } });
+    assert.equal(invite.status, 201);
+    assert.equal(invite.body.memberName, "Dad");
+
+    const preview = await call<InvitePreview>("GET", `/api/invites/${invite.body.code}`);
+    assert.equal(preview.body.memberName, "Dad");
+
+    // No name or life stage needed: the member already has them.
+    const joined = await call<AuthResponse>("POST", "/api/auth/signup", {
+      body: { email: "dad@example.com", password: "password123", inviteCode: invite.body.code },
+    });
+    assert.equal(joined.status, 201);
+    const me = joined.body.me;
+    assert.equal(me.member?.id, dad.body.id);
+    assert.equal(me.member?.hasAccount, true);
+    assert.equal(me.member?.email, "dad@example.com");
+    assert.equal(me.member?.diet, "vegetarian");
+    assert.deepEqual(me.member?.allergies, ["fish"]);
+    assert.equal(me.members.filter((m) => m.name === "Dad").length, 1);
+
+    // A member who now has a login can't get another member invite.
+    assert.equal((await call("POST", "/api/family/invites", { token: parentToken, body: { memberId: dad.body.id } })).status, 400);
+    // Removing the member drops the login's membership, not the login.
+    assert.equal((await call("DELETE", `/api/family/members/${dad.body.id}`, { token: parentToken })).status, 204);
+    assert.equal((await call<Me>("GET", "/api/me", { token: joined.body.token })).body.family, null);
+  });
+
+  test("a member invite is deleted with its member", async () => {
+    const kid = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Kid", lifeStage: "child" } });
+    const invite = await call<Invite>("POST", "/api/family/invites", { token: parentToken, body: { memberId: kid.body.id } });
+    await call("DELETE", `/api/family/members/${kid.body.id}`, { token: parentToken });
+    assert.equal((await call("GET", `/api/invites/${invite.body.code}`)).status, 404);
+  });
+
   let teenToken: string;
   let teenMemberId: string;
 

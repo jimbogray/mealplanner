@@ -73,3 +73,17 @@ a { color: var(--accent); }
 .google { display: flex; flex-direction: column; align-items: center; min-height: 44px; }
 .divider { display: flex; align-items: center; gap: 0.75rem; color: var(--muted); font-size: 0.85rem; }
 .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+
+fieldset { border: none; margin: 0; padding: 0; }
+legend { font-weight: 500; font-size: 0.95rem; padding: 0; margin-bottom: 0.35rem; }
+.diet-fields { display: flex; flex-direction: column; gap: 0.75rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;
+  padding: 0.3rem 0.65rem; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; background: #fff;
+}
+.chip:has(input:checked) { border-color: var(--accent); background: #e1f5ee; }
+.chip input { margin: 0; accent-color: var(--accent); }
+.diet { color: #7a5510; margin-top: 0.15rem; }
+.invite-link { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
+.invite-link code { font-size: 0.8rem; word-break: break-all; }

@@ -7,8 +7,11 @@ import { GoogleButton, OrDivider } from "../components/GoogleButton";
 import { LifeStageSelect } from "../components/LifeStageSelect";
 import { useSession } from "../session";
 
-/** Sign-up form. With an inviteCode it joins that family; otherwise it creates a new one. */
-export function AccountForm({ inviteCode, submitLabel }: { inviteCode?: string; submitLabel: string }) {
+/**
+ * Sign-up form. With an inviteCode it joins that family; otherwise it creates a new one.
+ * forMember: the invite is for an existing member, whose name and life stage are already set.
+ */
+export function AccountForm({ inviteCode, forMember, submitLabel }: { inviteCode?: string; forMember?: string | null; submitLabel: string }) {
   const { signIn } = useSession();
   const navigate = useNavigate();
   const [familyName, setFamilyName] = useState("");
@@ -24,7 +27,8 @@ export function AccountForm({ inviteCode, submitLabel }: { inviteCode?: string; 
     setBusy(true);
     setError(null);
     try {
-      const res = await api.signup({ email, password, name, lifeStage, ...(inviteCode ? { inviteCode } : { familyName }) });
+      const profile = forMember ? {} : { name, lifeStage };
+      const res = await api.signup({ email, password, ...profile, ...(inviteCode ? { inviteCode } : { familyName }) });
       signIn(res.token, res.me);
       navigate("/family");
     } catch (err) {
@@ -63,12 +67,16 @@ export function AccountForm({ inviteCode, submitLabel }: { inviteCode?: string; 
           <input id="familyName" required maxLength={80} value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
         </Field>
       )}
-      <Field label="Your name" htmlFor="name">
-        <input id="name" required maxLength={80} autoComplete="given-name" value={name} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      <Field label="You are" htmlFor="lifeStage">
-        <LifeStageSelect id="lifeStage" value={lifeStage} onChange={setLifeStage} />
-      </Field>
+      {!forMember && (
+        <>
+          <Field label="Your name" htmlFor="name">
+            <input id="name" required maxLength={80} autoComplete="given-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="You are" htmlFor="lifeStage">
+            <LifeStageSelect id="lifeStage" value={lifeStage} onChange={setLifeStage} />
+          </Field>
+        </>
+      )}
       <GoogleButton text={inviteCode ? "continue_with" : "signup_with"} onCredential={(c) => void withGoogle(c)} />
       <OrDivider label="or use an email and password" />
       <Field label="Email" htmlFor="email">
