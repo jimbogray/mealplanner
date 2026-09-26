@@ -73,3 +73,16 @@ a { color: var(--accent); }
 .google { display: flex; flex-direction: column; align-items: center; min-height: 44px; }
 .divider { display: flex; align-items: center; gap: 0.75rem; color: var(--muted); font-size: 0.85rem; }
 .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+
+.grow { flex: 1 1 240px; }
+.recipes { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.recipes li { display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--border); padding: 0.6rem 0; }
+.recipe { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.75rem; color: var(--ink); text-decoration: none; }
+.recipe:hover strong { text-decoration: underline; }
+.recipe > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+.recipe strong { overflow-wrap: anywhere; }
+.recipe img, .recipe .placeholder {
+  width: 64px; height: 64px; flex: none; border-radius: 8px; object-fit: cover;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.recipe .placeholder { display: grid; place-items: center; font-size: 1.5rem; }

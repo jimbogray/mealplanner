@@ -1,7 +1,9 @@
 import type {
+  AddFavouriteRequest,
   AuthResponse,
   CreateFamilyRequest,
   FamilyMember,
+  FavouriteRecipe,
   GoogleAuthRequest,
   Invite,
   InvitePreview,
@@ -80,6 +82,10 @@ export const api = {
   revokeInvite: (id: string) => request<void>("DELETE", `/api/family/invites/${id}`),
   previewInvite: (code: string) => request<InvitePreview>("GET", `/api/invites/${encodeURIComponent(code)}`),
   acceptInvite: (code: string, body: MemberInput) => request<Me>("POST", `/api/invites/${encodeURIComponent(code)}/accept`, body),
+
+  recipes: () => request<FavouriteRecipe[]>("GET", "/api/family/recipes"),
+  addRecipe: (body: AddFavouriteRequest) => request<FavouriteRecipe>("POST", "/api/family/recipes", body),
+  removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
 };
 
 export function inviteUrl(code: string): string {

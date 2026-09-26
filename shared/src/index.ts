@@ -113,3 +113,22 @@ export interface CreateFamilyRequest extends MemberInput {
 export interface ApiError {
   error: string;
 }
+
+/** A recipe page a family has saved as a favourite. */
+export interface FavouriteRecipe {
+  id: Uuid;
+  url: string;
+  title: string;
+  imageUrl: string | null;
+  /** e.g. "BBC Good Food", from the page's metadata. */
+  siteName: string | null;
+  /** Name of the member who added it; null if they've since left. */
+  addedBy: string | null;
+  createdAt: string;
+}
+
+/** Add a favourite by URL. The API reads the title and image from the page; title overrides it. */
+export interface AddFavouriteRequest {
+  url: string;
+  title?: string;
+}

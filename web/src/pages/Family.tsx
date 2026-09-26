@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, inviteUrl } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
 import { LifeStageBadge, LifeStageSelect } from "../components/LifeStageSelect";
+import { FavouriteRecipes } from "../components/FavouriteRecipes";
 import { useSession } from "../session";
 
 export function FamilyPage() {
@@ -13,6 +14,7 @@ export function FamilyPage() {
   return (
     <div className="stack">
       <Members me={me} isAdmin={isAdmin} />
+      <FavouriteRecipes />
       {isAdmin && <AddMember />}
       {isAdmin && <Invites />}
     </div>

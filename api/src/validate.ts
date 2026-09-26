@@ -38,3 +38,19 @@ export function uuid(value: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new HttpError(404, "Not found");
   return value;
 }
+
+/** A web page address (http or https), without its #fragment. */
+export function webUrl(value: unknown, field = "Link"): string {
+  const raw = text(value, field, 2048);
+  let u: URL;
+  try {
+    u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    throw new HttpError(400, `${field} must be a web address`);
+  }
+  if ((u.protocol !== "http:" && u.protocol !== "https:") || !u.hostname.includes(".") || u.username || u.password) {
+    throw new HttpError(400, `${field} must be a web address`);
+  }
+  u.hash = "";
+  return u.href;
+}

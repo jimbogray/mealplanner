@@ -1,9 +1,10 @@
 import { createServer, type Server } from "node:http";
-import type { AuthResponse, Family, FamilyMember, Invite, InvitePreview, Me } from "@mealplanner/shared";
+import type { AuthResponse, Family, FamilyMember, FavouriteRecipe, Invite, InvitePreview, Me } from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
+import { fallbackTitle, fetchRecipeMeta, type RecipeMeta, type RecipeMetaFetcher } from "./recipe-meta.js";
 import * as v from "./validate.js";
 
 export const INVITE_DAYS = 14;
@@ -118,6 +119,8 @@ export interface AppOptions {
   webOrigins: string[];
   /** Enables Sign in with Google when set. */
   google?: { clientId: string; keys: KeySource };
+  /** Reads a recipe page's title and image; defaults to fetching the page. */
+  fetchRecipeMeta?: RecipeMetaFetcher;
 }
 
 /** Optional sign-up fields: a new family name, or an invite code to join one. */
@@ -127,7 +130,32 @@ function familyChoice(b: Record<string, unknown>): { familyName: string | null; 
   return { familyName, inviteCode };
 }
 
-export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): Router {
+interface RecipeRow {
+  id: string;
+  url: string;
+  title: string;
+  image_url: string | null;
+  site_name: string | null;
+  added_by: string | null;
+  created_at: Date;
+}
+
+const RECIPE_SELECT = `SELECT r.id, r.url, r.title, r.image_url, r.site_name, m.name AS added_by, r.created_at
+  FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
+
+function toRecipe(r: RecipeRow): FavouriteRecipe {
+  return {
+    id: r.id,
+    url: r.url,
+    title: r.title,
+    imageUrl: r.image_url,
+    siteName: r.site_name,
+    addedBy: r.added_by,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchRecipeMeta"> = {}): Router {
   const router = new Router();
 
   router.add("GET", "/api/health", async () => {
@@ -414,6 +442,54 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
       }
     });
     return { body: await loadMe(db, userId, email) };
+  });
+
+  // --- favourite recipes --------------------------------------------------
+  // They belong to the family: anyone in it can add or remove one.
+
+  router.add("GET", "/api/family/recipes", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rows } = await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.family_id = $1 ORDER BY r.created_at DESC`, [
+      member.family_id,
+    ]);
+    const body: FavouriteRecipe[] = rows.map(toRecipe);
+    return { body };
+  });
+
+  router.add("POST", "/api/family/recipes", async (req) => {
+    const { member } = await requireMember(db, req);
+    const b = v.object(req.body);
+    const url = v.webUrl(b.url, "Recipe link");
+    const title = typeof b.title === "string" && b.title.trim() ? v.text(b.title, "Title", 200) : null;
+    const duplicate = "That recipe is already one of your favourites";
+    if ((await db.query("SELECT 1 FROM favourite_recipe WHERE family_id = $1 AND url = $2", [member.family_id, url])).rowCount) {
+      throw new HttpError(409, duplicate);
+    }
+
+    let meta: RecipeMeta = { title: null, imageUrl: null, siteName: null };
+    try {
+      meta = await (options.fetchRecipeMeta ?? fetchRecipeMeta)(url);
+    } catch {
+      // The page couldn't be read (offline, blocked, not HTML…); save the link anyway.
+    }
+    const { rows } = await db.query<{ id: string }>(
+      `INSERT INTO favourite_recipe (family_id, url, title, image_url, site_name, added_by)
+       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (family_id, url) DO NOTHING RETURNING id`,
+      [member.family_id, url, title ?? meta.title ?? fallbackTitle(url), meta.imageUrl, meta.siteName, member.id],
+    );
+    if (!rows[0]) throw new HttpError(409, duplicate);
+    const saved = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
+    return { status: 201, body: toRecipe(saved) };
+  });
+
+  router.add("DELETE", "/api/family/recipes/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM favourite_recipe WHERE id = $1 AND family_id = $2", [
+      v.uuid(req.params.id),
+      member.family_id,
+    ]);
+    if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    return { status: 204 };
   });
 
   return router;

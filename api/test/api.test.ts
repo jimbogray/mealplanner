@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createSign, type KeyObject } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
-import type { AuthResponse, FamilyMember, Invite, InvitePreview, Me } from "@mealplanner/shared";
+import type { AuthResponse, FamilyMember, FavouriteRecipe, Invite, InvitePreview, Me } from "@mealplanner/shared";
 import { createApp } from "../src/app.js";
 import { createPool, migrate, type Db } from "../src/db.js";
 
@@ -39,6 +39,11 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     server = createApp(db, {
       webOrigins: ["http://web.test"],
       google: { clientId: GOOGLE_CLIENT_ID, keys: async () => new Map([["test-kid", googleKey.publicKey]]) },
+      // Stands in for fetching recipe pages, so tests stay offline.
+      fetchRecipeMeta: async (url) => {
+        if (url.includes("unreachable")) throw new Error("offline");
+        return { title: "Easy pancakes", imageUrl: "https://img.example.com/pancakes.jpg", siteName: "Good Food" };
+      },
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     base = `http://localhost:${(server.address() as AddressInfo).port}`;
@@ -201,6 +206,73 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     });
     assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: other.body.token, body: { name: "X" } })).status, 404);
     assert.equal((await call("DELETE", `/api/family/members/${babyId}`, { token: other.body.token })).status, 404);
+  });
+
+  describe("favourite recipes", () => {
+    let pancakesId: string;
+
+    test("any family member can add a recipe link, filled in from the page", async () => {
+      const res = await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+        token: teenToken,
+        body: { url: "https://www.example.com/recipes/pancakes#method" },
+      });
+      assert.equal(res.status, 201);
+      pancakesId = res.body.id;
+      assert.equal(res.body.url, "https://www.example.com/recipes/pancakes");
+      assert.equal(res.body.title, "Easy pancakes");
+      assert.equal(res.body.imageUrl, "https://img.example.com/pancakes.jpg");
+      assert.equal(res.body.siteName, "Good Food");
+      assert.equal(res.body.addedBy, "Sam");
+    });
+
+    test("the whole family sees the same favourites", async () => {
+      const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
+      assert.equal(list.status, 200);
+      assert.deepEqual(list.body.map((r) => r.id), [pancakesId]);
+    });
+
+    test("the same link can't be added twice", async () => {
+      const res = await call("POST", "/api/family/recipes", { token: parentToken, body: { url: "https://www.example.com/recipes/pancakes" } });
+      assert.equal(res.status, 409);
+    });
+
+    test("a page that can't be read is saved with the link as its title", async () => {
+      const res = await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+        token: parentToken,
+        body: { url: "unreachable.example.com/stew/" },
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.url, "https://unreachable.example.com/stew/");
+      assert.equal(res.body.title, "unreachable.example.com/stew");
+      assert.equal(res.body.imageUrl, null);
+      const named = await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+        token: parentToken,
+        body: { url: "https://unreachable.example.com/curry", title: "Granny's curry" },
+      });
+      assert.equal(named.body.title, "Granny's curry");
+    });
+
+    test("links must be web addresses", async () => {
+      for (const url of ["", "javascript:alert(1)", "ftp://example.com/x", "not a link", "https://user:pw@example.com/"]) {
+        assert.equal((await call("POST", "/api/family/recipes", { token: parentToken, body: { url } })).status, 400, url);
+      }
+    });
+
+    test("other families can't see or remove them", async () => {
+      const other = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "recipes-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
+      });
+      assert.deepEqual((await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: other.body.token })).body, []);
+      assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: other.body.token })).status, 404);
+      assert.equal((await call("GET", "/api/family/recipes")).status, 401);
+    });
+
+    test("any family member can remove one", async () => {
+      assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 404);
+      const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
+      assert.equal(list.body.length, 2);
+    });
   });
 
   test("the last admin can't step down or leave", async () => {
