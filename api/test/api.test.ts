@@ -451,20 +451,33 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal(stale.status, 400);
     });
 
-    test("adding a week defaults to everyone joining with no guests, unless days say otherwise", async () => {
-      const friday = addDays(thisWeek, 4);
+    test("days of this week that have already passed can't be planned", async () => {
+      if (today === thisWeek) return; // Monday: nothing has passed yet.
+      const res = await call("POST", "/api/family/weeks", {
+        token: teenToken,
+        body: { startsOn: thisWeek, today, days: [{ date: thisWeek, memberIds: [], guests: 0 }] },
+      });
+      assert.equal(res.status, 400);
+    });
+
+    test("adding this week plans from today, everyone joining with no guests unless days say otherwise", async () => {
+      const sunday = addDays(thisWeek, 6);
       const res = await call<ScheduleWeek>("POST", "/api/family/weeks", {
         token: teenToken,
-        body: { startsOn: thisWeek, today, days: [{ date: friday, memberIds: [everyone[0]], guests: 3 }] },
+        body: { startsOn: thisWeek, today, days: [{ date: sunday, memberIds: [everyone[0]], guests: 3 }] },
       });
       assert.equal(res.status, 201);
       assert.equal(res.body.startsOn, thisWeek);
       assert.deepEqual(
         res.body.days.map((d) => d.date),
-        Array.from({ length: 7 }, (_, i) => addDays(thisWeek, i)),
+        Array.from({ length: 7 }, (_, i) => addDays(thisWeek, i)).filter((d) => d >= today),
       );
+      if (today !== thisWeek) {
+        const past = await call("PATCH", `/api/family/weeks/${thisWeek}/days/${thisWeek}`, { token: teenToken, body: { memberIds: [], guests: 0 } });
+        assert.equal(past.status, 404);
+      }
       for (const d of res.body.days) {
-        if (d.date === friday) assert.deepEqual(d, { date: friday, memberIds: [everyone[0]], guests: 3 });
+        if (d.date === sunday) assert.deepEqual(d, { date: sunday, memberIds: [everyone[0]], guests: 3 });
         else assert.deepEqual(d, { date: d.date, memberIds: everyone, guests: 0 });
       }
     });
@@ -474,6 +487,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: addDays(thisWeek, 14), today } })).status, 409);
       const next = await call<ScheduleWeek>("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: addDays(thisWeek, 7), today } });
       assert.equal(next.status, 201);
+      assert.equal(next.body.days.length, 7);
       const weeks = await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: teenToken });
       assert.deepEqual(weeks.body.map((w) => w.startsOn), [thisWeek, addDays(thisWeek, 7)]);
     });

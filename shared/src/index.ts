@@ -270,6 +270,11 @@ export function weekDays(startsOn: IsoDate): IsoDate[] {
   return Array.from({ length: 7 }, (_, i) => addDays(startsOn, i));
 }
 
+/** The days of a week still to come: this week's days from today on, or every day of a later week. */
+export function daysToPlan(startsOn: IsoDate, today: IsoDate): IsoDate[] {
+  return weekDays(startsOn).filter((d) => d >= today);
+}
+
 /**
  * The week a family can add next: this week if they don't have it yet, otherwise the
  * week after their last one. `today` is the person's own local date.
@@ -294,11 +299,11 @@ export interface ScheduleWeek {
   id: Uuid;
   /** Always a Monday. */
   startsOn: IsoDate;
-  /** Seven days, Monday first. */
+  /** In date order; this week, when added, starts from the day it was added (earlier days are left out). */
   days: ScheduleDay[];
 }
 
-/** Add a week. Days left out default to everyone joining and no guests. */
+/** Add a week. Days that have already passed are left out; others not listed default to everyone joining and no guests. */
 export interface AddWeekRequest {
   startsOn: IsoDate;
   /** The person's local date, so "this week" is theirs rather than the server's. */
