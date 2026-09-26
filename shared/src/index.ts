@@ -241,3 +241,72 @@ export interface AddFavouriteRequest {
   imageUrl?: string | null;
   siteName?: string | null;
 }
+
+/** A calendar date, "YYYY-MM-DD". */
+export type IsoDate = string;
+
+/** Adds days to a calendar date (no time zones involved). */
+export function addDays(date: IsoDate, days: number): IsoDate {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The Monday on or before a calendar date. */
+export function mondayOf(date: IsoDate): IsoDate {
+  const isoDay = new Date(`${date}T00:00:00Z`).getUTCDay() || 7; // Monday 1 … Sunday 7
+  return addDays(date, 1 - isoDay);
+}
+
+/** True for a real calendar date written as "YYYY-MM-DD". */
+export function isIsoDate(value: unknown): value is IsoDate {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/** The seven days of a week, Monday first. */
+export function weekDays(startsOn: IsoDate): IsoDate[] {
+  return Array.from({ length: 7 }, (_, i) => addDays(startsOn, i));
+}
+
+/**
+ * The week a family can add next: this week if they don't have it yet, otherwise the
+ * week after their last one. `today` is the person's own local date.
+ */
+export function nextWeekToAdd(weeks: IsoDate[], today: IsoDate): IsoDate {
+  const current = mondayOf(today);
+  if (!weeks.includes(current)) return current;
+  return addDays(weeks.reduce((a, b) => (a > b ? a : b)), 7);
+}
+
+export const MAX_GUESTS = 50;
+
+/** Dinner on one day: which family members are joining, and how many guests. */
+export interface ScheduleDay {
+  date: IsoDate;
+  memberIds: Uuid[];
+  guests: number;
+}
+
+/** A week of the family's schedule, Monday to Sunday. */
+export interface ScheduleWeek {
+  id: Uuid;
+  /** Always a Monday. */
+  startsOn: IsoDate;
+  /** Seven days, Monday first. */
+  days: ScheduleDay[];
+}
+
+/** Add a week. Days left out default to everyone joining and no guests. */
+export interface AddWeekRequest {
+  startsOn: IsoDate;
+  /** The person's local date, so "this week" is theirs rather than the server's. */
+  today: IsoDate;
+  days?: { date: IsoDate; memberIds: Uuid[]; guests: number }[];
+}
+
+export interface UpdateDayRequest {
+  memberIds: Uuid[];
+  guests: number;
+}

@@ -1,5 +1,6 @@
 import type {
   AddFavouriteRequest,
+  AddWeekRequest,
   AuthResponse,
   CreateFamilyRequest,
   FamilyMember,
@@ -12,7 +13,10 @@ import type {
   MemberInput,
   RecipePreview,
   MemberUpdate,
+  ScheduleDay,
+  ScheduleWeek,
   SignupRequest,
+  UpdateDayRequest,
 } from "@mealplanner/shared";
 
 const BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
@@ -89,6 +93,12 @@ export const api = {
   previewRecipe: (url: string) => request<RecipePreview>("POST", "/api/family/recipes/preview", { url }),
   addRecipe: (body: AddFavouriteRequest) => request<FavouriteRecipe>("POST", "/api/family/recipes", body),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
+
+  weeks: () => request<ScheduleWeek[]>("GET", "/api/family/weeks"),
+  addWeek: (body: AddWeekRequest) => request<ScheduleWeek>("POST", "/api/family/weeks", body),
+  updateDay: (startsOn: string, date: string, body: UpdateDayRequest) =>
+    request<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, body),
+  removeWeek: (startsOn: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}`),
 };
 
 export function inviteUrl(code: string): string {

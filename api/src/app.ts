@@ -1,6 +1,11 @@
 import { createServer, type Server } from "node:http";
 import {
+  addDays,
   canSignIn,
+  isIsoDate,
+  mondayOf,
+  nextWeekToAdd,
+  weekDays,
   type AuthResponse,
   type Family,
   type FamilyMember,
@@ -10,6 +15,8 @@ import {
   type LifeStage,
   type Me,
   type RecipePreview,
+  type ScheduleDay,
+  type ScheduleWeek,
 } from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
@@ -225,6 +232,66 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };
+}
+
+interface ScheduleRow {
+  id: string;
+  starts_on: string;
+  day: string;
+  guests: number;
+  member_ids: string[];
+}
+
+/** The family's weeks (or just the one starting on `startsOn`), oldest first, each with its seven days. */
+async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Promise<ScheduleWeek[]> {
+  const { rows } = await db.query<ScheduleRow>(
+    `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests,
+            coalesce(array_agg(s.member_id::text ORDER BY s.member_id) FILTER (WHERE s.member_id IS NOT NULL), '{}') AS member_ids
+       FROM schedule_week w
+       JOIN schedule_day d ON d.week_id = w.id
+       LEFT JOIN schedule_diner s ON s.week_id = d.week_id AND s.day = d.day
+      WHERE w.family_id = $1 AND ($2::date IS NULL OR w.starts_on = $2::date)
+      GROUP BY w.id, w.starts_on, d.day, d.guests
+      ORDER BY w.starts_on, d.day`,
+    [familyId, startsOn ?? null],
+  );
+  const weeks: ScheduleWeek[] = [];
+  for (const r of rows) {
+    if (weeks.at(-1)?.id !== r.id) weeks.push({ id: r.id, startsOn: r.starts_on, days: [] });
+    weeks.at(-1)!.days.push({ date: r.day, memberIds: r.member_ids, guests: r.guests });
+  }
+  return weeks;
+}
+
+async function familyMemberIds(db: Queryable, familyId: string): Promise<string[]> {
+  const { rows } = await db.query<{ id: string }>("SELECT id FROM family_member WHERE family_id = $1 ORDER BY created_at", [familyId]);
+  return rows.map((r) => r.id);
+}
+
+/** Who's joining and how many guests, checked against the family's members. */
+function dinner(b: Record<string, unknown>, familyIds: string[]): Omit<ScheduleDay, "date"> {
+  const memberIds = v.ids(b.memberIds, "Who's joining");
+  if (memberIds.some((id) => !familyIds.includes(id))) throw new HttpError(400, "Only members of your family can join for dinner");
+  return { memberIds, guests: v.guests(b.guests) };
+}
+
+async function saveDay(tx: Tx, weekId: string, day: ScheduleDay): Promise<void> {
+  await tx.query(
+    `INSERT INTO schedule_day (week_id, day, guests) VALUES ($1, $2, $3)
+     ON CONFLICT (week_id, day) DO UPDATE SET guests = EXCLUDED.guests`,
+    [weekId, day.date, day.guests],
+  );
+  await tx.query("DELETE FROM schedule_diner WHERE week_id = $1 AND day = $2", [weekId, day.date]);
+  await tx.query(
+    "INSERT INTO schedule_diner (week_id, day, member_id) SELECT $1, $2, unnest($3::uuid[])",
+    [weekId, day.date, day.memberIds],
+  );
+}
+
+/** A Monday from the path, or 404. */
+function weekStart(value: string): string {
+  if (!isIsoDate(value) || mondayOf(value) !== value) throw new HttpError(404, "That week isn't in your schedule");
+  return value;
 }
 
 export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe"> = {}): Router {
@@ -627,6 +694,93 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       member.family_id,
     ]);
     if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    return { status: 204 };
+  });
+
+  // --- weekly schedule ----------------------------------------------------
+  // Weeks run Monday to Sunday. Like recipes, the schedule belongs to the family: anyone in it can change it.
+
+  router.add("GET", "/api/family/weeks", async (req) => {
+    const { member } = await requireMember(db, req);
+    return { body: await loadWeeks(db, member.family_id) };
+  });
+
+  // Adds this week, if the family doesn't have it yet, or else the week after their last one.
+  router.add("POST", "/api/family/weeks", async (req) => {
+    const { member } = await requireMember(db, req);
+    const b = v.object(req.body);
+    const startsOn = v.isoDate(b.startsOn, "Week");
+    if (mondayOf(startsOn) !== startsOn) throw new HttpError(400, "A week starts on a Monday");
+    // The person's own date decides which week is "this week", within a day of ours (time zones).
+    const today = v.isoDate(b.today, "Today");
+    const serverToday = new Date().toISOString().slice(0, 10);
+    if (today < addDays(serverToday, -1) || today > addDays(serverToday, 1)) {
+      throw new HttpError(400, "Your device's date looks wrong; check it and try again");
+    }
+
+    const familyIds = await familyMemberIds(db, member.family_id);
+    const days = weekDays(startsOn).map((date): ScheduleDay => ({ date, memberIds: familyIds, guests: 0 }));
+    if (b.days !== undefined) {
+      if (!Array.isArray(b.days)) throw new HttpError(400, "Days must be a list");
+      const seen = new Set<string>();
+      for (const raw of b.days) {
+        const d = v.object(raw);
+        const date = v.isoDate(d.date, "Day");
+        const i = days.findIndex((day) => day.date === date);
+        if (i < 0) throw new HttpError(400, `${date} isn't in the week starting ${startsOn}`);
+        if (seen.has(date)) throw new HttpError(400, `${date} is listed twice`);
+        seen.add(date);
+        days[i] = { date, ...dinner(d, familyIds) };
+      }
+    }
+
+    await withTransaction(db, async (tx) => {
+      // One week added at a time per family, so two people can't both add "next week".
+      await tx.query("SELECT 1 FROM family WHERE id = $1 FOR UPDATE", [member.family_id]);
+      const existing = (
+        await tx.query<{ starts_on: string }>(
+          "SELECT to_char(starts_on, 'YYYY-MM-DD') AS starts_on FROM schedule_week WHERE family_id = $1",
+          [member.family_id],
+        )
+      ).rows.map((r) => r.starts_on);
+      if (existing.includes(startsOn)) throw new HttpError(409, "That week is already in your schedule");
+      const allowed = nextWeekToAdd(existing, today);
+      if (startsOn !== allowed) throw new HttpError(409, `The next week you can add starts on ${allowed}`);
+      const weekId = (
+        await tx.query<{ id: string }>(
+          "INSERT INTO schedule_week (family_id, starts_on, created_by) VALUES ($1, $2, $3) RETURNING id",
+          [member.family_id, startsOn, member.id],
+        )
+      ).rows[0].id;
+      for (const day of days) await saveDay(tx, weekId, day);
+    });
+    return { status: 201, body: (await loadWeeks(db, member.family_id, startsOn))[0] };
+  });
+
+  router.add("PATCH", "/api/family/weeks/:startsOn/days/:date", async (req) => {
+    const { member } = await requireMember(db, req);
+    const startsOn = weekStart(req.params.startsOn);
+    const date = req.params.date;
+    if (!weekDays(startsOn).includes(date)) throw new HttpError(404, "That day isn't in this week");
+    const day: ScheduleDay = { date, ...dinner(v.object(req.body), await familyMemberIds(db, member.family_id)) };
+    await withTransaction(db, async (tx) => {
+      const week = (
+        await tx.query<{ id: string }>("SELECT id FROM schedule_week WHERE family_id = $1 AND starts_on = $2", [member.family_id, startsOn])
+      ).rows[0];
+      if (!week) throw new HttpError(404, "That week isn't in your schedule");
+      await saveDay(tx, week.id, day);
+    });
+    const body: ScheduleDay = (await loadWeeks(db, member.family_id, startsOn))[0].days.find((d) => d.date === date)!;
+    return { body };
+  });
+
+  router.add("DELETE", "/api/family/weeks/:startsOn", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM schedule_week WHERE family_id = $1 AND starts_on = $2", [
+      member.family_id,
+      weekStart(req.params.startsOn),
+    ]);
+    if (!rowCount) throw new HttpError(404, "That week isn't in your schedule");
     return { status: 204 };
   });
 

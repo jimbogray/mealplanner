@@ -1,4 +1,16 @@
-import { ALLERGENS, isAllergen, isDiet, isLifeStage, type Allergen, type Diet, type LifeStage, type MemberRole } from "@mealplanner/shared";
+import {
+  ALLERGENS,
+  isAllergen,
+  isDiet,
+  isIsoDate,
+  isLifeStage,
+  MAX_GUESTS,
+  type Allergen,
+  type Diet,
+  type IsoDate,
+  type LifeStage,
+  type MemberRole,
+} from "@mealplanner/shared";
 import { HttpError } from "./http.js";
 
 export function object(body: unknown): Record<string, unknown> {
@@ -85,4 +97,28 @@ export function optionalMinutes(value: unknown): number | null {
 export function role(value: unknown): MemberRole {
   if (value !== "admin" && value !== "member") throw new HttpError(400, "Role must be admin or member");
   return value;
+}
+
+/** A calendar date, "YYYY-MM-DD". */
+export function isoDate(value: unknown, field = "Date"): IsoDate {
+  if (!isIsoDate(value)) throw new HttpError(400, `${field} must be a date like 2026-09-28`);
+  return value;
+}
+
+export function guests(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > MAX_GUESTS) {
+    throw new HttpError(400, `Guests must be a whole number from 0 to ${MAX_GUESTS}`);
+  }
+  return value;
+}
+
+/** A de-duplicated list of ids (whether they're in the family is checked by the caller). */
+export function ids(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) throw new HttpError(400, `${field} must be a list`);
+  for (const id of value) {
+    if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      throw new HttpError(400, `${field} has an unknown id`);
+    }
+  }
+  return [...new Set(value.map((id: string) => id.toLowerCase()))];
 }
