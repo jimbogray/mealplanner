@@ -125,6 +125,10 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   border-radius: 999px; border: none; background: rgba(255, 255, 255, 0.9); color: var(--danger);
   font-size: 1.25rem; line-height: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
+.group-by { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.group-by button { padding: 0.35rem 0.9rem; }
+.recipe-group h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
+
 .tile-prepared {
   position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.25rem 0.7rem;
   border-radius: 999px; border: 1px solid var(--accent); background: rgba(255, 255, 255, 0.92); color: var(--accent);
