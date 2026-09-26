@@ -112,19 +112,32 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   list-style: none; margin: 0; padding: 0;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;
 }
-.tile { position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.tile { position: relative; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 .tile:hover { border-color: var(--accent); }
-.tile a { display: flex; flex-direction: column; height: 100%; color: var(--ink); text-decoration: none; }
+.tile a { display: flex; flex-direction: column; flex: 1 1 auto; color: var(--ink); text-decoration: none; }
 .tile a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tile .thumb { width: 100%; height: auto; aspect-ratio: 4 / 3; border: none; border-bottom: 1px solid var(--border); border-radius: 0; }
 .tile .thumb.placeholder { font-size: 2.5rem; }
 .tile-body { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.75rem; overflow-wrap: anywhere; }
 .tile-description { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.tile-remove {
-  position: absolute; top: 0.5rem; right: 0.5rem; width: 2rem; height: 2rem; padding: 0;
-  border-radius: 999px; border: none; background: rgba(255, 255, 255, 0.9); color: var(--danger);
-  font-size: 1.25rem; line-height: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+.tile-average {
+  position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; border-radius: 999px;
+  background: rgba(35, 34, 30, 0.8); color: #fff; font-size: 0.85rem; font-weight: 600;
 }
+.tile-foot { display: flex; align-items: center; justify-content: space-between; padding: 0 0.5rem 0.5rem 0.5rem; }
+.stars { display: flex; }
+.star {
+  padding: 0.1rem 0.15rem; border: none; background: none; color: #d0cdc3;
+  font-size: 1.35rem; line-height: 1;
+}
+.star.on { color: #e0a526; }
+.stars:hover .star { color: #e0a526; }
+.stars .star:hover ~ .star { color: #d0cdc3; }
+.tile-remove {
+  width: 2rem; height: 2rem; padding: 0; border-radius: 999px; border: none; background: none;
+  color: var(--muted); font-size: 1.25rem; line-height: 1;
+}
+.tile-remove:hover { color: var(--danger); }
 .group-by { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .group-by button { padding: 0.35rem 0.9rem; }
 .recipe-group h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }

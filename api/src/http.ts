@@ -95,7 +95,7 @@ export function listener(router: Router, allowedOrigins: string[]) {
       res.setHeader("access-control-allow-origin", origin);
       res.setHeader("vary", "origin");
       res.setHeader("access-control-allow-headers", "authorization, content-type");
-      res.setHeader("access-control-allow-methods", "GET, POST, PATCH, DELETE, OPTIONS");
+      res.setHeader("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
       res.setHeader("access-control-max-age", "600");
     }
     const method = req.method ?? "GET";

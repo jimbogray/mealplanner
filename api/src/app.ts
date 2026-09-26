@@ -212,13 +212,22 @@ interface RecipeRow {
   image_url: string | null;
   site_name: string | null;
   prepared: boolean;
+  average_rating: string | null;
+  rating_count: number;
+  my_rating: number | null;
   added_by: string | null;
   created_at: Date;
 }
 
-const RECIPE_SELECT = `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
-    r.prepared, m.name AS added_by, r.created_at
+/** Selects recipes with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
+function recipeSelect(me: string): string {
+  return `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
+    r.prepared, m.name AS added_by, r.created_at,
+    (SELECT round(avg(stars), 1) FROM recipe_rating WHERE recipe_id = r.id) AS average_rating,
+    (SELECT count(*)::int FROM recipe_rating WHERE recipe_id = r.id) AS rating_count,
+    (SELECT stars FROM recipe_rating WHERE recipe_id = r.id AND member_id = ${me}) AS my_rating
   FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
+}
 
 function toRecipe(r: RecipeRow): FavouriteRecipe {
   return {
@@ -231,6 +240,9 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     imageUrl: r.image_url,
     siteName: r.site_name,
     prepared: r.prepared,
+    averageRating: r.average_rating === null ? null : Number(r.average_rating),
+    ratingCount: r.rating_count,
+    myRating: r.my_rating,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };
@@ -604,12 +616,13 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
   });
 
   // --- favourite recipes --------------------------------------------------
-  // They belong to the family: anyone in it can add or remove one.
+  // They belong to the family: anyone in it can add, remove or rate one.
 
   router.add("GET", "/api/family/recipes", async (req) => {
     const { member } = await requireMember(db, req);
-    const { rows } = await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.family_id = $1 ORDER BY r.created_at DESC`, [
+    const { rows } = await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.family_id = $1 ORDER BY r.created_at DESC`, [
       member.family_id,
+      member.id,
     ]);
     const body: FavouriteRecipe[] = rows.map(toRecipe);
     return { body };
@@ -685,7 +698,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       ],
     );
     if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
-    const saved = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
+    const saved = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [rows[0].id, member.id])).rows[0];
     return { status: 201, body: toRecipe(saved) };
   });
 
@@ -699,7 +712,27 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
       [prepared, v.uuid(req.params.id), member.family_id],
     );
     if (!rows[0]) throw new HttpError(404, "That recipe isn't in your favourites");
-    const updated = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
+    const updated = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [rows[0].id, member.id])).rows[0];
+    return { body: toRecipe(updated) };
+  });
+
+  // Anyone in the family can rate a recipe; 0 stars clears their rating.
+  router.add("PUT", "/api/family/recipes/:id/rating", async (req) => {
+    const { member } = await requireMember(db, req);
+    const stars = v.stars(v.object(req.body).stars);
+    const id = v.uuid(req.params.id);
+    const found = await db.query("SELECT 1 FROM favourite_recipe WHERE id = $1 AND family_id = $2", [id, member.family_id]);
+    if (!found.rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    if (stars === 0) {
+      await db.query("DELETE FROM recipe_rating WHERE recipe_id = $1 AND member_id = $2", [id, member.id]);
+    } else {
+      await db.query(
+        `INSERT INTO recipe_rating (recipe_id, member_id, stars) VALUES ($1, $2, $3)
+         ON CONFLICT (recipe_id, member_id) DO UPDATE SET stars = EXCLUDED.stars, updated_at = now()`,
+        [id, member.id, stars],
+      );
+    }
+    const updated = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
     return { body: toRecipe(updated) };
   });
 

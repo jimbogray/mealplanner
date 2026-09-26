@@ -44,6 +44,17 @@ function Library({ isManager }: { isManager: boolean }) {
     }
   }
 
+  async function rate(recipe: FavouriteRecipe, stars: number) {
+    setError(null);
+    try {
+      // Pressing your current rating again clears it.
+      const updated = await api.rateRecipe(recipe.id, recipe.myRating === stars ? 0 : stars);
+      setRecipes((list) => (list ?? []).map((r) => (r.id === updated.id ? updated : r)));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   function renderTile(r: FavouriteRecipe) {
     return (
       <li key={r.id} className={r.prepared ? "tile prepared" : "tile"}>
@@ -64,9 +75,34 @@ function Library({ isManager }: { isManager: boolean }) {
         >
           {r.prepared ? "✓ Prepared" : "Prepared"}
         </button>
-        <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from library" onClick={() => void remove(r)}>
-          ×
-        </button>
+        {r.averageRating !== null && (
+          <span
+            className="tile-average"
+            title={`Family average from ${r.ratingCount} ${r.ratingCount === 1 ? "rating" : "ratings"}`}
+            aria-label={`Family average ${r.averageRating} out of 5`}
+          >
+            ★ {r.averageRating.toFixed(1)}
+          </span>
+        )}
+        <div className="tile-foot">
+          <span className="stars" role="group" aria-label="Your rating">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                className={r.myRating !== null && n <= r.myRating ? "star on" : "star"}
+                aria-label={`${n} ${n === 1 ? "star" : "stars"}`}
+                aria-pressed={r.myRating === n}
+                title={r.myRating === n ? "Clear your rating" : `Rate ${n} out of 5`}
+                onClick={() => void rate(r, n)}
+              >
+                ★
+              </button>
+            ))}
+          </span>
+          <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from library" onClick={() => void remove(r)}>
+            ×
+          </button>
+        </div>
       </li>
     );
   }
@@ -75,7 +111,7 @@ function Library({ isManager }: { isManager: boolean }) {
     <div className="stack">
       <section className="card">
         <h1>Library</h1>
-        <p className="note">Your family's favourite recipes. Paste a link to a recipe page to add one; anyone in the family can add or remove them.</p>
+        <p className="note">Your family's favourite recipes. Paste a link to a recipe page to add one; anyone in the family can add, rate or remove them.</p>
         <AddRecipe onAdded={(recipe) => setRecipes((list) => [recipe, ...(list ?? [])])} />
       </section>
       <ErrorNote error={error} />

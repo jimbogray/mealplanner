@@ -362,6 +362,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal(res.body.mainProtein, "Eggs");
       assert.equal(res.body.addedBy, "Sam");
       assert.equal(res.body.prepared, false);
+      assert.equal(res.body.averageRating, null);
+      assert.equal(res.body.myRating, null);
       const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
       assert.deepEqual(list.body.map((r) => r.id), [pancakesId]);
     });
@@ -425,6 +427,27 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call<FavouriteRecipe>("PATCH", path, { token: parentToken, body: { prepared: false } })).body.prepared, false);
     });
 
+    test("each family member can rate one, and everyone sees the average", async () => {
+      const path = `/api/family/recipes/${pancakesId}/rating`;
+      let res = await call<FavouriteRecipe>("PUT", path, { token: teenToken, body: { stars: 5 } });
+      assert.equal(res.status, 200);
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [5, 5, 1]);
+      res = await call<FavouriteRecipe>("PUT", path, { token: parentToken, body: { stars: 2 } });
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [2, 3.5, 2]);
+      // Rating again replaces the member's own rating.
+      res = await call<FavouriteRecipe>("PUT", path, { token: teenToken, body: { stars: 3 } });
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [3, 2.5, 2]);
+      const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
+      const listed = list.body.find((r) => r.id === pancakesId)!;
+      assert.deepEqual([listed.myRating, listed.averageRating], [2, 2.5]);
+      // 0 stars clears it.
+      res = await call<FavouriteRecipe>("PUT", path, { token: parentToken, body: { stars: 0 } });
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [null, 3, 1]);
+      for (const stars of [6, -1, 2.5, "4", null]) {
+        assert.equal((await call("PUT", path, { token: parentToken, body: { stars } })).status, 400, String(stars));
+      }
+    });
+
     test("other families can't see or remove them", async () => {
       const other = await call<AuthResponse>("POST", "/api/auth/signup", {
         body: { email: "recipes-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
@@ -433,6 +456,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: other.body.token })).status, 404);
       const patch = await call("PATCH", `/api/family/recipes/${pancakesId}`, { token: other.body.token, body: { prepared: true } });
       assert.equal(patch.status, 404);
+      const rate = await call("PUT", `/api/family/recipes/${pancakesId}/rating`, { token: other.body.token, body: { stars: 1 } });
+      assert.equal(rate.status, 404);
       assert.equal((await call("GET", "/api/family/recipes")).status, 401);
     });
 
