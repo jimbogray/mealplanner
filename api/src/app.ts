@@ -81,9 +81,10 @@ async function familyMember(db: Queryable, familyId: string, id: string): Promis
   return row;
 }
 
+/** Family Managers who can actually sign in (a manager added without a login can't manage anything yet). */
 async function adminCount(db: Queryable, familyId: string): Promise<number> {
   const { rows } = await db.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM family_member WHERE family_id = $1 AND role = 'admin'",
+    "SELECT count(*)::int AS n FROM family_member WHERE family_id = $1 AND role = 'admin' AND user_id IS NOT NULL",
     [familyId],
   );
   return rows[0].n;
@@ -382,9 +383,11 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const lifeStage = v.lifeStage(b.lifeStage);
     const diet = b.diet === undefined ? "none" : v.diet(b.diet);
     const allergies = b.allergies === undefined ? [] : v.allergies(b.allergies);
+    // A Co-Manager is another Family Manager; they can manage the family once they sign in.
+    const role = b.role === undefined ? "member" : v.role(b.role);
     const { rows } = await db.query<{ id: string }>(
-      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-      [member.family_id, name, lifeStage, diet, allergies],
+      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+      [member.family_id, name, lifeStage, diet, allergies, role],
     );
     return { status: 201, body: toMember(await familyMember(db, member.family_id, rows[0].id)) };
   });
@@ -403,13 +406,12 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
     let role = target.role;
     if (b.role !== undefined) {
-      if (b.role !== "admin" && b.role !== "member") throw new HttpError(400, "Role must be admin or member");
+      const newRole = v.role(b.role);
       if (self.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose who manages the family");
-      if (b.role === "admin" && !target.user_id) throw new HttpError(400, "Only members with their own login can be Family Managers");
-      if (b.role === "member" && target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
+      if (newRole === "member" && target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
         throw new HttpError(400, "A family needs at least one Family Manager");
       }
-      role = b.role;
+      role = newRole;
     }
     await db.query(
       "UPDATE family_member SET name = $1, life_stage = $2, diet = $3, allergies = $4, role = $5 WHERE id = $6",
@@ -423,7 +425,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const target = await familyMember(db, self.family_id, req.params.id);
     // Admins can remove anyone; anyone can leave.
     if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a Family Manager can remove members");
-    if (target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
+    if (target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
       throw new HttpError(400, "A family needs at least one Family Manager; make someone else a Family Manager first");
     }
     await db.query("DELETE FROM family_member WHERE id = $1", [target.id]);

@@ -1,4 +1,4 @@
-import { ALLERGENS, isAllergen, isDiet, isLifeStage, type Allergen, type Diet, type LifeStage } from "@mealplanner/shared";
+import { ALLERGENS, isAllergen, isDiet, isLifeStage, type Allergen, type Diet, type LifeStage, type MemberRole } from "@mealplanner/shared";
 import { HttpError } from "./http.js";
 
 export function object(body: unknown): Record<string, unknown> {
@@ -79,5 +79,10 @@ export function optionalMinutes(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 2880) {
     throw new HttpError(400, "Cooking time must be a whole number of minutes");
   }
+  return value;
+}
+
+export function role(value: unknown): MemberRole {
+  if (value !== "admin" && value !== "member") throw new HttpError(400, "Role must be admin or member");
   return value;
 }

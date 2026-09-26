@@ -162,6 +162,8 @@ export interface MemberInput {
   lifeStage: LifeStage;
   diet?: Diet;
   allergies?: Allergen[];
+  /** When a Family Manager adds someone: "admin" makes them a Co-Manager. Ignored elsewhere. */
+  role?: MemberRole;
 }
 
 export interface MemberUpdate {

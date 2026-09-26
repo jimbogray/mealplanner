@@ -171,7 +171,7 @@ function MemberRow({
               Invite to sign in
             </button>
           )}
-          {isAdmin && member.hasAccount && !isSelf && (
+          {isAdmin && !isSelf && (
             <button
               className="link"
               onClick={() => void run(() => api.updateMember(member.id, { role: member.role === "admin" ? "member" : "admin" }))}
@@ -218,6 +218,7 @@ function AddMember() {
   const [lifeStage, setLifeStage] = useState<LifeStage>("child");
   const [diet, setDiet] = useState<Diet>("none");
   const [allergies, setAllergies] = useState<Allergen[]>([]);
+  const [coManager, setCoManager] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -226,11 +227,12 @@ function AddMember() {
     setBusy(true);
     setError(null);
     try {
-      await api.addMember({ name, lifeStage, diet, allergies });
+      await api.addMember({ name, lifeStage, diet, allergies, role: coManager ? "admin" : "member" });
       await refresh();
       setName("");
       setDiet("none");
       setAllergies([]);
+      setCoManager(false);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -250,6 +252,18 @@ function AddMember() {
           <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
         </div>
         <DietFields idPrefix="add" diet={diet} allergies={allergies} onDiet={setDiet} onAllergies={setAllergies} />
+        <div>
+          <label className="check">
+            <input type="checkbox" checked={coManager} onChange={(e) => setCoManager(e.target.checked)} />
+            <span>
+              <strong>Co-Manager</strong>
+              <span className="note small">
+                {" "}
+                Makes them a Family Manager too, able to add, edit and invite family members once they sign in.
+              </span>
+            </span>
+          </label>
+        </div>
         <div>
           <button type="submit" disabled={busy}>
             Add
