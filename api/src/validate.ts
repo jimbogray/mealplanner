@@ -105,6 +105,14 @@ export function isoDate(value: unknown, field = "Date"): IsoDate {
   return value;
 }
 
+/** A star rating: 0 clears it, 1 to 5 sets it. */
+export function stars(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 5) {
+    throw new HttpError(400, "Rating must be a whole number of stars from 0 to 5");
+  }
+  return value;
+}
+
 export function guests(value: unknown): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > MAX_GUESTS) {
     throw new HttpError(400, `Guests must be a whole number from 0 to ${MAX_GUESTS}`);

@@ -92,6 +92,9 @@ export const api = {
   recipes: () => request<FavouriteRecipe[]>("GET", "/api/family/recipes"),
   previewRecipe: (url: string) => request<RecipePreview>("POST", "/api/family/recipes/preview", { url }),
   addRecipe: (body: AddFavouriteRequest) => request<FavouriteRecipe>("POST", "/api/family/recipes", body),
+  setRecipePrepared: (id: string, prepared: boolean) =>
+    request<FavouriteRecipe>("PATCH", `/api/family/recipes/${id}`, { prepared }),
+  rateRecipe: (id: string, stars: number) => request<FavouriteRecipe>("PUT", `/api/family/recipes/${id}/rating`, { stars }),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
 
   weeks: () => request<ScheduleWeek[]>("GET", "/api/family/weeks"),

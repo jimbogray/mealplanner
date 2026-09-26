@@ -213,6 +213,13 @@ export interface RecipeDetails {
 export interface FavouriteRecipe extends RecipeDetails {
   id: Uuid;
   url: string;
+  /** The family has cooked it. Only Family Managers can change this. */
+  prepared: boolean;
+  /** The family's average star rating (1 to 5, to one decimal place); null if nobody has rated it. */
+  averageRating: number | null;
+  ratingCount: number;
+  /** The signed-in member's own rating (1 to 5); null if they haven't rated it. */
+  myRating: number | null;
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;
