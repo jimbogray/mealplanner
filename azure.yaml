@@ -1,0 +1,24 @@
+# Azure Developer CLI (azd) configuration. Deploy with:  azd up
+# See README > Deploying to Azure.
+name: family
+hooks:
+  # Runs once before any service is packaged. Services are packaged in parallel, so
+  # installing (npm ci wipes node_modules) and building shared must happen here.
+  prepackage:
+    shell: sh
+    run: npm ci && npm run build --workspace shared
+services:
+  api:
+    project: ./api
+    language: js
+    host: containerapp
+    # Built in the container registry from the repo root (the API needs shared/ and db/).
+    docker:
+      path: ../Dockerfile
+      context: ..
+      remoteBuild: true
+  web:
+    project: ./web
+    language: js
+    host: staticwebapp
+    dist: dist
