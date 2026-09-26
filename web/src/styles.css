@@ -109,6 +109,12 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .nav a { color: var(--muted); text-decoration: none; padding: 0.3rem 0.6rem; border-radius: 8px; font-size: 0.95rem; }
 .nav a:hover { color: var(--ink); }
 .nav a.active { color: var(--accent); background: #e1f5ee; font-weight: 500; }
+/* Four tabs don't fit beside the family name on a phone: give them their own row. */
+@media (max-width: 600px) {
+  .topbar { flex-wrap: wrap; row-gap: 0.5rem; }
+  .nav { order: 3; width: 100%; overflow-x: auto; margin: 0 -0.6rem; }
+  .nav a { white-space: nowrap; }
+}
 
 .tiles {
   list-style: none; margin: 0; padding: 0;
@@ -194,3 +200,13 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   .days li { grid-template-columns: 1fr auto; gap: 0.1rem 0.75rem; }
   .days .diners { grid-column: 1 / -1; grid-row: 2; }
 }
+
+.restaurants { list-style: none; margin: 0; padding: 0; }
+.restaurants li { border-top: 1px solid var(--border); padding: 0.75rem 0; }
+.restaurants li:first-child { border-top: none; padding-top: 0; }
+.restaurants li:last-child { padding-bottom: 0; }
+.restaurant { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: flex-start; }
+.restaurant-body { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; overflow-wrap: anywhere; }
+.restaurant-notes { margin: 0; white-space: pre-line; }
+.restaurant .actions { display: flex; gap: 0.25rem; }
+.drive { align-self: flex-start; font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; background: #e6f1fb; color: #1d4f7c; }

@@ -15,6 +15,7 @@ import {
   type InvitePreview,
   type Me,
   type RecipePreview,
+  type Restaurant,
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
@@ -74,6 +75,23 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
           { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode, latitude: 51.5034, longitude: -0.1276 },
           { line1: "11 Downing Street", line2: null, town: "London", county: null, postcode, latitude: 51.5033, longitude: -0.1277 },
         ];
+      },
+      // A tiny map: a few known places, "broken" stands for the service being down.
+      maps: {
+        findPlace: async (query, near) => {
+          if (query.includes("broken")) throw new Error("maps down");
+          const places: Record<string, { address: string; lat: number; lng: number }> = {
+            "1 High Street, Bath, BA1 1AA": { address: "1 High Street, Bath BA1 1AA", lat: 51.38, lng: -2.36 },
+            "Pizza Place": { address: "Pizza Place, 5 Market Street, Bath BA1 1AB", lat: 51.4, lng: -2.36 },
+            "3 Mill Lane, Bristol": { address: "3 Mill Lane, Bristol BS1 1AA", lat: 51.45, lng: -2.59 },
+          };
+          const place = places[query];
+          // Searching by name only finds places near home.
+          if (!place || (query === "Pizza Place" && !near)) return null;
+          return place;
+        },
+        // One minute per hundredth of a degree, give or take.
+        driveMinutes: async (from, to) => Math.round((Math.abs(from.lat - to.lat) + Math.abs(from.lng - to.lng)) * 100),
       },
       readRecipe: async ({ url, text, images }) => {
         const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
@@ -480,6 +498,74 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     });
   });
 
+  describe("restaurants", () => {
+    let pizzaId: string;
+
+    test("any family member can add one, with an optional link and notes", async () => {
+      const res = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: teenToken,
+        body: { name: "  Luigi's Pizza ", url: "luigis.example.com/menu#mains", notes: "Kids eat free on Tuesdays." },
+      });
+      assert.equal(res.status, 201);
+      pizzaId = res.body.id;
+      assert.equal(res.body.name, "Luigi's Pizza");
+      assert.equal(res.body.url, "https://luigis.example.com/menu");
+      assert.equal(res.body.notes, "Kids eat free on Tuesdays.");
+      assert.ok(res.body.addedBy);
+      const plain = await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { name: "Anchor Fish Bar", url: "", notes: " " } });
+      assert.equal(plain.status, 201);
+      assert.deepEqual([plain.body.url, plain.body.notes], [null, null]);
+      const list = await call<Restaurant[]>("GET", "/api/family/restaurants", { token: parentToken });
+      assert.deepEqual(
+        list.body.map((r) => r.name),
+        ["Anchor Fish Bar", "Luigi's Pizza"],
+      );
+    });
+
+    test("names are unique within the family, ignoring case", async () => {
+      const res = await call("POST", "/api/family/restaurants", { token: parentToken, body: { name: "luigi's pizza" } });
+      assert.equal(res.status, 409);
+    });
+
+    test("details are validated", async () => {
+      for (const body of [{ name: "" }, { name: "X", url: "javascript:alert(1)" }, { name: "X", url: "not a link" }, { name: "X".repeat(121) }]) {
+        assert.equal((await call("POST", "/api/family/restaurants", { token: parentToken, body })).status, 400, JSON.stringify(body));
+      }
+    });
+
+    test("any family member can edit one", async () => {
+      const path = `/api/family/restaurants/${pizzaId}`;
+      const res = await call<Restaurant>("PUT", path, { token: parentToken, body: { name: "Luigi's", notes: "Book ahead at weekends." } });
+      assert.equal(res.status, 200);
+      assert.deepEqual([res.body.name, res.body.url, res.body.notes], ["Luigi's", null, "Book ahead at weekends."]);
+      const clash = await call("PUT", path, { token: parentToken, body: { name: "ANCHOR FISH BAR" } });
+      assert.equal(clash.status, 409);
+    });
+
+    test("other families can't see, edit or remove them", async () => {
+      const other = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "restaurants-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
+      });
+      const token = other.body.token;
+      assert.deepEqual((await call<Restaurant[]>("GET", "/api/family/restaurants", { token })).body, []);
+      // Another family can use the same name.
+      assert.equal((await call("POST", "/api/family/restaurants", { token, body: { name: "Luigi's" } })).status, 201);
+      assert.equal((await call("PUT", `/api/family/restaurants/${pizzaId}`, { token, body: { name: "Mine" } })).status, 404);
+      assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token })).status, 404);
+      assert.equal((await call("GET", "/api/family/restaurants")).status, 401);
+    });
+
+    test("any family member can remove one", async () => {
+      assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token: teenToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/restaurants/${pizzaId}`, { token: teenToken })).status, 404);
+      const list = await call<Restaurant[]>("GET", "/api/family/restaurants", { token: parentToken });
+      assert.deepEqual(
+        list.body.map((r) => r.name),
+        ["Anchor Fish Bar"],
+      );
+    });
+  });
+
   describe("weekly schedule", () => {
     const today = new Date().toISOString().slice(0, 10);
     const thisWeek = mondayOf(today);
@@ -644,6 +730,67 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     test("the address can be removed", async () => {
       assert.equal((await call("DELETE", "/api/family/address", { token: parentToken })).status, 204);
       assert.equal((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, null);
+    });
+  });
+
+  describe("restaurant driving times", () => {
+    let token: string;
+
+    before(async () => {
+      const res = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "drives@example.com", password: "password123", name: "Dee", lifeStage: "adult", familyName: "Drivers" },
+      });
+      token = res.body.token;
+    });
+
+    async function add(body: Record<string, unknown>) {
+      const res = await call<Restaurant>("POST", "/api/family/restaurants", { token, body });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      return res.body;
+    }
+
+    test("without a home address there's no driving time, but a typed address is kept", async () => {
+      const r = await add({ name: "Mill", address: "3 Mill Lane, Bristol" });
+      assert.deepEqual([r.address, r.driveMinutes], ["3 Mill Lane, Bristol", null]);
+      const byName = await add({ name: "Pizza Place" });
+      assert.deepEqual([byName.address, byName.driveMinutes], [null, null]);
+    });
+
+    test("with a home address, adding one works out the drive from home", async () => {
+      const home = { line1: "1 High Street", town: "Bath", postcode: "BA1 1AA", latitude: 51.38, longitude: -2.36 };
+      assert.equal((await call("PUT", "/api/family/address", { token, body: home })).status, 200);
+      // Found by name near home.
+      const found = await add({ name: "Pizza Place Two" });
+      assert.deepEqual([found.address, found.driveMinutes], [null, null]); // Not on the map.
+      // One added before there was a home is looked up again when it's next saved.
+      const list = await call<Restaurant[]>("GET", "/api/family/restaurants", { token });
+      const pizza = list.body.find((r) => r.name === "Pizza Place")!;
+      const res = await call<Restaurant>("PUT", `/api/family/restaurants/${pizza.id}`, { token, body: { name: "Pizza Place" } });
+      assert.deepEqual([res.body.address, res.body.driveMinutes], ["Pizza Place, 5 Market Street, Bath BA1 1AB", 2]);
+      // By a typed address, which is kept as typed.
+      const bristol = await add({ name: "Bristol Mill", address: "3 Mill Lane, Bristol" });
+      assert.deepEqual([bristol.address, bristol.driveMinutes], ["3 Mill Lane, Bristol", 30]);
+    });
+
+    test("a typed home address without coordinates is found on the map", async () => {
+      const home = { line1: "1 High Street", town: "Bath", postcode: "BA1 1AA" };
+      assert.equal((await call("PUT", "/api/family/address", { token, body: home })).status, 200);
+      const r = await add({ name: "Another Mill", address: "3 Mill Lane, Bristol" });
+      assert.equal(r.driveMinutes, 30);
+    });
+
+    test("changing the address works the drive out again; other edits keep it", async () => {
+      const r = await add({ name: "Moving Mill", address: "3 Mill Lane, Bristol" });
+      const path = `/api/family/restaurants/${r.id}`;
+      let res = await call<Restaurant>("PUT", path, { token, body: { name: "Moving Mill", address: r.address, notes: "Nice" } });
+      assert.deepEqual([res.body.notes, res.body.driveMinutes], ["Nice", 30]);
+      res = await call<Restaurant>("PUT", path, { token, body: { name: "Moving Mill", address: "somewhere unknown" } });
+      assert.deepEqual([res.body.address, res.body.driveMinutes], ["somewhere unknown", null]);
+    });
+
+    test("if the map service is down the restaurant is still saved", async () => {
+      const r = await add({ name: "Broken", address: "broken street" });
+      assert.deepEqual([r.address, r.driveMinutes], ["broken street", null]);
     });
   });
 

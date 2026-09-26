@@ -134,6 +134,15 @@ list, and its latitude and longitude are stored too (for travel times). The API 
 It's pay as you go, a few pence per lookup. Without the key, the address is typed in and has
 no coordinates.
 
+### Restaurant driving times (optional)
+
+With `AZURE_MAPS_KEY` set on the API, adding a restaurant finds it on the map (by the address
+typed in, or else by its name near home) and, when the family has a home address, stores the
+driving time from home. Create an Azure Maps account in the Azure portal and copy its primary
+key from Authentication; the free monthly allowance is far more than a family uses. A home
+address typed in without coordinates is found on the map too. Without the key, restaurants
+have no driving time.
+
 ## Deploying
 
 ### To Azure with azd
@@ -152,6 +161,7 @@ azd env set POSTGRES_ADMIN_PASSWORD "$(openssl rand -hex 24)"
 azd env set GOOGLE_CLIENT_ID <client-id>   # optional
 azd env set ANTHROPIC_API_KEY <key>        # optional, for reading recipe pages
 azd env set IDEAL_POSTCODES_API_KEY <key>  # optional, for finding addresses by postcode
+azd env set AZURE_MAPS_KEY <key>           # optional, for restaurant driving times
 azd provision
 azd deploy
 ```
@@ -179,7 +189,7 @@ This creates a service principal that GitHub signs in as (OIDC, no stored passwo
 federated credential for `main`, gives it access to the subscription, and sets the repo's
 Actions variables (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `AZURE_ENV_NAME`, `AZURE_LOCATION`, `GOOGLE_CLIENT_ID`, `RECIPE_MODEL`) and secrets
-(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`, `IDEAL_POSTCODES_API_KEY`) from your local azd environment, as listed
+(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`, `IDEAL_POSTCODES_API_KEY`, `AZURE_MAPS_KEY`) from your local azd environment, as listed
 under `pipeline:` in `azure.yaml`. If it offers to push, say no and merge the workflow
 through a pull request instead. Re-run it after changing any of those values locally.
 
@@ -188,7 +198,7 @@ through a pull request instead. Re-run it after changing any of those values loc
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
 - **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
   then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT`, `WEB_ORIGIN` (the web
-  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID`, `ANTHROPIC_API_KEY` and `IDEAL_POSTCODES_API_KEY` set.
+  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID`, `ANTHROPIC_API_KEY`, `IDEAL_POSTCODES_API_KEY` and `AZURE_MAPS_KEY` set.
 - **Web**: `VITE_API_URL=https://<api-host> VITE_GOOGLE_CLIENT_ID=<id> npm run build --workspace web` and upload
   `web/dist` to a static host. `web/public/staticwebapp.config.json` (copied into `dist`) makes deep links like
   `/join/<code>` work on Azure Static Web Apps.
