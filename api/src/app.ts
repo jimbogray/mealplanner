@@ -69,7 +69,7 @@ async function requireMember(db: Db, req: Request): Promise<{ userId: string; em
 
 async function requireAdmin(db: Db, req: Request) {
   const ctx = await requireMember(db, req);
-  if (ctx.member.role !== "admin") throw new HttpError(403, "Only a family admin can do that");
+  if (ctx.member.role !== "admin") throw new HttpError(403, "Only a Family Manager can do that");
   return ctx;
 }
 
@@ -394,7 +394,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
     const isSelf = target.id === self.id;
-    if (self.role !== "admin" && !isSelf) throw new HttpError(403, "Only a family admin can change other members");
+    if (self.role !== "admin" && !isSelf) throw new HttpError(403, "Only a Family Manager can change other members");
 
     const b = v.object(req.body);
     const name = b.name === undefined ? target.name : v.text(b.name, "Name");
@@ -404,10 +404,10 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     let role = target.role;
     if (b.role !== undefined) {
       if (b.role !== "admin" && b.role !== "member") throw new HttpError(400, "Role must be admin or member");
-      if (self.role !== "admin") throw new HttpError(403, "Only a family admin can change roles");
-      if (b.role === "admin" && !target.user_id) throw new HttpError(400, "Only members with their own login can be admins");
+      if (self.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose who manages the family");
+      if (b.role === "admin" && !target.user_id) throw new HttpError(400, "Only members with their own login can be Family Managers");
       if (b.role === "member" && target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
-        throw new HttpError(400, "A family needs at least one admin");
+        throw new HttpError(400, "A family needs at least one Family Manager");
       }
       role = b.role;
     }
@@ -422,9 +422,9 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
     // Admins can remove anyone; anyone can leave.
-    if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a family admin can remove members");
+    if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a Family Manager can remove members");
     if (target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
-      throw new HttpError(400, "A family needs at least one admin; make someone else an admin first");
+      throw new HttpError(400, "A family needs at least one Family Manager; make someone else a Family Manager first");
     }
     await db.query("DELETE FROM family_member WHERE id = $1", [target.id]);
     return { status: 204 };

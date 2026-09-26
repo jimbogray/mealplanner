@@ -155,7 +155,7 @@ function MemberRow({
           {isSelf && <span className="note"> (you)</span>}
           <div className="note small">
             {member.email ?? "No login"}
-            {member.role === "admin" && " · Admin"}
+            {member.role === "admin" && " · Family Manager"}
           </div>
           {summary && <div className="diet small">{summary}</div>}
         </div>
@@ -176,7 +176,7 @@ function MemberRow({
               className="link"
               onClick={() => void run(() => api.updateMember(member.id, { role: member.role === "admin" ? "member" : "admin" }))}
             >
-              {member.role === "admin" ? "Remove admin" : "Make admin"}
+              {member.role === "admin" ? "Remove as Family Manager" : "Make Family Manager"}
             </button>
           )}
           {(isAdmin || isSelf) && (
