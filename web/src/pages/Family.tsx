@@ -1,4 +1,4 @@
-import type { Allergen, Diet, FamilyMember, Invite, LifeStage, Me } from "@mealplanner/shared";
+import { canSignIn, type Allergen, type Diet, type FamilyMember, type Invite, type LifeStage, type Me } from "@mealplanner/shared";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, inviteUrl } from "../api";
 import { DietFields, dietSummary } from "../components/DietFields";
@@ -155,7 +155,7 @@ function MemberRow({
           {isSelf && <span className="note"> (you)</span>}
           <div className="note small">
             {member.email ?? "No login"}
-            {member.role === "admin" && " · Admin"}
+            {member.role === "admin" && " · Family Manager"}
           </div>
           {summary && <div className="diet small">{summary}</div>}
         </div>
@@ -166,17 +166,17 @@ function MemberRow({
               Edit
             </button>
           )}
-          {isAdmin && !member.hasAccount && !invite && (
+          {isAdmin && !member.hasAccount && canSignIn(member.lifeStage) && !invite && (
             <button className="link" onClick={() => void run(onInvite)}>
               Invite to sign in
             </button>
           )}
-          {isAdmin && member.hasAccount && !isSelf && (
+          {isAdmin && !isSelf && (member.hasAccount || member.role === "admin" || canSignIn(member.lifeStage)) && (
             <button
               className="link"
               onClick={() => void run(() => api.updateMember(member.id, { role: member.role === "admin" ? "member" : "admin" }))}
             >
-              {member.role === "admin" ? "Remove admin" : "Make admin"}
+              {member.role === "admin" ? "Remove as Family Manager" : "Make Family Manager"}
             </button>
           )}
           {(isAdmin || isSelf) && (
@@ -218,6 +218,7 @@ function AddMember() {
   const [lifeStage, setLifeStage] = useState<LifeStage>("child");
   const [diet, setDiet] = useState<Diet>("none");
   const [allergies, setAllergies] = useState<Allergen[]>([]);
+  const [coManager, setCoManager] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -226,11 +227,12 @@ function AddMember() {
     setBusy(true);
     setError(null);
     try {
-      await api.addMember({ name, lifeStage, diet, allergies });
+      await api.addMember({ name, lifeStage, diet, allergies, role: coManager && canSignIn(lifeStage) ? "admin" : "member" });
       await refresh();
       setName("");
       setDiet("none");
       setAllergies([]);
+      setCoManager(false);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -250,6 +252,20 @@ function AddMember() {
           <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
         </div>
         <DietFields idPrefix="add" diet={diet} allergies={allergies} onDiet={setDiet} onAllergies={setAllergies} />
+        {canSignIn(lifeStage) && (
+          <div>
+            <label className="check">
+              <input type="checkbox" checked={coManager} onChange={(e) => setCoManager(e.target.checked)} />
+              <span>
+                <strong>Co-Manager</strong>
+                <span className="note small">
+                  {" "}
+                  Makes them a Family Manager too, able to add, edit and invite family members once they sign in.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
         <div>
           <button type="submit" disabled={busy}>
             Add

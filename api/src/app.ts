@@ -1,9 +1,22 @@
 import { createServer, type Server } from "node:http";
-import type { AuthResponse, Family, FamilyMember, Invite, InvitePreview, LifeStage, Me } from "@mealplanner/shared";
+import {
+  canSignIn,
+  type AuthResponse,
+  type Family,
+  type FamilyMember,
+  type FavouriteRecipe,
+  type Invite,
+  type InvitePreview,
+  type LifeStage,
+  type Me,
+  type RecipePreview,
+} from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
+import { fetchPage, pageImages, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
+import type { RecipeReader } from "./recipe-reader.js";
 import * as v from "./validate.js";
 
 export const INVITE_DAYS = 14;
@@ -67,7 +80,7 @@ async function requireMember(db: Db, req: Request): Promise<{ userId: string; em
 
 async function requireAdmin(db: Db, req: Request) {
   const ctx = await requireMember(db, req);
-  if (ctx.member.role !== "admin") throw new HttpError(403, "Only a family admin can do that");
+  if (ctx.member.role !== "admin") throw new HttpError(403, "Only a Family Manager can do that");
   return ctx;
 }
 
@@ -79,9 +92,10 @@ async function familyMember(db: Queryable, familyId: string, id: string): Promis
   return row;
 }
 
+/** Family Managers who can actually sign in (a manager added without a login can't manage anything yet). */
 async function adminCount(db: Queryable, familyId: string): Promise<number> {
   const { rows } = await db.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM family_member WHERE family_id = $1 AND role = 'admin'",
+    "SELECT count(*)::int AS n FROM family_member WHERE family_id = $1 AND role = 'admin' AND user_id IS NOT NULL",
     [familyId],
   );
   return rows[0].n;
@@ -168,6 +182,10 @@ export interface AppOptions {
   webOrigins: string[];
   /** Enables Sign in with Google when set. */
   google?: { clientId: string; keys: KeySource };
+  /** Downloads recipe pages; defaults to fetching them from the web. */
+  fetchPage?: PageFetcher;
+  /** Reads a recipe's details from its page with an LLM. Without it, people type the details in. */
+  readRecipe?: RecipeReader;
 }
 
 /** Optional sign-up fields: a new family name, or an invite code to join one. */
@@ -177,7 +195,39 @@ function familyChoice(b: Record<string, unknown>): { familyName: string | null; 
   return { familyName, inviteCode };
 }
 
-export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): Router {
+interface RecipeRow {
+  id: string;
+  url: string;
+  name: string;
+  description: string | null;
+  cooking_minutes: number | null;
+  main_protein: string | null;
+  image_url: string | null;
+  site_name: string | null;
+  added_by: string | null;
+  created_at: Date;
+}
+
+const RECIPE_SELECT = `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
+    m.name AS added_by, r.created_at
+  FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
+
+function toRecipe(r: RecipeRow): FavouriteRecipe {
+  return {
+    id: r.id,
+    url: r.url,
+    name: r.name,
+    description: r.description,
+    cookingMinutes: r.cooking_minutes,
+    mainProtein: r.main_protein,
+    imageUrl: r.image_url,
+    siteName: r.site_name,
+    addedBy: r.added_by,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe"> = {}): Router {
   const router = new Router();
 
   router.add("GET", "/api/health", async () => {
@@ -344,9 +394,12 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
     const lifeStage = v.lifeStage(b.lifeStage);
     const diet = b.diet === undefined ? "none" : v.diet(b.diet);
     const allergies = b.allergies === undefined ? [] : v.allergies(b.allergies);
+    // A Co-Manager is another Family Manager; they can manage the family once they sign in.
+    const role = b.role === undefined ? "member" : v.role(b.role);
+    if (role === "admin" && !canSignIn(lifeStage)) throw new HttpError(400, "Only adults and teenagers can be Co-Managers");
     const { rows } = await db.query<{ id: string }>(
-      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-      [member.family_id, name, lifeStage, diet, allergies],
+      "INSERT INTO family_member (family_id, name, life_stage, diet, allergies, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+      [member.family_id, name, lifeStage, diet, allergies, role],
     );
     return { status: 201, body: toMember(await familyMember(db, member.family_id, rows[0].id)) };
   });
@@ -356,7 +409,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
     const isSelf = target.id === self.id;
-    if (self.role !== "admin" && !isSelf) throw new HttpError(403, "Only a family admin can change other members");
+    if (self.role !== "admin" && !isSelf) throw new HttpError(403, "Only a Family Manager can change other members");
 
     const b = v.object(req.body);
     const name = b.name === undefined ? target.name : v.text(b.name, "Name");
@@ -365,13 +418,15 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
     const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
     let role = target.role;
     if (b.role !== undefined) {
-      if (b.role !== "admin" && b.role !== "member") throw new HttpError(400, "Role must be admin or member");
-      if (self.role !== "admin") throw new HttpError(403, "Only a family admin can change roles");
-      if (b.role === "admin" && !target.user_id) throw new HttpError(400, "Only members with their own login can be admins");
-      if (b.role === "member" && target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
-        throw new HttpError(400, "A family needs at least one admin");
+      const newRole = v.role(b.role);
+      if (self.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose who manages the family");
+      if (newRole === "admin" && target.role !== "admin" && !target.user_id && !canSignIn(lifeStage)) {
+        throw new HttpError(400, "Only adults and teenagers can be Family Managers");
       }
-      role = b.role;
+      if (newRole === "member" && target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
+        throw new HttpError(400, "A family needs at least one Family Manager");
+      }
+      role = newRole;
     }
     await db.query(
       "UPDATE family_member SET name = $1, life_stage = $2, diet = $3, allergies = $4, role = $5 WHERE id = $6",
@@ -384,9 +439,9 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
     // Admins can remove anyone; anyone can leave.
-    if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a family admin can remove members");
-    if (target.role === "admin" && (await adminCount(db, self.family_id)) <= 1) {
-      throw new HttpError(400, "A family needs at least one admin; make someone else an admin first");
+    if (self.role !== "admin" && target.id !== self.id) throw new HttpError(403, "Only a Family Manager can remove members");
+    if (target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
+      throw new HttpError(400, "A family needs at least one Family Manager; make someone else a Family Manager first");
     }
     await db.query("DELETE FROM family_member WHERE id = $1", [target.id]);
     return { status: 204 };
@@ -413,6 +468,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
     if (b.memberId !== undefined && b.memberId !== null) {
       target = await familyMember(db, member.family_id, String(b.memberId));
       if (target.user_id) throw new HttpError(400, `${target.name} already has their own login`);
+      if (!canSignIn(target.life_stage)) throw new HttpError(400, "Only adults and teenagers can be invited to sign in");
     }
     const { rows } = await db.query<InviteRow>(
       `INSERT INTO invite (family_id, code, created_by, member_id, expires_at)
@@ -476,6 +532,102 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
       }
     });
     return { body: await loadMe(db, userId, email) };
+  });
+
+  // --- favourite recipes --------------------------------------------------
+  // They belong to the family: anyone in it can add or remove one.
+
+  router.add("GET", "/api/family/recipes", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rows } = await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.family_id = $1 ORDER BY r.created_at DESC`, [
+      member.family_id,
+    ]);
+    const body: FavouriteRecipe[] = rows.map(toRecipe);
+    return { body };
+  });
+
+  // Reads a recipe page so the person adding it can check (or fill in) the details before saving.
+  router.add("POST", "/api/family/recipes/preview", async (req) => {
+    const { member } = await requireMember(db, req);
+    const url = v.webUrl(v.object(req.body).url, "Recipe link");
+    const alreadySaved = !!(
+      await db.query("SELECT 1 FROM favourite_recipe WHERE family_id = $1 AND url = $2", [member.family_id, url])
+    ).rowCount;
+    const preview: RecipePreview = {
+      url,
+      isRecipe: null,
+      name: null,
+      description: null,
+      cookingMinutes: null,
+      mainProtein: null,
+      imageUrl: null,
+      siteName: null,
+      alreadySaved,
+    };
+    if (alreadySaved) return { body: preview };
+
+    let page;
+    try {
+      page = await (options.fetchPage ?? fetchPage)(url);
+    } catch {
+      return { body: preview }; // Couldn't read it (offline, blocked, not HTML…): they fill it in.
+    }
+    const meta = parseRecipeMeta(page.html, page.url);
+    Object.assign(preview, { name: meta.title, imageUrl: meta.imageUrl, siteName: meta.siteName });
+    if (!options.readRecipe) return { body: preview };
+    try {
+      const images = pageImages(page.html, page.url);
+      const details = await options.readRecipe({ url: page.url, text: pageText(page.html), images });
+      // The page's own share image wins; otherwise Claude's pick, as long as it really is on the page.
+      if (!preview.imageUrl && images.some((i) => i.url === details.imageUrl)) preview.imageUrl = details.imageUrl;
+      preview.isRecipe = details.isRecipe;
+      // Not a recipe: the page's title is no guess at a dish name, so leave it for the person to type.
+      if (!details.isRecipe) preview.name = null;
+      else {
+        preview.name = details.name?.trim() || meta.title;
+        preview.description = details.description?.trim() || null;
+        const minutes = Math.round(details.cookingMinutes ?? 0);
+        preview.cookingMinutes = minutes > 0 && minutes <= 2880 ? minutes : null;
+        preview.mainProtein = details.mainProtein?.trim() || null;
+      }
+    } catch (err) {
+      console.error("Reading a recipe with the LLM failed", err);
+    }
+    return { body: preview };
+  });
+
+  router.add("POST", "/api/family/recipes", async (req) => {
+    const { member } = await requireMember(db, req);
+    const b = v.object(req.body);
+    const url = v.webUrl(b.url, "Recipe link");
+    const { rows } = await db.query<{ id: string }>(
+      `INSERT INTO favourite_recipe (family_id, url, name, description, cooking_minutes, main_protein, image_url, site_name, added_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (family_id, url) DO NOTHING RETURNING id`,
+      [
+        member.family_id,
+        url,
+        v.text(b.name, "Recipe name", 200),
+        v.optionalText(b.description, "Description", 1000),
+        v.optionalMinutes(b.cookingMinutes),
+        v.optionalText(b.mainProtein, "Main protein", 80),
+        b.imageUrl == null || b.imageUrl === "" ? null : v.webUrl(b.imageUrl, "Image link"),
+        v.optionalText(b.siteName, "Site name", 80),
+        member.id,
+      ],
+    );
+    if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
+    const saved = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
+    return { status: 201, body: toRecipe(saved) };
+  });
+
+  router.add("DELETE", "/api/family/recipes/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM favourite_recipe WHERE id = $1 AND family_id = $2", [
+      v.uuid(req.params.id),
+      member.family_id,
+    ]);
+    if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    return { status: 204 };
   });
 
   return router;

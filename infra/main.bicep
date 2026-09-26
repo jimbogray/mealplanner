@@ -15,6 +15,13 @@ param postgresAdminPassword string
 @description('OAuth client id from Google Cloud Console. Empty turns Sign in with Google off.')
 param googleClientId string = ''
 
+@secure()
+@description('Anthropic API key for reading recipe pages with Claude. Empty turns it off.')
+param anthropicApiKey string = ''
+
+@description('Claude model for reading recipe pages. Empty uses the API default.')
+param recipeModel string = ''
+
 @description('Set by azd once the API container app exists.')
 param apiExists bool = false
 
@@ -36,6 +43,8 @@ module resources 'resources.bicep' = {
     resourceToken: resourceToken
     postgresAdminPassword: postgresAdminPassword
     googleClientId: googleClientId
+    anthropicApiKey: anthropicApiKey
+    recipeModel: recipeModel
     apiExists: apiExists
   }
 }

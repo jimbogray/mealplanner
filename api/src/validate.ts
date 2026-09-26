@@ -1,4 +1,4 @@
-import { ALLERGENS, isAllergen, isDiet, isLifeStage, type Allergen, type Diet, type LifeStage } from "@mealplanner/shared";
+import { ALLERGENS, isAllergen, isDiet, isLifeStage, type Allergen, type Diet, type LifeStage, type MemberRole } from "@mealplanner/shared";
 import { HttpError } from "./http.js";
 
 export function object(body: unknown): Record<string, unknown> {
@@ -49,4 +49,40 @@ export function allergies(value: unknown): Allergen[] {
   if (!Array.isArray(value)) throw new HttpError(400, "Allergies must be a list");
   for (const a of value) if (!isAllergen(a)) throw new HttpError(400, `Unknown allergy: ${String(a)}`);
   return ALLERGENS.filter((a) => value.includes(a));
+}
+
+/** A web page address (http or https), without its #fragment. */
+export function webUrl(value: unknown, field = "Link"): string {
+  const raw = text(value, field, 2048);
+  let u: URL;
+  try {
+    u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    throw new HttpError(400, `${field} must be a web address`);
+  }
+  if ((u.protocol !== "http:" && u.protocol !== "https:") || !u.hostname.includes(".") || u.username || u.password) {
+    throw new HttpError(400, `${field} must be a web address`);
+  }
+  u.hash = "";
+  return u.href;
+}
+
+/** A text field that may be left out, null or blank. */
+export function optionalText(value: unknown, field: string, max: number): string | null {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return null;
+  return text(value, field, max);
+}
+
+/** Cooking time in whole minutes (up to two days), or null. */
+export function optionalMinutes(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 2880) {
+    throw new HttpError(400, "Cooking time must be a whole number of minutes");
+  }
+  return value;
+}
+
+export function role(value: unknown): MemberRole {
+  if (value !== "admin" && value !== "member") throw new HttpError(400, "Role must be admin or member");
+  return value;
 }

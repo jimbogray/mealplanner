@@ -4,12 +4,16 @@ param resourceToken string
 @secure()
 param postgresAdminPassword string
 param googleClientId string
+@secure()
+param anthropicApiKey string
+param recipeModel string
 @description('Whether the API container app already exists (azd sets this), so re-provisioning keeps its image.')
 param apiExists bool
 
 var postgresAdminLogin = 'familyadmin'
 var databaseName = 'mealplanner'
 var apiName = 'ca-api-${resourceToken}'
+var hasAnthropicKey = !empty(anthropicApiKey)
 
 // ---------- PostgreSQL Flexible Server ----------
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
@@ -123,12 +127,16 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
       }
       registries: [{ server: registry.properties.loginServer, identity: apiIdentity.id }]
-      secrets: [
-        {
-          name: 'database-url'
-          value: 'postgres://${postgresAdminLogin}:${uriComponent(postgresAdminPassword)}@${postgres.properties.fullyQualifiedDomainName}:5432/${databaseName}'
-        }
-      ]
+      secrets: concat(
+        [
+          {
+            name: 'database-url'
+            value: 'postgres://${postgresAdminLogin}:${uriComponent(postgresAdminPassword)}@${postgres.properties.fullyQualifiedDomainName}:5432/${databaseName}'
+          }
+        ],
+        // Container Apps rejects an empty secret, so only add it when set.
+        hasAnthropicKey ? [{ name: 'anthropic-api-key', value: anthropicApiKey }] : []
+      )
     }
     template: {
       containers: [
@@ -136,13 +144,17 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'api'
           image: empty(apiImage.outputs.image) ? 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' : apiImage.outputs.image
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
-          env: [
-            { name: 'DATABASE_URL', secretRef: 'database-url' }
-            { name: 'PORT', value: '8080' }
-            { name: 'WEB_ORIGIN', value: 'https://${web.properties.defaultHostname}' }
-            { name: 'GOOGLE_CLIENT_ID', value: googleClientId }
-            { name: 'MIGRATE_ON_START', value: 'true' }
-          ]
+          env: concat(
+            [
+              { name: 'DATABASE_URL', secretRef: 'database-url' }
+              { name: 'PORT', value: '8080' }
+              { name: 'WEB_ORIGIN', value: 'https://${web.properties.defaultHostname}' }
+              { name: 'GOOGLE_CLIENT_ID', value: googleClientId }
+              { name: 'RECIPE_MODEL', value: recipeModel }
+              { name: 'MIGRATE_ON_START', value: 'true' }
+            ],
+            hasAnthropicKey ? [{ name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }] : []
+          )
         }
       ]
       // Scales to zero when idle; the first request after that takes a few seconds.

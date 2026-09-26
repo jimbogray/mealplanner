@@ -34,7 +34,7 @@ everywhere (locally, in CI, in a container) without the Functions host.
 
 ### Who can do what
 
-- The person who creates a family is its **admin**. Admins can add, edit and remove
+- The person who creates a family is its **admin** (shown as "Family Manager"; adding someone as a "Co-Manager" makes them an admin too). Admins can add, edit and remove
   members, make other members with a login admins, and create or revoke invite links.
 - Everyone can edit their own name, life stage, diet and allergies, and leave the family.
 - A family always keeps at least one admin.
@@ -106,6 +106,21 @@ The API verifies Google's ID token itself (signature against Google's published 
 issuer, audience, expiry, verified email). A Google sign-in whose email matches an existing
 account is linked to that account.
 
+### Favourite recipes read by Claude (optional)
+
+When someone adds a recipe to the Library page by its link, the API downloads the page and asks Claude
+(`claude-haiku-4-5` by default, the cheapest current model; override with `RECIPE_MODEL`) for
+the dish's name, a short description, the approximate cooking time and the main protein. The
+photo is the page's own share image, or else the page photo Claude judges best shows the dish;
+its URL is stored (the image itself isn't copied). If the
+page doesn't look like a recipe, the web app asks whether to add it anyway and has the person
+type in whatever couldn't be read.
+
+Set `ANTHROPIC_API_KEY` for the API (create one at
+[console.anthropic.com](https://console.anthropic.com/settings/keys)). Without it, recipes can
+still be added: the name and photo come from the page's metadata and the rest is typed in.
+Pages on private or loopback addresses are never fetched.
+
 ## Deploying
 
 ### To Azure with azd
@@ -122,6 +137,7 @@ azd auth login              # or: azd config set auth.useAzCliAuth true
 azd env new family-prod --location eastus2
 azd env set POSTGRES_ADMIN_PASSWORD "$(openssl rand -hex 24)"
 azd env set GOOGLE_CLIENT_ID <client-id>   # optional
+azd env set ANTHROPIC_API_KEY <key>        # optional, for reading recipe pages
 azd provision
 azd deploy
 ```
@@ -137,7 +153,7 @@ wired up in the Bicep. For Google sign-in, add the `SERVICE_WEB_ENDPOINT` URL
 - **Database**: any managed PostgreSQL (e.g. Azure Database for PostgreSQL Flexible Server).
 - **API**: `npm ci && npm run build --workspace shared && npm run build --workspace api`,
   then `node api/dist/src/server.js` with `DATABASE_URL`, `PORT`, `WEB_ORIGIN` (the web
-  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` set.
+  app's URL, for CORS) and optionally `GOOGLE_CLIENT_ID` and `ANTHROPIC_API_KEY` set.
 - **Web**: `VITE_API_URL=https://<api-host> VITE_GOOGLE_CLIENT_ID=<id> npm run build --workspace web` and upload
   `web/dist` to a static host. `web/public/staticwebapp.config.json` (copied into `dist`) makes deep links like
   `/join/<code>` work on Azure Static Web Apps.
