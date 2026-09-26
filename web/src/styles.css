@@ -120,11 +120,16 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .tile .thumb.placeholder { font-size: 2.5rem; }
 .tile-body { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.75rem; overflow-wrap: anywhere; }
 .tile-description { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tile-corner {
+  position: absolute; top: 0.5rem; left: 0.5rem; right: 3rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+  pointer-events: none; /* clicks between the badges still open the recipe */
+}
+.tile-corner > * { pointer-events: auto; }
 .tile-average {
-  position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; border-radius: 999px;
+  padding: 0.25rem 0.6rem; border-radius: 999px;
   background: rgba(35, 34, 30, 0.8); color: #fff; font-size: 0.85rem; font-weight: 600;
 }
-.tile-foot { display: flex; align-items: center; justify-content: space-between; padding: 0 0.5rem 0.5rem 0.5rem; }
+.tile-foot { display: flex; align-items: center; padding: 0 0.5rem 0.5rem 0.5rem; }
 .stars { display: flex; }
 .star {
   padding: 0.1rem 0.15rem; border: none; background: none; color: #d0cdc3;
@@ -134,16 +139,16 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .stars:hover .star { color: #e0a526; }
 .stars .star:hover ~ .star { color: #d0cdc3; }
 .tile-remove {
-  width: 2rem; height: 2rem; padding: 0; border-radius: 999px; border: none; background: none;
-  color: var(--muted); font-size: 1.25rem; line-height: 1;
+  position: absolute; top: 0.5rem; right: 0.5rem; width: 2rem; height: 2rem; padding: 0;
+  border-radius: 999px; border: none; background: rgba(255, 255, 255, 0.9); color: var(--danger);
+  font-size: 1.25rem; line-height: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-.tile-remove:hover { color: var(--danger); }
 .group-by { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .group-by button { padding: 0.35rem 0.9rem; }
 .recipe-group h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
 
 .tile-prepared {
-  position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.25rem 0.7rem;
+  padding: 0.25rem 0.7rem;
   border-radius: 999px; border: 1px solid var(--accent); background: rgba(255, 255, 255, 0.92); color: var(--accent);
   font-size: 0.85rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }

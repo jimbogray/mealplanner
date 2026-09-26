@@ -66,24 +66,29 @@ function Library({ isManager }: { isManager: boolean }) {
             <span className="note small">{recipeFacts(r)}</span>
           </span>
         </a>
-        <button
-          className="tile-prepared"
-          aria-pressed={r.prepared}
-          disabled={!isManager}
-          title={isManager ? (r.prepared ? "Mark as not prepared yet" : "Mark as prepared") : "Only a Family Manager can change this"}
-          onClick={() => void togglePrepared(r)}
-        >
-          {r.prepared ? "✓ Prepared" : "Prepared"}
-        </button>
-        {r.averageRating !== null && (
-          <span
-            className="tile-average"
-            title={`Family average from ${r.ratingCount} ${r.ratingCount === 1 ? "rating" : "ratings"}`}
-            aria-label={`Family average ${r.averageRating} out of 5`}
+        <div className="tile-corner">
+          {r.averageRating !== null && (
+            <span
+              className="tile-average"
+              title={`Family average from ${r.ratingCount} ${r.ratingCount === 1 ? "rating" : "ratings"}`}
+              aria-label={`Family average ${r.averageRating} out of 5`}
+            >
+              ★ {r.averageRating.toFixed(1)}
+            </span>
+          )}
+          <button
+            className="tile-prepared"
+            aria-pressed={r.prepared}
+            disabled={!isManager}
+            title={isManager ? (r.prepared ? "Mark as not prepared yet" : "Mark as prepared") : "Only a Family Manager can change this"}
+            onClick={() => void togglePrepared(r)}
           >
-            ★ {r.averageRating.toFixed(1)}
-          </span>
-        )}
+            {r.prepared ? "✓ Prepared" : "Prepared"}
+          </button>
+        </div>
+        <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from library" onClick={() => void remove(r)}>
+          ×
+        </button>
         <div className="tile-foot">
           <span className="stars" role="group" aria-label="Your rating">
             {[1, 2, 3, 4, 5].map((n) => (
@@ -99,9 +104,6 @@ function Library({ isManager }: { isManager: boolean }) {
               </button>
             ))}
           </span>
-          <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from library" onClick={() => void remove(r)}>
-            ×
-          </button>
         </div>
       </li>
     );
