@@ -222,7 +222,7 @@ function WeekForm({
     <form className="panel stack" onSubmit={submit}>
       <div>
         <h2>{title}</h2>
-        <p className="hint">Tick who's joining for dinner each day, and add any guests.</p>
+        <p className="hint">Tap who's joining for dinner each day, and add any guests.</p>
       </div>
       <ul className="day-form">
         {days.map((d) => (
@@ -232,7 +232,7 @@ function WeekForm({
               <div className="day-fields">
                 <div className="chips">
                   {members.map((m) => (
-                    <label key={m.id} className="chip">
+                    <label key={m.id} className="chip toggle">
                       <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
                       {m.name}
                     </label>
