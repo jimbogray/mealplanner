@@ -1,5 +1,16 @@
 import { createServer, type Server } from "node:http";
-import type { AuthResponse, Family, FamilyMember, FavouriteRecipe, Invite, InvitePreview, LifeStage, Me, RecipePreview } from "@mealplanner/shared";
+import {
+  canSignIn,
+  type AuthResponse,
+  type Family,
+  type FamilyMember,
+  type FavouriteRecipe,
+  type Invite,
+  type InvitePreview,
+  type LifeStage,
+  type Me,
+  type RecipePreview,
+} from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
@@ -385,6 +396,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     const allergies = b.allergies === undefined ? [] : v.allergies(b.allergies);
     // A Co-Manager is another Family Manager; they can manage the family once they sign in.
     const role = b.role === undefined ? "member" : v.role(b.role);
+    if (role === "admin" && !canSignIn(lifeStage)) throw new HttpError(400, "Only adults and teenagers can be Co-Managers");
     const { rows } = await db.query<{ id: string }>(
       "INSERT INTO family_member (family_id, name, life_stage, diet, allergies, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
       [member.family_id, name, lifeStage, diet, allergies, role],
@@ -408,6 +420,9 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     if (b.role !== undefined) {
       const newRole = v.role(b.role);
       if (self.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose who manages the family");
+      if (newRole === "admin" && target.role !== "admin" && !target.user_id && !canSignIn(lifeStage)) {
+        throw new HttpError(400, "Only adults and teenagers can be Family Managers");
+      }
       if (newRole === "member" && target.role === "admin" && target.user_id && (await adminCount(db, self.family_id)) <= 1) {
         throw new HttpError(400, "A family needs at least one Family Manager");
       }
@@ -453,6 +468,7 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     if (b.memberId !== undefined && b.memberId !== null) {
       target = await familyMember(db, member.family_id, String(b.memberId));
       if (target.user_id) throw new HttpError(400, `${target.name} already has their own login`);
+      if (!canSignIn(target.life_stage)) throw new HttpError(400, "Only adults and teenagers can be invited to sign in");
     }
     const { rows } = await db.query<InviteRow>(
       `INSERT INTO invite (family_id, code, created_by, member_id, expires_at)

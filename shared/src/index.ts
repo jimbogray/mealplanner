@@ -15,6 +15,11 @@ export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {
   adult: "Adult (18+)",
 };
 
+/** Only teenagers and adults can have their own login (and so be invited to sign in, or be a Family Manager). */
+export function canSignIn(stage: LifeStage): boolean {
+  return stage === "teenager" || stage === "adult";
+}
+
 export function isLifeStage(value: unknown): value is LifeStage {
   return typeof value === "string" && (LIFE_STAGES as readonly string[]).includes(value);
 }

@@ -228,10 +228,21 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   });
 
   test("a member invite is deleted with its member", async () => {
-    const kid = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Kid", lifeStage: "child" } });
+    const kid = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Kid", lifeStage: "teenager" } });
     const invite = await call<Invite>("POST", "/api/family/invites", { token: parentToken, body: { memberId: kid.body.id } });
     await call("DELETE", `/api/family/members/${kid.body.id}`, { token: parentToken });
     assert.equal((await call("GET", `/api/invites/${invite.body.code}`)).status, 404);
+  });
+
+  test("only adults and teenagers can be invited to sign in or made managers", async () => {
+    const child = await call<FamilyMember>("POST", "/api/family/members", { token: parentToken, body: { name: "Tiny", lifeStage: "child" } });
+    assert.equal((await call("POST", "/api/family/invites", { token: parentToken, body: { memberId: child.body.id } })).status, 400);
+    assert.equal((await call("PATCH", `/api/family/members/${child.body.id}`, { token: parentToken, body: { role: "admin" } })).status, 400);
+    assert.equal(
+      (await call("POST", "/api/family/members", { token: parentToken, body: { name: "Tot", lifeStage: "toddler", role: "admin" } })).status,
+      400,
+    );
+    await call("DELETE", `/api/family/members/${child.body.id}`, { token: parentToken });
   });
 
   let teenToken: string;
