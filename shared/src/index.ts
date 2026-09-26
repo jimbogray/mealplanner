@@ -364,6 +364,10 @@ export interface Restaurant {
   url: string | null;
   /** e.g. "Ask for the window table. Kids love the pizza." */
   notes: string | null;
+  /** Typed in, or the address the map service found for it by name. */
+  address: string | null;
+  /** Driving time from the family's home; null when there's no home address or it couldn't be worked out. */
+  driveMinutes: number | null;
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;
@@ -374,4 +378,6 @@ export interface RestaurantInput {
   name: string;
   url?: string | null;
   notes?: string | null;
+  /** Leave out to have it found on the map by name, near the family's home. */
+  address?: string | null;
 }

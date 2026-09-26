@@ -209,3 +209,4 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .restaurant-body { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; overflow-wrap: anywhere; }
 .restaurant-notes { margin: 0; white-space: pre-line; }
 .restaurant .actions { display: flex; gap: 0.25rem; }
+.drive { align-self: flex-start; font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; background: #e6f1fb; color: #1d4f7c; }

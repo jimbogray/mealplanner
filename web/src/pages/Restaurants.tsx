@@ -79,8 +79,17 @@ function Restaurants() {
                         r.name
                       )}
                     </strong>
+                    {r.driveMinutes !== null && (
+                      <span className="drive" title="Driving time from home">
+                        🚗 {formatDrive(r.driveMinutes)} from home
+                      </span>
+                    )}
                     {r.notes && <p className="restaurant-notes">{r.notes}</p>}
-                    <p className="note small">{[r.url && new URL(r.url).hostname.replace(/^www\./, ""), r.addedBy && `added by ${r.addedBy}`].filter(Boolean).join(" · ")}</p>
+                    <p className="note small">
+                      {[r.address, r.url && new URL(r.url).hostname.replace(/^www\./, ""), r.addedBy && `added by ${r.addedBy}`]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
                   </div>
                   <div className="actions">
                     <button className="link" onClick={() => setEditing(r.id)}>
@@ -100,6 +109,13 @@ function Restaurants() {
   );
 }
 
+function formatDrive(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} hr ${m} min` : `${h} hr`;
+}
+
 function RestaurantForm({
   initial,
   submitLabel,
@@ -117,6 +133,7 @@ function RestaurantForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [url, setUrl] = useState(initial?.url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [address, setAddress] = useState(initial?.address ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,11 +142,12 @@ function RestaurantForm({
     setError(null);
     setBusy(true);
     try {
-      onSaved(await onSave({ name, url: url.trim() || null, notes: notes.trim() || null }));
+      onSaved(await onSave({ name, url: url.trim() || null, notes: notes.trim() || null, address: address.trim() || null }));
       if (!initial) {
         setName("");
         setUrl("");
         setNotes("");
+        setAddress("");
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -150,6 +168,13 @@ function RestaurantForm({
           <input id={`${id}-url`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Website, menu or map" inputMode="url" />
         </div>
       </div>
+      <Field
+        label="Address or postcode (optional)"
+        htmlFor={`${id}-address`}
+        hint="Leave blank to find it by name near home. Used to work out the driving time."
+      >
+        <input id={`${id}-address`} value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} autoComplete="off" />
+      </Field>
       <Field label="Notes (optional)" htmlFor={`${id}-notes`}>
         <textarea
           id={`${id}-notes`}

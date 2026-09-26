@@ -23,6 +23,10 @@ param anthropicApiKey string = ''
 @description('Ideal Postcodes API key for finding addresses by postcode. Empty turns it off.')
 param idealPostcodesApiKey string = ''
 
+@secure()
+@description('Azure Maps key for finding restaurants and driving times from home. Empty turns it off.')
+param azureMapsKey string = ''
+
 @description('Claude model for reading recipe pages. Empty uses the API default.')
 param recipeModel string = ''
 
@@ -49,6 +53,7 @@ module resources 'resources.bicep' = {
     googleClientId: googleClientId
     anthropicApiKey: anthropicApiKey
     idealPostcodesApiKey: idealPostcodesApiKey
+    azureMapsKey: azureMapsKey
     recipeModel: recipeModel
     apiExists: apiExists
   }
