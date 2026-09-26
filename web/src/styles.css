@@ -87,3 +87,21 @@ legend { font-weight: 500; font-size: 0.95rem; padding: 0; margin-bottom: 0.35re
 .diet { color: #7a5510; margin-top: 0.15rem; }
 .invite-link { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
 .invite-link code { font-size: 0.8rem; word-break: break-all; }
+
+.grow { flex: 1 1 240px; }
+textarea { font: inherit; padding: 0.5rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.panel { border: 1px solid var(--border); border-radius: 10px; padding: 1rem; background: var(--bg); }
+.panel > p { margin: 0 0 0.5rem; }
+.panel .row > .field { flex: 1 1 160px; }
+input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
+.recipes { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.recipes li { display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--border); padding: 0.6rem 0; }
+.recipe { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.75rem; color: var(--ink); text-decoration: none; }
+a.recipe:hover strong { text-decoration: underline; }
+.recipe > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; overflow-wrap: anywhere; }
+.thumb {
+  width: 64px; height: 64px; flex: none; border-radius: 8px; object-fit: cover;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.thumb.placeholder { display: grid; place-items: center; font-size: 1.5rem; }

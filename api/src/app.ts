@@ -1,9 +1,11 @@
 import { createServer, type Server } from "node:http";
-import type { AuthResponse, Family, FamilyMember, Invite, InvitePreview, LifeStage, Me } from "@mealplanner/shared";
+import type { AuthResponse, Family, FamilyMember, FavouriteRecipe, Invite, InvitePreview, LifeStage, Me, RecipePreview } from "@mealplanner/shared";
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
+import { fetchPage, pageImages, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
+import type { RecipeReader } from "./recipe-reader.js";
 import * as v from "./validate.js";
 
 export const INVITE_DAYS = 14;
@@ -168,6 +170,10 @@ export interface AppOptions {
   webOrigins: string[];
   /** Enables Sign in with Google when set. */
   google?: { clientId: string; keys: KeySource };
+  /** Downloads recipe pages; defaults to fetching them from the web. */
+  fetchPage?: PageFetcher;
+  /** Reads a recipe's details from its page with an LLM. Without it, people type the details in. */
+  readRecipe?: RecipeReader;
 }
 
 /** Optional sign-up fields: a new family name, or an invite code to join one. */
@@ -177,7 +183,39 @@ function familyChoice(b: Record<string, unknown>): { familyName: string | null; 
   return { familyName, inviteCode };
 }
 
-export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): Router {
+interface RecipeRow {
+  id: string;
+  url: string;
+  name: string;
+  description: string | null;
+  cooking_minutes: number | null;
+  main_protein: string | null;
+  image_url: string | null;
+  site_name: string | null;
+  added_by: string | null;
+  created_at: Date;
+}
+
+const RECIPE_SELECT = `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
+    m.name AS added_by, r.created_at
+  FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
+
+function toRecipe(r: RecipeRow): FavouriteRecipe {
+  return {
+    id: r.id,
+    url: r.url,
+    name: r.name,
+    description: r.description,
+    cookingMinutes: r.cooking_minutes,
+    mainProtein: r.main_protein,
+    imageUrl: r.image_url,
+    siteName: r.site_name,
+    addedBy: r.added_by,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe"> = {}): Router {
   const router = new Router();
 
   router.add("GET", "/api/health", async () => {
@@ -476,6 +514,102 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google"> = {}): R
       }
     });
     return { body: await loadMe(db, userId, email) };
+  });
+
+  // --- favourite recipes --------------------------------------------------
+  // They belong to the family: anyone in it can add or remove one.
+
+  router.add("GET", "/api/family/recipes", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rows } = await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.family_id = $1 ORDER BY r.created_at DESC`, [
+      member.family_id,
+    ]);
+    const body: FavouriteRecipe[] = rows.map(toRecipe);
+    return { body };
+  });
+
+  // Reads a recipe page so the person adding it can check (or fill in) the details before saving.
+  router.add("POST", "/api/family/recipes/preview", async (req) => {
+    const { member } = await requireMember(db, req);
+    const url = v.webUrl(v.object(req.body).url, "Recipe link");
+    const alreadySaved = !!(
+      await db.query("SELECT 1 FROM favourite_recipe WHERE family_id = $1 AND url = $2", [member.family_id, url])
+    ).rowCount;
+    const preview: RecipePreview = {
+      url,
+      isRecipe: null,
+      name: null,
+      description: null,
+      cookingMinutes: null,
+      mainProtein: null,
+      imageUrl: null,
+      siteName: null,
+      alreadySaved,
+    };
+    if (alreadySaved) return { body: preview };
+
+    let page;
+    try {
+      page = await (options.fetchPage ?? fetchPage)(url);
+    } catch {
+      return { body: preview }; // Couldn't read it (offline, blocked, not HTML…): they fill it in.
+    }
+    const meta = parseRecipeMeta(page.html, page.url);
+    Object.assign(preview, { name: meta.title, imageUrl: meta.imageUrl, siteName: meta.siteName });
+    if (!options.readRecipe) return { body: preview };
+    try {
+      const images = pageImages(page.html, page.url);
+      const details = await options.readRecipe({ url: page.url, text: pageText(page.html), images });
+      // The page's own share image wins; otherwise Claude's pick, as long as it really is on the page.
+      if (!preview.imageUrl && images.some((i) => i.url === details.imageUrl)) preview.imageUrl = details.imageUrl;
+      preview.isRecipe = details.isRecipe;
+      // Not a recipe: the page's title is no guess at a dish name, so leave it for the person to type.
+      if (!details.isRecipe) preview.name = null;
+      else {
+        preview.name = details.name?.trim() || meta.title;
+        preview.description = details.description?.trim() || null;
+        const minutes = Math.round(details.cookingMinutes ?? 0);
+        preview.cookingMinutes = minutes > 0 && minutes <= 2880 ? minutes : null;
+        preview.mainProtein = details.mainProtein?.trim() || null;
+      }
+    } catch (err) {
+      console.error("Reading a recipe with the LLM failed", err);
+    }
+    return { body: preview };
+  });
+
+  router.add("POST", "/api/family/recipes", async (req) => {
+    const { member } = await requireMember(db, req);
+    const b = v.object(req.body);
+    const url = v.webUrl(b.url, "Recipe link");
+    const { rows } = await db.query<{ id: string }>(
+      `INSERT INTO favourite_recipe (family_id, url, name, description, cooking_minutes, main_protein, image_url, site_name, added_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (family_id, url) DO NOTHING RETURNING id`,
+      [
+        member.family_id,
+        url,
+        v.text(b.name, "Recipe name", 200),
+        v.optionalText(b.description, "Description", 1000),
+        v.optionalMinutes(b.cookingMinutes),
+        v.optionalText(b.mainProtein, "Main protein", 80),
+        b.imageUrl == null || b.imageUrl === "" ? null : v.webUrl(b.imageUrl, "Image link"),
+        v.optionalText(b.siteName, "Site name", 80),
+        member.id,
+      ],
+    );
+    if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
+    const saved = (await db.query<RecipeRow>(`${RECIPE_SELECT} WHERE r.id = $1`, [rows[0].id])).rows[0];
+    return { status: 201, body: toRecipe(saved) };
+  });
+
+  router.add("DELETE", "/api/family/recipes/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM favourite_recipe WHERE id = $1 AND family_id = $2", [
+      v.uuid(req.params.id),
+      member.family_id,
+    ]);
+    if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    return { status: 204 };
   });
 
   return router;
