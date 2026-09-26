@@ -20,6 +20,10 @@ inputs:
     description: OAuth client id for Sign in with Google (empty turns it off)
     required: false
     default: ""
+  anthropic-api-key:
+    description: API key for reading recipe pages with Claude (empty turns it off)
+    required: false
+    default: ""
 
 outputs:
   web-url:
@@ -61,10 +65,19 @@ runs:
         RG: ${{ inputs.resource-group }}
         IMAGE: ${{ inputs.image }}
         GOOGLE_CLIENT_ID: ${{ inputs.google-client-id }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
       run: |
         app=ca-mealplanner-api
-        az containerapp update -n "$app" -g "$RG" --image "$IMAGE" \
-          --set-env-vars "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID" -o none
+        env_args=(--set-env-vars "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID")
+        if [ -n "$ANTHROPIC_API_KEY" ]; then
+          # Kept as a Container Apps secret; the env var only references it.
+          az containerapp secret set -n "$app" -g "$RG" \
+            --secrets "anthropic-api-key=$ANTHROPIC_API_KEY" -o none
+          env_args+=("ANTHROPIC_API_KEY=secretref:anthropic-api-key")
+        else
+          env_args+=(--remove-env-vars ANTHROPIC_API_KEY)
+        fi
+        az containerapp update -n "$app" -g "$RG" --image "$IMAGE" "${env_args[@]}" -o none
         # Wait for the new revision to be ready (it takes over all traffic once it is).
         for _ in $(seq 30); do
           read -r latest ready < <(az containerapp show -n "$app" -g "$RG" \

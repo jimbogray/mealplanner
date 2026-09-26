@@ -71,7 +71,7 @@ In the repository's **Settings → Environments**, create two environments:
 - **production**: tick **Required reviewers** and add yourself; also restrict deployment
   branches to `main`.
 
-Add these **variables** (not secrets; none of them are sensitive):
+Add these **variables** (none of them are sensitive):
 
 | Where | Variable | Value |
 |---|---|---|
@@ -84,6 +84,15 @@ Add these **variables** (not secrets; none of them are sensitive):
 | Environment **production** → Environment variables | `AZURE_CLIENT_ID` | output `production.AZURE_CLIENT_ID` |
 | same | `AZURE_RESOURCE_GROUP` | `rg-mealplanner-production` |
 | same | `GOOGLE_CLIENT_ID` | production's Google OAuth client id |
+
+And one optional **secret** in each environment (Environment → *Environment secrets*):
+
+| Environment | Secret | Value |
+|---|---|---|
+| **staging** and **production** | `ANTHROPIC_API_KEY` | Anthropic API key used to read recipe pages. Leave unset and the app falls back to manual recipe entry. Use a separate key per environment if you want to track or cap spend separately. |
+
+The deploy stores it as a Container Apps secret (`anthropic-api-key`) that the API's
+`ANTHROPIC_API_KEY` env var references, so it never appears in plain text in the app's settings.
 
 The federated credentials are already created by the template: they trust tokens for
 `repo:jimbogray/mealplanner:environment:staging` and `...:environment:production`. If the repo
@@ -116,7 +125,7 @@ Push to `main` or run **Deploy to staging** from the Actions tab. Then, to relea
 ## Things to know
 
 - Re-running `infra/main.bicep` resets the API and migration job to a placeholder image and
-  drops `GOOGLE_CLIENT_ID` from the API. Run *Deploy to staging* and *Promote to production*
+  drops `GOOGLE_CLIENT_ID` and `ANTHROPIC_API_KEY` from the API. Run *Deploy to staging* and *Promote to production*
   again afterwards.
 - Postgres accepts connections from any Azure service ("Allow Azure services" firewall rule),
   protected by the password and TLS. Private networking (VNet integration) is a later step if

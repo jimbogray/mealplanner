@@ -88,6 +88,7 @@ jobs:
           image: ${{ steps.image.outputs.ref }}
           web-dist: web-dist
           google-client-id: ${{ vars.GOOGLE_CLIENT_ID }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Record release
         run: |
