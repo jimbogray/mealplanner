@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { FamilyPage } from "./pages/Family";
 import { JoinPage } from "./pages/Join";
+import { LibraryPage } from "./pages/Library";
 import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
 import { useSession } from "./session";
@@ -15,6 +16,12 @@ export function App() {
         <Link to="/" className="brand">
           {me?.family ? me.family.name : "Family"}
         </Link>
+        {me?.family && (
+          <nav className="nav">
+            <NavLink to="/family">Family</NavLink>
+            <NavLink to="/library">Library</NavLink>
+          </nav>
+        )}
         {me && (
           <div className="auth">
             <span className="note">{me.user.email}</span>
@@ -38,6 +45,14 @@ export function App() {
               element={
                 <RequireSignIn>
                   <FamilyPage />
+                </RequireSignIn>
+              }
+            />
+            <Route
+              path="/library"
+              element={
+                <RequireSignIn>
+                  <LibraryPage />
                 </RequireSignIn>
               }
             />

@@ -1,59 +1,11 @@
+// Adding a favourite recipe (paste a link, check or fill in what was read, save) and small pieces shared with the Library page.
 import type { FavouriteRecipe, RecipePreview } from "@mealplanner/shared";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "./Field";
 
-/** The family's favourite recipes: links to recipe pages that anyone in the family can add or remove. */
-export function FavouriteRecipes() {
-  const [recipes, setRecipes] = useState<FavouriteRecipe[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.recipes().then(setRecipes, (err) => setError(errorMessage(err)));
-  }, []);
-
-  async function remove(recipe: FavouriteRecipe) {
-    if (!window.confirm(`Remove "${recipe.name}" from your favourites?`)) return;
-    setError(null);
-    try {
-      await api.removeRecipe(recipe.id);
-      setRecipes((list) => (list ?? []).filter((r) => r.id !== recipe.id));
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }
-
-  return (
-    <section className="card">
-      <h2>Favourite recipes</h2>
-      <p className="note">Paste a link to a recipe page your family loves. Everyone in the family can see, add and remove them.</p>
-      <AddRecipe onAdded={(recipe) => setRecipes((list) => [recipe, ...(list ?? [])])} />
-      <ErrorNote error={error} />
-      {recipes && recipes.length === 0 && <p className="note small">No favourites yet.</p>}
-      {recipes && recipes.length > 0 && (
-        <ul className="recipes">
-          {recipes.map((r) => (
-            <li key={r.id}>
-              <a className="recipe" href={r.url} target="_blank" rel="noopener noreferrer">
-                <Thumb src={r.imageUrl} />
-                <span>
-                  <strong>{r.name}</strong>
-                  {r.description && <span className="small">{r.description}</span>}
-                  <span className="note small">{recipeFacts(r)}</span>
-                </span>
-              </a>
-              <button className="link danger" onClick={() => void remove(r)}>
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function recipeFacts(r: FavouriteRecipe): string {
+/** "25 min · Eggs · BBC Good Food · added by Sam" */
+export function recipeFacts(r: FavouriteRecipe): string {
   return [
     r.cookingMinutes && formatMinutes(r.cookingMinutes),
     r.mainProtein,
@@ -71,7 +23,7 @@ function formatMinutes(minutes: number): string {
   return m ? `${h} hr ${m} min` : `${h} hr`;
 }
 
-function Thumb({ src }: { src: string | null }) {
+export function Thumb({ src }: { src: string | null }) {
   return src ? (
     <img className="thumb" src={src} alt="" loading="lazy" referrerPolicy="no-referrer" />
   ) : (
@@ -89,7 +41,7 @@ type Step =
   | { kind: "details"; preview: RecipePreview };
 
 /** Paste a link → the API reads the page → check (or fill in) the details → save. */
-function AddRecipe({ onAdded }: { onAdded: (recipe: FavouriteRecipe) => void }) {
+export function AddRecipe({ onAdded }: { onAdded: (recipe: FavouriteRecipe) => void }) {
   const [step, setStep] = useState<Step>({ kind: "link" });
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);

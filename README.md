@@ -108,7 +108,7 @@ account is linked to that account.
 
 ### Favourite recipes read by Claude (optional)
 
-When someone adds a favourite recipe by its link, the API downloads the page and asks Claude
+When someone adds a recipe to the Library page by its link, the API downloads the page and asks Claude
 (`claude-haiku-4-5` by default, the cheapest current model; override with `RECIPE_MODEL`) for
 the dish's name, a short description, the approximate cooking time and the main protein. The
 photo is the page's own share image, or else the page photo Claude judges best shows the dish;

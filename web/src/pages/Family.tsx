@@ -4,7 +4,6 @@ import { api, inviteUrl } from "../api";
 import { DietFields, dietSummary } from "../components/DietFields";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
 import { LifeStageBadge, LifeStageSelect } from "../components/LifeStageSelect";
-import { FavouriteRecipes } from "../components/FavouriteRecipes";
 import { useSession } from "../session";
 
 export function FamilyPage() {
@@ -32,7 +31,6 @@ function FamilyView({ me, isAdmin }: { me: Me; isAdmin: boolean }) {
   return (
     <div className="stack">
       <Members me={me} isAdmin={isAdmin} invites={invites} onInvite={createInvite} />
-      <FavouriteRecipes />
       {isAdmin && <AddMember />}
       {isAdmin && (
         <Invites invites={invites} setInvites={setInvites} onCreate={() => createInvite()} error={inviteError} setError={setInviteError} />
