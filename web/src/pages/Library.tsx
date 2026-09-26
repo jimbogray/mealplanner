@@ -25,7 +25,7 @@ function Library({ isManager }: { isManager: boolean }) {
   }, []);
 
   async function remove(recipe: FavouriteRecipe) {
-    if (!window.confirm(`Remove "${recipe.name}" from your library?`)) return;
+    if (!window.confirm(`Remove "${recipe.name}" from your recipes?`)) return;
     setError(null);
     try {
       await api.removeRecipe(recipe.id);
@@ -78,7 +78,7 @@ function Library({ isManager }: { isManager: boolean }) {
             {r.prepared ? "✓ Prepared" : "Prepared"}
           </button>
         </div>
-        <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from library" onClick={() => void remove(r)}>
+        <button className="tile-remove" aria-label={`Remove ${r.name}`} title="Remove from your recipes" onClick={() => void remove(r)}>
           ×
         </button>
         <div className="tile-foot">
@@ -91,7 +91,7 @@ function Library({ isManager }: { isManager: boolean }) {
   return (
     <div className="stack">
       <section className="card">
-        <h1>Library</h1>
+        <h1>Recipe</h1>
         <p className="note">Your family's favourite recipes. Paste a link to a recipe page to add one; anyone in the family can add, rate or remove them.</p>
         <AddRecipe onAdded={(recipe) => setRecipes((list) => [recipe, ...(list ?? [])])} />
       </section>
