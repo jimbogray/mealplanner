@@ -42,16 +42,23 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Stand in for the web and for Claude, so tests stay offline.
       fetchPage: async (url) => {
         if (url.includes("unreachable")) throw new Error("offline");
+        // "noimage" pages have no share image, just photos in the page for Claude to choose from.
+        const head = url.includes("noimage")
+          ? `<title>Page title</title>`
+          : `<title>Page title</title><meta property="og:image" content="/p.jpg"><meta property="og:site_name" content="Good Food">`;
         return {
           url,
-          html: `<title>Page title</title><meta property="og:image" content="/p.jpg"><meta property="og:site_name" content="Good Food">
-            <h1>${url.includes("shop") ? "Buy pans" : "Easy pancakes"}</h1>`,
+          html: `${head}<h1>${url.includes("shop") ? "Buy pans" : "Easy pancakes"}</h1>
+            <img src="/step-1.jpg" alt="Whisking"><img src="/done.jpg" alt="A stack of pancakes">`,
         };
       },
-      readRecipe: async ({ text }) => {
-        if (text.includes("Buy pans")) return { isRecipe: false, name: null, description: null, cookingMinutes: null, mainProtein: null };
+      readRecipe: async ({ url, text, images }) => {
+        const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
+        if (text.includes("Buy pans")) return { isRecipe: false, ...none };
         if (text.includes("Easy pancakes")) {
-          return { isRecipe: true, name: "Easy pancakes", description: "Thin, lemony pancakes.", cookingMinutes: 25, mainProtein: "Eggs" };
+          // Claude picks the finished-dish photo, or (for "badpick") a URL that isn't on the page.
+          const pick = url.includes("badpick") ? "https://evil.example.com/x.jpg" : images.find((i) => i.alt?.includes("stack"))?.url ?? null;
+          return { isRecipe: true, name: "Easy pancakes", description: "Thin, lemony pancakes.", cookingMinutes: 25, mainProtein: "Eggs", imageUrl: pick };
         }
         throw new Error("unexpected page text: " + text);
       },
@@ -307,6 +314,19 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         siteName: "Good Food",
         alreadySaved: false,
       });
+    });
+
+    test("without a share image, Claude's pick of the page's photos is used", async () => {
+      const res = await call<RecipePreview>("POST", "/api/family/recipes/preview", {
+        token: teenToken,
+        body: { url: "https://www.example.com/noimage/pancakes" },
+      });
+      assert.equal(res.body.imageUrl, "https://www.example.com/done.jpg");
+      const bad = await call<RecipePreview>("POST", "/api/family/recipes/preview", {
+        token: teenToken,
+        body: { url: "https://www.example.com/noimage/badpick" },
+      });
+      assert.equal(bad.body.imageUrl, null);
     });
 
     test("any family member can save one, and the whole family sees it", async () => {

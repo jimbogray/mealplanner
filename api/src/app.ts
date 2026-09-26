@@ -4,7 +4,7 @@ import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, req
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
-import { fetchPage, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
+import { fetchPage, pageImages, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
 import type { RecipeReader } from "./recipe-reader.js";
 import * as v from "./validate.js";
 
@@ -558,7 +558,10 @@ export function buildRouter(db: Db, options: Pick<AppOptions, "google" | "fetchP
     Object.assign(preview, { name: meta.title, imageUrl: meta.imageUrl, siteName: meta.siteName });
     if (!options.readRecipe) return { body: preview };
     try {
-      const details = await options.readRecipe({ url: page.url, text: pageText(page.html) });
+      const images = pageImages(page.html, page.url);
+      const details = await options.readRecipe({ url: page.url, text: pageText(page.html), images });
+      // The page's own share image wins; otherwise Claude's pick, as long as it really is on the page.
+      if (!preview.imageUrl && images.some((i) => i.url === details.imageUrl)) preview.imageUrl = details.imageUrl;
       preview.isRecipe = details.isRecipe;
       // Not a recipe: the page's title is no guess at a dish name, so leave it for the person to type.
       if (!details.isRecipe) preview.name = null;

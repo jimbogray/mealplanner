@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, test } from "node:test";
-import { fetchPage, isPublicAddress, pageText, parseRecipeMeta } from "../src/recipe-meta.js";
+import { fetchPage, isPublicAddress, pageImages, pageText, parseRecipeMeta } from "../src/recipe-meta.js";
 
 const PAGE = "https://www.example.com/recipes/pancakes";
 
@@ -41,6 +41,17 @@ test("pageText keeps JSON-LD and visible text, and drops scripts and styles", ()
     <script type="application/ld+json">{"@type":"Recipe","name":"Stew"}</script></head>
     <body><h1>Beef stew</h1><p>Serves 4 &amp; takes <b>2 hours</b>.</p><!-- ad --></body>`);
   assert.equal(text, 'Structured data:\n{"@type":"Recipe","name":"Stew"}\n\nPage text:\nBeef stew\nServes 4 & takes 2 hours .');
+});
+
+test("pageImages lists content photos and skips icons, pixels, SVGs and duplicates", () => {
+  const html = `<img src="/logo.png" alt="Logo"><img src="/pixel.jpg" width="1" height="1">
+    <img src="data:image/png;base64,xx" data-src="/stew-hero.jpg" alt="Beef &amp; ale stew">
+    <img srcset="/step.jpg 600w, /step-big.jpg 1200w"><img src="/stew-hero.jpg"><img src="/arrow.svg">
+    <script>'<img src="/in-script.jpg">'</script>`;
+  assert.deepEqual(pageImages(html, PAGE), [
+    { url: "https://www.example.com/stew-hero.jpg", alt: "Beef & ale stew" },
+    { url: "https://www.example.com/step.jpg", alt: null },
+  ]);
 });
 
 describe("fetchPage", () => {

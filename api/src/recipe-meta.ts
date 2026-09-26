@@ -272,3 +272,35 @@ export function pageText(html: string): string {
   const text = [...jsonLd.map((j) => `Structured data:\n${j}`), `Page text:\n${visible}`].join("\n\n");
   return text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text;
 }
+
+export interface PageImage {
+  url: string;
+  alt: string | null;
+}
+
+const MAX_IMAGES = 20;
+
+/**
+ * Candidate photos on the page (for the LLM to pick from when the page's metadata names none):
+ * content images only, skipping icons, tracking pixels, SVGs and GIFs.
+ */
+export function pageImages(html: string, pageUrl: string): PageImage[] {
+  const images: PageImage[] = [];
+  const seen = new Set<string>();
+  const body = html.replace(/<(script|style|noscript|svg|template)\b[\s\S]*?<\/\1\s*>/gi, " ");
+  for (const m of body.matchAll(/<img\b[^>]*>/gi)) {
+    const a = attributes(m[0]);
+    // Lazy-loading sites keep the real image in a data- attribute.
+    const src = a["data-src"] ?? a["data-lazy-src"] ?? a.src ?? a.srcset?.split(",")[0]?.trim().split(/\s+/)[0];
+    const url = absoluteUrl(src, pageUrl);
+    if (!url || seen.has(url) || /\.(svg|gif)(\?|$)/i.test(url)) continue;
+    const width = Number(a.width);
+    const height = Number(a.height);
+    if ((width && width < 120) || (height && height < 120)) continue;
+    if (/(logo|icon|avatar|sprite|pixel|badge|spinner)/i.test(url)) continue;
+    seen.add(url);
+    images.push({ url, alt: clean(a.alt, 120) });
+    if (images.length >= MAX_IMAGES) break;
+  }
+  return images;
+}

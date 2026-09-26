@@ -110,7 +110,9 @@ account is linked to that account.
 
 When someone adds a favourite recipe by its link, the API downloads the page and asks Claude
 (`claude-haiku-4-5` by default, the cheapest current model; override with `RECIPE_MODEL`) for
-the dish's name, a short description, the approximate cooking time and the main protein. If the
+the dish's name, a short description, the approximate cooking time and the main protein. The
+photo is the page's own share image, or else the page photo Claude judges best shows the dish;
+its URL is stored (the image itself isn't copied). If the
 page doesn't look like a recipe, the web app asks whether to add it anyway and has the person
 type in whatever couldn't be read.
 

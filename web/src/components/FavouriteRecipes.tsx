@@ -185,6 +185,7 @@ function RecipeDetailsForm({
   const [description, setDescription] = useState(preview.description ?? "");
   const [minutes, setMinutes] = useState(preview.cookingMinutes?.toString() ?? "");
   const [protein, setProtein] = useState(preview.mainProtein ?? "");
+  const [imageUrl, setImageUrl] = useState(preview.imageUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -195,6 +196,7 @@ function RecipeDetailsForm({
     description: !preview.description,
     minutes: !preview.cookingMinutes,
     protein: !preview.mainProtein,
+    image: !preview.imageUrl,
   };
   const anyMissing = Object.values(missing).some(Boolean);
   const intro =
@@ -218,7 +220,7 @@ function RecipeDetailsForm({
           description: description || null,
           cookingMinutes: minutes ? Number(minutes) : null,
           mainProtein: protein || null,
-          imageUrl: preview.imageUrl,
+          imageUrl: imageUrl.trim() || null,
           siteName: preview.siteName,
         }),
       );
@@ -232,7 +234,7 @@ function RecipeDetailsForm({
   return (
     <form className="panel stack" onSubmit={save}>
       <div className="recipe">
-        <Thumb src={preview.imageUrl} />
+        <Thumb src={/^https?:\/\//i.test(imageUrl.trim()) ? imageUrl.trim() : null} />
         <span>
           <span>{intro}</span>
           <a className="note small" href={preview.url} target="_blank" rel="noopener noreferrer">
@@ -287,6 +289,22 @@ function RecipeDetailsForm({
           />
         </Field>
       </div>
+      <Field
+        label="Photo link"
+        htmlFor="recipe-image"
+        hint={missing.image ? "We couldn't find a photo. To add one, right-click a photo on the recipe page and copy its image address." : undefined}
+      >
+        <input
+          id="recipe-image"
+          className={cls(missing.image)}
+          type="text"
+          inputMode="url"
+          maxLength={2048}
+          placeholder="https://… (optional)"
+          value={imageUrl}
+          onChange={(e) => setImageUrl(e.target.value)}
+        />
+      </Field>
       <ErrorNote error={error} />
       <div className="row">
         <button type="submit" disabled={busy}>

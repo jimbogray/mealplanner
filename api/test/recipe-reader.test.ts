@@ -7,7 +7,7 @@ import { claudeRecipeReader } from "../src/recipe-reader.js";
 // A stand-in for the Anthropic API, so the request shape and response parsing are checked offline.
 test("claudeRecipeReader asks Claude Haiku for structured recipe details", async () => {
   let request: { headers: Record<string, unknown>; body: any } | undefined;
-  const details = { isRecipe: true, name: "Beef stew", description: "A slow, rich stew.", cookingMinutes: 150, mainProtein: "Beef" };
+  const details = { isRecipe: true, name: "Beef stew", description: "A slow, rich stew.", cookingMinutes: 150, mainProtein: "Beef", imageUrl: "https://example.com/stew.jpg" };
   const server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) raw += chunk;
@@ -28,11 +28,11 @@ test("claudeRecipeReader asks Claude Haiku for structured recipe details", async
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const read = claudeRecipeReader("test-key", undefined, `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-    assert.deepEqual(await read({ url: "https://example.com/stew", text: "Page text:\nBeef stew" }), details);
+    assert.deepEqual(await read({ url: "https://example.com/stew", text: "Page text:\nBeef stew", images: [{ url: "https://example.com/stew.jpg", alt: "Stew" }] }), details);
     assert.equal(request!.headers["x-api-key"], "test-key");
     assert.equal(request!.body.model, "claude-haiku-4-5");
     assert.equal(request!.body.output_config.format.type, "json_schema");
-    assert.match(request!.body.messages[0].content, /URL: https:\/\/example.com\/stew\n\nPage text:\nBeef stew/);
+    assert.match(request!.body.messages[0].content, /Candidate images:\n- https:\/\/example.com\/stew.jpg \(alt: Stew\)\n\nPage text:\nBeef stew/);
   } finally {
     server.close();
   }
