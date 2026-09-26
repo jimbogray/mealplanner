@@ -47,6 +47,7 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 |---|---|---|
 | `POST /api/auth/signup` | anyone | `{email, password, name, lifeStage, familyName}` creates a family, or `{…, inviteCode}` joins one (`name`/`lifeStage` not needed for a member invite). Returns `{token, me}`. |
 | `POST /api/auth/login` | anyone | `{email, password}` → `{token, me}` |
+| `POST /api/auth/google/redirect` | Google | Google's redirect-mode form post; sends the token on to the web app's `/auth/google#credential=…`. |
 | `POST /api/auth/google` | anyone | `{credential}` (a Google ID token) signs in. To sign up, add `lifeStage` and `familyName` or `inviteCode` (`name` defaults to the Google name). |
 | `POST /api/auth/logout` | signed in | ends the session |
 | `GET /api/me` | signed in | you, your family and its members |
@@ -103,7 +104,11 @@ The API tests run against a real Postgres in a throwaway schema (they're skipped
 1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an
    **OAuth client ID** of type *Web application*.
 2. Under **Authorised JavaScript origins**, add each web app URL (e.g. `http://localhost:5173`
-   and your production URL). No redirect URI is needed; the button uses a popup.
+   and your production URL). Under **Authorised redirect URIs**, add each API's
+   `/api/auth/google/redirect` (e.g. `http://localhost:5173/api/auth/google/redirect` locally,
+   via the dev proxy, and `https://<api-host>/api/auth/google/redirect` in production).
+   Most browsers use a popup; iPhones and iPads use Google's full-page redirect instead,
+   because Safari there often loses the popup's result.
 3. Set the client id as `GOOGLE_CLIENT_ID` for the API and `VITE_GOOGLE_CLIENT_ID` for the web
    app. Without them the Google button is hidden and `/api/auth/google` returns 404.
 
@@ -171,7 +176,8 @@ Provision and deploy separately the first time: the web app is built with the AP
 (`VITE_API_URL`, a Bicep output), and `azd up` packages it before provisioning finishes.
 After that, `azd up` or `azd deploy` both work. The API's allowed origin (`WEB_ORIGIN`) is
 wired up in the Bicep. For Google sign-in, add the `SERVICE_WEB_ENDPOINT` URL
-(`azd env get-values`) to the OAuth client's authorised origins.
+(`azd env get-values`) to the OAuth client's authorised origins, and
+the `SERVICE_API_ENDPOINT` URL plus `/api/auth/google/redirect` to its authorised redirect URIs.
 
 ### From GitHub Actions
 

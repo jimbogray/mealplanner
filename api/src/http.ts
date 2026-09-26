@@ -21,6 +21,8 @@ export interface Request {
 export interface Result {
   status?: number;
   body?: unknown;
+  /** Sends a 303 to this URL instead of a JSON body. */
+  redirect?: string;
 }
 
 export type Handler = (req: Request) => Promise<Result>;
@@ -63,7 +65,8 @@ export class Router {
   }
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+/** Parses a JSON body, or a form post (as a string-to-string object). */
+async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -72,8 +75,12 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     chunks.push(chunk as Buffer);
   }
   if (size === 0) return undefined;
+  const text = Buffer.concat(chunks).toString("utf8");
+  if (req.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) {
+    return Object.fromEntries(new URLSearchParams(text));
+  }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(text);
   } catch {
     throw new HttpError(400, "Request body must be valid JSON");
   }
@@ -110,9 +117,10 @@ export function listener(router: Router, allowedOrigins: string[]) {
     if (found === "method") return send(res, 405, { error: "Method not allowed" });
 
     try {
-      const body = method === "GET" ? undefined : await readJson(req);
+      const body = method === "GET" ? undefined : await readBody(req);
       const result = await found.handler({ method, path, params: found.params, headers: req.headers, body });
-      send(res, result.status ?? 200, result.body);
+      if (result.redirect) res.writeHead(303, { location: result.redirect, "cache-control": "no-store" }).end();
+      else send(res, result.status ?? 200, result.body);
     } catch (err) {
       if (err instanceof HttpError) {
         send(res, err.status, { error: err.message });

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { FamilyPage } from "./pages/Family";
+import { GoogleReturnPage } from "./pages/GoogleReturn";
 import { JoinPage } from "./pages/Join";
 import { LibraryPage } from "./pages/Library";
 import { LoginPage } from "./pages/Login";
@@ -44,6 +45,7 @@ export function App() {
             <Route path="/signup" element={me ? <Navigate to="/family" replace /> : <SignupPage />} />
             <Route path="/login" element={me ? <Navigate to="/family" replace /> : <LoginPage />} />
             <Route path="/join/:code" element={<JoinPage />} />
+            <Route path="/auth/google" element={<GoogleReturnPage />} />
             <Route
               path="/family"
               element={
