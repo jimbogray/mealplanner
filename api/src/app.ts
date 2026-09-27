@@ -19,6 +19,7 @@ import {
   type Me,
   type RecipePreview,
   type Restaurant,
+  type RestaurantPreview,
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
@@ -354,6 +355,7 @@ interface RestaurantLocation {
 }
 
 interface RestaurantInput {
+  /** Empty only while adding one with a link, until it's read from the page. */
   name: string;
   url: string | null;
   notes: string | null;
@@ -362,49 +364,75 @@ interface RestaurantInput {
   bookingUrl: string | null;
   /** An address suggestion the person picked (see /api/family/restaurants/address/search). */
   picked: { placeId: string; sessionToken: string } | null;
+  /** Whether to read the link for anything left blank; false after a preview, so what was checked is saved as is. */
+  readLink: boolean;
 }
 
 function optionalWebUrl(value: unknown, field: string): string | null {
   return value == null || (typeof value === "string" && !value.trim()) ? null : v.webUrl(value, field);
 }
 
-/** A restaurant's details, as added or edited. */
-function restaurantInput(body: unknown): RestaurantInput {
+/** A restaurant's details, as added or edited. When adding, the name may be left out if there's a link. */
+function restaurantInput(body: unknown, adding = false): RestaurantInput {
   const b = v.object(body);
+  const url = optionalWebUrl(b.url, "Restaurant link");
+  const nameMissing = b.name == null || (typeof b.name === "string" && !b.name.trim());
   return {
-    name: v.text(b.name, "Restaurant name", 120),
-    url: optionalWebUrl(b.url, "Restaurant link"),
+    name: adding && url && nameMissing ? "" : v.text(b.name, "Restaurant name", 120),
+    url,
     notes: v.optionalText(b.notes, "Notes", 1000),
     address: v.optionalText(b.address, "Address", 200),
     cuisine: v.optionalText(b.cuisine, "Cuisine", 60),
     bookingUrl: optionalWebUrl(b.bookingUrl, "Booking link"),
     picked: b.placeId == null ? null : { placeId: v.text(b.placeId, "Address", 1000), sessionToken: sessionToken(b.sessionToken) },
+    readLink: b.readLink !== false,
   };
 }
 
-/**
- * Fills in whatever the person left blank (cuisine, address, booking link) from the restaurant's web page,
- * read by Claude. What they typed always wins; a page that can't be read, or isn't a restaurant's, changes nothing.
- */
-async function fillFromPage(options: Pick<AppOptions, "fetchPage" | "readRestaurant">, r: RestaurantInput): Promise<RestaurantInput> {
-  if (!r.url || !options.readRestaurant || (r.cuisine && r.address && r.bookingUrl)) return r;
+interface FoundRestaurant {
+  name: string | null;
+  cuisine: string | null;
+  address: string | null;
+  bookingUrl: string | null;
+}
+
+/** What Claude reads on a restaurant's web page; null if it can't be read or isn't a restaurant's. */
+async function readRestaurantPage(options: Pick<AppOptions, "fetchPage" | "readRestaurant">, url: string): Promise<FoundRestaurant | null> {
+  if (!options.readRestaurant) return null;
   try {
-    const page = await (options.fetchPage ?? fetchPage)(r.url);
+    const page = await (options.fetchPage ?? fetchPage)(url);
     const links = pageLinks(page.html, page.url);
     const found = await options.readRestaurant({ url: page.url, text: pageText(page.html), links });
-    if (!found.isRestaurant) return r;
+    if (!found.isRestaurant) return null;
     // Only a link that's really on the page, so a made-up one can't slip through.
     const booking = links.find((l) => l.url === found.bookingUrl?.trim())?.url ?? null;
     return {
-      ...r,
-      cuisine: r.cuisine ?? (found.cuisine?.trim().slice(0, 60) || null),
-      address: r.address ?? (found.address?.trim().slice(0, 200) || null),
-      bookingUrl: r.bookingUrl ?? booking,
+      name: found.name?.trim().slice(0, 120) || null,
+      cuisine: found.cuisine?.trim().slice(0, 60) || null,
+      address: found.address?.trim().slice(0, 200) || null,
+      bookingUrl: booking,
     };
   } catch (err) {
     console.error("Reading a restaurant's page failed", err);
-    return r;
+    return null;
   }
+}
+
+/**
+ * Fills in whatever the person left blank (name, cuisine, address, booking link) from the restaurant's web page,
+ * read by Claude. What they typed always wins; a page that can't be read, or isn't a restaurant's, changes nothing.
+ */
+async function fillFromPage(options: Pick<AppOptions, "fetchPage" | "readRestaurant">, r: RestaurantInput): Promise<RestaurantInput> {
+  if (!r.url || !r.readLink || (r.name && r.cuisine && r.address && r.bookingUrl)) return r;
+  const found = await readRestaurantPage(options, r.url);
+  if (!found) return r;
+  return {
+    ...r,
+    name: r.name || found.name || "",
+    cuisine: r.cuisine ?? found.cuisine,
+    address: r.address ?? found.address,
+    bookingUrl: r.bookingUrl ?? found.bookingUrl,
+  };
 }
 
 /**
@@ -1064,13 +1092,39 @@ export function buildRouter(
   });
 
   // Adding one (or changing its name or address) also finds it on the map and times the drive from home.
+  // Reads a restaurant's link for its name and details, to check and correct before adding it.
+  router.add("POST", "/api/family/restaurants/preview", async (req) => {
+    const { member } = await requireMember(db, req);
+    const url = v.webUrl(v.object(req.body).url, "Restaurant link");
+    const found = await readRestaurantPage(options, url);
+    const saved = await db.query<{ name: string }>(
+      "SELECT name FROM restaurant WHERE family_id = $1 AND (url = $2 OR lower(name) = lower($3)) LIMIT 1",
+      [member.family_id, url, found?.name ?? ""],
+    );
+    const body: RestaurantPreview = {
+      url,
+      found: found !== null,
+      name: found?.name ?? null,
+      cuisine: found?.cuisine ?? null,
+      address: found?.address ?? null,
+      bookingUrl: found?.bookingUrl ?? null,
+      alreadySaved: saved.rows[0]?.name ?? null,
+    };
+    return { body };
+  });
+
   router.add("POST", "/api/family/restaurants", async (req) => {
     const { member } = await requireMember(db, req);
-    const typed = restaurantInput(req.body);
-    const taken = await db.query("SELECT 1 FROM restaurant WHERE family_id = $1 AND lower(name) = lower($2)", [member.family_id, typed.name]);
-    if (taken.rowCount) throw new HttpError(409, `${typed.name} is already one of your restaurants`);
+    const typed = restaurantInput(req.body, true);
+    const nameTaken = async (name: string) => {
+      const taken = await db.query("SELECT 1 FROM restaurant WHERE family_id = $1 AND lower(name) = lower($2)", [member.family_id, name]);
+      if (taken.rowCount) throw new HttpError(409, `${name} is already one of your restaurants`);
+    };
+    if (typed.name) await nameTaken(typed.name);
     const picked = await pickedPlace(typed);
     const r = await fillFromPage(options, typed);
+    if (!r.name) throw new HttpError(400, "Couldn't find the restaurant's name from its link. Type it in");
+    if (!typed.name) await nameTaken(r.name);
     const at = await locateRestaurant(options.maps, await homeLocation(db, options.maps, member.family_id), r, picked);
     let id: string;
     try {

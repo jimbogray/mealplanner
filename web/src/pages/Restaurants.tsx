@@ -1,4 +1,4 @@
-import type { Restaurant, RestaurantInput } from "@mealplanner/shared";
+import type { Restaurant, RestaurantInput, RestaurantPreview } from "@mealplanner/shared";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
@@ -57,7 +57,7 @@ function Restaurants() {
       <section className="card">
         <h1>Restaurants</h1>
         <p className="note">Your family's favourite places to eat out. Anyone in the family can add, edit or remove them.</p>
-        <RestaurantForm submitLabel="Add restaurant" onSave={(input) => api.addRestaurant(input)} onSaved={saved} />
+        <AddRestaurant onAdded={saved} />
       </section>
       <ErrorNote error={error} />
       {restaurants && restaurants.length === 0 && <p className="note center">No restaurants yet. Add your first one above.</p>}
@@ -139,28 +139,114 @@ function formatDrive(minutes: number): string {
   return m ? `${h} hr ${m} min` : `${h} hr`;
 }
 
+type Step =
+  | { kind: "link" }
+  | { kind: "reading" }
+  // What the link says (or nothing, to add one by hand), to check and fill in before saving.
+  | { kind: "details"; preview: RestaurantPreview | null };
+
+/** Paste a link → Claude reads the name and details → check, correct or fill them in → save. */
+function AddRestaurant({ onAdded }: { onAdded: (restaurant: Restaurant) => void }) {
+  const [step, setStep] = useState<Step>({ kind: "link" });
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  function reset() {
+    setStep({ kind: "link" });
+    setUrl("");
+  }
+
+  async function read(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setStep({ kind: "reading" });
+    try {
+      const preview = await api.previewRestaurant(url.trim());
+      if (preview.alreadySaved) {
+        setError(`${preview.alreadySaved} is already one of your restaurants.`);
+        setStep({ kind: "link" });
+      } else {
+        setStep({ kind: "details", preview });
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+      setStep({ kind: "link" });
+    }
+  }
+
+  if (step.kind === "details") {
+    return (
+      <RestaurantForm
+        preview={step.preview}
+        submitLabel="Add restaurant"
+        onSave={(input) => api.addRestaurant(input)}
+        onSaved={(restaurant) => {
+          onAdded(restaurant);
+          reset();
+        }}
+        onCancel={reset}
+      />
+    );
+  }
+
+  const reading = step.kind === "reading";
+  return (
+    <div className="stack">
+      <form className="row" onSubmit={(e) => void read(e)}>
+        <input
+          className="grow"
+          type="text"
+          inputMode="url"
+          aria-label="Restaurant link"
+          placeholder="Paste the restaurant's website"
+          required
+          maxLength={2048}
+          disabled={reading}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <button type="submit" disabled={reading}>
+          {reading ? "Reading the link…" : "Add"}
+        </button>
+      </form>
+      <p className="hint">
+        We'll read its name, cuisine, address and booking link for you to check.{" "}
+        <button type="button" className="link" disabled={reading} onClick={() => setStep({ kind: "details", preview: null })}>
+          No website? Add it by name
+        </button>
+      </p>
+      <ErrorNote error={error} />
+    </div>
+  );
+}
+
 function RestaurantForm({
   initial,
+  preview,
   submitLabel,
   onSave,
   onSaved,
   onCancel,
 }: {
+  /** The restaurant being edited. */
   initial?: Restaurant;
+  /** When adding: what its link said, or null to add one by hand. */
+  preview?: RestaurantPreview | null;
   submitLabel: string;
   onSave: (input: RestaurantInput) => Promise<Restaurant>;
   onSaved: (restaurant: Restaurant) => void;
   onCancel?: () => void;
 }) {
   const id = useId();
-  const [name, setName] = useState(initial?.name ?? "");
-  const [url, setUrl] = useState(initial?.url ?? "");
+  const start = initial ?? preview;
+  const [name, setName] = useState(start?.name ?? "");
+  const [url, setUrl] = useState(start?.url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [address, setAddress] = useState(initial?.address ?? "");
+  const [address, setAddress] = useState(start?.address ?? "");
   const [picked, setPicked] = useState<PickedPlace | null>(null);
   const addressSearch = useSession().me?.addressSearch ?? false;
-  const [cuisine, setCuisine] = useState(initial?.cuisine ?? "");
-  const [bookingUrl, setBookingUrl] = useState(initial?.bookingUrl ?? "");
+  const [cuisine, setCuisine] = useState(start?.cuisine ?? "");
+  const [bookingUrl, setBookingUrl] = useState(start?.bookingUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -177,17 +263,10 @@ function RestaurantForm({
         cuisine: cuisine.trim() || null,
         bookingUrl: bookingUrl.trim() || null,
         ...picked,
+        // What was read from the link has been checked, so save it as is (unless the link was changed).
+        readLink: !preview || url.trim() !== preview.url,
       });
       onSaved(saved);
-      if (!initial) {
-        setName("");
-        setUrl("");
-        setNotes("");
-        setAddress("");
-        setPicked(null);
-        setCuisine("");
-        setBookingUrl("");
-      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -195,26 +274,52 @@ function RestaurantForm({
     }
   }
 
+  // What was read from the link is shown for checking; anything it didn't find is flagged to fill in.
+  const read = preview?.found ?? false;
+  const cls = (value: string | null | undefined) => (preview && !value ? "missing" : undefined);
+  const intro =
+    preview === undefined
+      ? null
+      : preview === null
+        ? "Add the restaurant's details."
+        : !read
+          ? "We couldn't read the restaurant's details from that link. Please fill them in."
+          : [preview.name, preview.cuisine, preview.address, preview.bookingUrl].every(Boolean)
+            ? "Here's what we found. Check it looks right, then add it."
+            : "Here's what we found. Correct anything that's wrong and fill in the gaps.";
+
   return (
-    <form className={initial ? "panel stack" : "stack"} onSubmit={(e) => void submit(e)}>
+    <form className="panel stack" onSubmit={(e) => void submit(e)}>
+      {intro && <p>{intro}</p>}
       <div className="row">
         <div className="field grow">
           <label htmlFor={`${id}-name`}>Name</label>
-          <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} required />
+          <input
+            id={`${id}-name`}
+            className={cls(preview?.name)}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={120}
+            required
+          />
         </div>
         <div className="field grow">
           <label htmlFor={`${id}-url`}>Link (optional)</label>
           <input id={`${id}-url`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Restaurant's website" inputMode="url" />
         </div>
       </div>
-      {!initial && <p className="hint">With a link, the cuisine, address and booking link are read from the restaurant's website.</p>}
       <Field
         label="Address or ZIP code (optional)"
         htmlFor={`${id}-address`}
-        hint="Leave blank to read it from the link, or find it by name near home. Used to work out the driving time."
+        hint={
+          preview
+            ? "Leave blank to find it by name near home. Used to work out the driving time."
+            : "Leave blank to read it from the link, or find it by name near home. Used to work out the driving time."
+        }
       >
         <PlaceInput
           id={`${id}-address`}
+          className={cls(preview?.address)}
           value={address}
           search={addressSearch}
           onChange={(value, place) => {
@@ -223,18 +328,30 @@ function RestaurantForm({
           }}
         />
       </Field>
-      {initial && (
-        <div className="row">
-          <div className="field grow">
-            <label htmlFor={`${id}-cuisine`}>Cuisine</label>
-            <input id={`${id}-cuisine`} value={cuisine} onChange={(e) => setCuisine(e.target.value)} maxLength={60} placeholder="e.g. Italian" />
-          </div>
-          <div className="field grow">
-            <label htmlFor={`${id}-booking`}>Booking link</label>
-            <input id={`${id}-booking`} value={bookingUrl} onChange={(e) => setBookingUrl(e.target.value)} inputMode="url" />
-          </div>
+      <div className="row">
+        <div className="field grow">
+          <label htmlFor={`${id}-cuisine`}>Cuisine</label>
+          <input
+            id={`${id}-cuisine`}
+            className={cls(preview?.cuisine)}
+            value={cuisine}
+            onChange={(e) => setCuisine(e.target.value)}
+            maxLength={60}
+            placeholder="e.g. Italian"
+          />
         </div>
-      )}
+        <div className="field grow">
+          <label htmlFor={`${id}-booking`}>Booking link</label>
+          <input
+            id={`${id}-booking`}
+            className={cls(preview?.bookingUrl)}
+            value={bookingUrl}
+            onChange={(e) => setBookingUrl(e.target.value)}
+            inputMode="url"
+            placeholder="OpenTable, Resy or their own page"
+          />
+        </div>
+      </div>
       <Field label="Notes (optional)" htmlFor={`${id}-notes`}>
         <textarea
           id={`${id}-notes`}
@@ -248,7 +365,7 @@ function RestaurantForm({
       <ErrorNote error={error} />
       <div className="row">
         <button type="submit" disabled={busy || !name.trim()}>
-          {busy ? (url.trim() && url.trim() !== (initial?.url ?? "") ? "Reading the link…" : "Saving…") : submitLabel}
+          {busy ? (url.trim() && url.trim() !== (start?.url ?? "") ? "Reading the link…" : "Saving…") : submitLabel}
         </button>
         {onCancel && (
           <button type="button" className="secondary" onClick={onCancel}>

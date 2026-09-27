@@ -17,6 +17,7 @@ import {
   type Me,
   type RecipePreview,
   type Restaurant,
+  type RestaurantPreview,
   type ScheduleDay,
   type ScheduleWeek,
 } from "@mealplanner/shared";
@@ -126,9 +127,9 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       },
       // Claude reading a restaurant's page: "trattoria" pages are restaurants; "madeup" ones return a booking link not on the page.
       readRestaurant: async ({ url, text, links }) => {
-        if (!text.includes("Trattoria Roma")) return { isRestaurant: false, cuisine: null, address: null, bookingUrl: null };
+        if (!text.includes("Trattoria Roma")) return { isRestaurant: false, name: null, cuisine: null, address: null, bookingUrl: null };
         const booking = url.includes("madeup") ? "https://evil.example.com/book" : links.find((l) => l.text === "Book a table")?.url ?? null;
-        return { isRestaurant: true, cuisine: "Italian", address: "5 Market Street, Bath BA1 1AB", bookingUrl: booking };
+        return { isRestaurant: true, name: "Trattoria Roma", cuisine: "Italian", address: "5 Market Street, Bath BA1 1AB", bookingUrl: booking };
       },
       readRecipe: async ({ url, text, images }) => {
         const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
@@ -592,6 +593,56 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       for (const id of [res.body.id, typed.body.id]) await call("DELETE", `/api/family/restaurants/${id}`, { token: parentToken });
       const bad = await call("POST", "/api/family/restaurants", { token: parentToken, body: { name: "X", bookingUrl: "javascript:alert(1)" } });
       assert.equal(bad.status, 400);
+    });
+
+    test("a link alone is enough: the name and details are previewed, then saved as corrected", async () => {
+      const preview = await call<RestaurantPreview>("POST", "/api/family/restaurants/preview", {
+        token: parentToken,
+        body: { url: "https://trattoria.example.com/" },
+      });
+      assert.equal(preview.status, 200);
+      assert.deepEqual(preview.body, {
+        url: "https://trattoria.example.com/",
+        found: true,
+        name: "Trattoria Roma",
+        cuisine: "Italian",
+        address: "5 Market Street, Bath BA1 1AB",
+        bookingUrl: "https://www.opentable.co.uk/r/trattoria-roma",
+        alreadySaved: null,
+      });
+      // Pages that aren't a restaurant's, or can't be read, find nothing; the person types it in.
+      for (const url of ["https://shop.example.com/", "https://unreachable.example.com/"]) {
+        const other = await call<RestaurantPreview>("POST", "/api/family/restaurants/preview", { token: parentToken, body: { url } });
+        assert.deepEqual([other.body.found, other.body.name, other.body.cuisine], [false, null, null]);
+      }
+      const noUrl = await call("POST", "/api/family/restaurants/preview", { token: parentToken, body: { url: "not a link" } });
+      assert.equal(noUrl.status, 400);
+
+      // Saving what was checked (with a corrected cuisine and a blank booking link) doesn't read the page again.
+      const saved = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: parentToken,
+        body: { name: "Trattoria Roma", url: preview.body.url, cuisine: "Roman", address: preview.body.address, readLink: false },
+      });
+      assert.equal(saved.status, 201);
+      assert.deepEqual([saved.body.cuisine, saved.body.bookingUrl], ["Roman", null]);
+      const again = await call<RestaurantPreview>("POST", "/api/family/restaurants/preview", {
+        token: parentToken,
+        body: { url: "https://trattoria.example.com/" },
+      });
+      assert.equal(again.body.alreadySaved, "Trattoria Roma");
+      await call("DELETE", `/api/family/restaurants/${saved.body.id}`, { token: parentToken });
+
+      // Adding with only a link reads the name from it; with no name to be found, it asks for one.
+      const linkOnly = await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { url: "https://trattoria.example.com/" } });
+      assert.equal(linkOnly.status, 201);
+      assert.deepEqual([linkOnly.body.name, linkOnly.body.cuisine], ["Trattoria Roma", "Italian"]);
+      const duplicate = await call("POST", "/api/family/restaurants", { token: parentToken, body: { url: "https://trattoria.example.com/two" } });
+      assert.equal(duplicate.status, 409);
+      await call("DELETE", `/api/family/restaurants/${linkOnly.body.id}`, { token: parentToken });
+      const nameless = await call("POST", "/api/family/restaurants", { token: parentToken, body: { url: "https://shop.example.com/" } });
+      assert.equal(nameless.status, 400);
+      const nothing = await call("POST", "/api/family/restaurants", { token: parentToken, body: {} });
+      assert.equal(nothing.status, 400);
     });
 
     test("names are unique within the family, ignoring case", async () => {

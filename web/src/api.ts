@@ -17,6 +17,7 @@ import type {
   RecipePreview,
   Restaurant,
   RestaurantInput,
+  RestaurantPreview,
   MemberUpdate,
   ScheduleDay,
   ScheduleWeek,
@@ -112,6 +113,7 @@ export const api = {
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
 
   restaurants: () => request<Restaurant[]>("GET", "/api/family/restaurants"),
+  previewRestaurant: (url: string) => request<RestaurantPreview>("POST", "/api/family/restaurants/preview", { url }),
   addRestaurant: (body: RestaurantInput) => request<Restaurant>("POST", "/api/family/restaurants", body),
   updateRestaurant: (id: string, body: RestaurantInput) => request<Restaurant>("PUT", `/api/family/restaurants/${id}`, body),
   rateRestaurant: (id: string, stars: number) => request<Restaurant>("PUT", `/api/family/restaurants/${id}/rating`, { stars }),
