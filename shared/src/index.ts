@@ -389,7 +389,8 @@ export interface Restaurant {
 
 /** Add a restaurant, or change one (the whole thing is replaced). */
 export interface RestaurantInput {
-  name: string;
+  /** May be left out when adding one with a link: it's then read from the page (400 if it can't be). */
+  name?: string;
   url?: string | null;
   notes?: string | null;
   /** Leave out to have it found on the map by name, near the family's home. */
@@ -400,4 +401,19 @@ export interface RestaurantInput {
   /** An address suggestion picked from POST /api/family/restaurants/address/search, with that search's session. */
   placeId?: string;
   sessionToken?: string;
+  /** False to save exactly what's given, without reading the link (e.g. after a preview). */
+  readLink?: boolean;
+}
+
+/** What a restaurant's link says about it, for checking and correcting before it's added. */
+export interface RestaurantPreview {
+  url: string;
+  /** False if the page couldn't be read or isn't a restaurant's; the details are then all null. */
+  found: boolean;
+  name: string | null;
+  cuisine: string | null;
+  address: string | null;
+  bookingUrl: string | null;
+  /** The name of a restaurant the family already has with this link or name, if any. */
+  alreadySaved: string | null;
 }

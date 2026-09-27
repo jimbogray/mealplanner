@@ -18,11 +18,13 @@ export function PlaceInput({
   value,
   onChange,
   search,
+  className,
 }: {
   id: string;
   value: string;
   onChange: (value: string, picked: PickedPlace | null) => void;
   search: boolean;
+  className?: string;
 }) {
   const [suggestions, setSuggestions] = useState<AddressSuggestion[] | null>(null);
   const [typed, setTyped] = useState(false);
@@ -58,6 +60,7 @@ export function PlaceInput({
     <div className="address-search">
       <input
         id={id}
+        className={className}
         value={value}
         onChange={(e) => {
           setTyped(true);

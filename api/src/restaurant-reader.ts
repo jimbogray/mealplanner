@@ -1,4 +1,4 @@
-// Uses Claude to read a restaurant's web page for its cuisine, address and table booking link.
+// Uses Claude to read a restaurant's web page for its name, cuisine, address and table booking link.
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
@@ -6,6 +6,10 @@ import type { PageLink } from "./recipe-meta.js";
 
 const RestaurantDetails = z.object({
   isRestaurant: z.boolean().describe("True if the page is about a restaurant, café, pub or other place to eat out."),
+  name: z
+    .string()
+    .nullable()
+    .describe('The restaurant\'s name as customers know it, e.g. "Trattoria Roma", without taglines or the town. Null if not clear.'),
   cuisine: z
     .string()
     .nullable()
