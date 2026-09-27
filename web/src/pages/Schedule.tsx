@@ -36,6 +36,11 @@ interface MealChoices {
   restaurants: { id: string; name: string; url: string | null }[];
 }
 
+/** A to Z by name, ignoring case and accents. */
+function byName<T extends { name: string }>(list: T[]): T[] {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
 /** Today's date where the person is, "YYYY-MM-DD". */
 function localToday(): string {
   const d = new Date();
@@ -65,7 +70,7 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
   useEffect(() => {
     if (!isManager) return;
     Promise.all([api.recipes(), api.restaurants()]).then(
-      ([recipes, restaurants]) => setChoices({ recipes, restaurants }),
+      ([recipes, restaurants]) => setChoices({ recipes: byName(recipes), restaurants: byName(restaurants) }),
       // Meals can still be typed in.
       () => setChoices({ recipes: [], restaurants: [] }),
     );
@@ -171,6 +176,7 @@ function dayRequest(d: ScheduleDay, isManager: boolean): UpdateDayRequest {
 
 function mealRequest(meal: ScheduleMeal | null): MealInput | null {
   if (!meal) return null;
+  if (meal.mealKit) return meal.name.trim() ? { mealKit: true, name: meal.name.trim() } : { mealKit: true };
   if (meal.recipeId) return { recipeId: meal.recipeId };
   if (meal.restaurantId) return { restaurantId: meal.restaurantId };
   return meal.name.trim() ? { name: meal.name.trim() } : null;
@@ -259,7 +265,9 @@ function Week({
               <span className="diners">{dinersSummary(d, members)}</span>
               {d.meal && (
                 <span className="meal">
-                  {d.meal.url ? (
+                  {d.meal.mealKit ? (
+                    d.meal.name ? `Meal kit: ${d.meal.name}` : "Meal kit"
+                  ) : d.meal.url ? (
                     <a href={d.meal.url} target="_blank" rel="noopener noreferrer">
                       {d.meal.name}
                     </a>
@@ -340,14 +348,23 @@ function WeekForm({
 
   /** Typing a saved recipe's (or, eating out, restaurant's) name links it; anything else is kept as typed. */
   function setMeal(day: ScheduleDay, text: string) {
+    if (day.meal?.mealKit) {
+      update(day.date, { meal: { name: text, mealKit: true, recipeId: null, restaurantId: null, url: null } });
+      return;
+    }
     const options = day.eatOut ? choices?.restaurants : choices?.recipes;
     const match = options?.find((o) => o.name.toLowerCase() === text.trim().toLowerCase());
     const meal: ScheduleMeal | null = !text
       ? null
       : match
-        ? { name: text, recipeId: day.eatOut ? null : match.id, restaurantId: day.eatOut ? match.id : null, url: match.url }
-        : { name: text, recipeId: null, restaurantId: null, url: null };
+        ? { name: text, mealKit: false, recipeId: day.eatOut ? null : match.id, restaurantId: day.eatOut ? match.id : null, url: match.url }
+        : { name: text, mealKit: false, recipeId: null, restaurantId: null, url: null };
     update(day.date, { meal });
+  }
+
+  /** A meal kit instead of a recipe: the box then says which kit, if anyone wants to. */
+  function setMealKit(day: ScheduleDay, mealKit: boolean) {
+    update(day.date, { meal: mealKit ? { name: "", mealKit: true, recipeId: null, restaurantId: null, url: null } : null });
   }
 
   function removeDay(date: string) {
@@ -380,7 +397,7 @@ function WeekForm({
         <h2>{title}</h2>
         <p className="hint">
           Tap who's joining for dinner each day, and add any guests.
-          {choices && " Pick a meal from your recipes (or restaurants, eating out), or type one in."}
+          {choices && " Pick a meal from your recipes (or restaurants, eating out), choose Meal kit, or type one in."}
         </p>
       </div>
       {choices && (
@@ -455,19 +472,30 @@ function WeekForm({
                   )}
                 </div>
                 {choices && (
-                  <label className="meal-field">
-                    <span>{d.eatOut ? "Restaurant" : "Meal"}</span>
-                    <input
-                      list={`${listId}-${d.eatOut ? "restaurants" : "recipes"}`}
-                      maxLength={MAX_MEAL_NAME}
-                      placeholder={d.eatOut ? "Pick a restaurant or type one" : "Pick a recipe or type a meal"}
-                      value={d.meal?.name ?? ""}
-                      onChange={(e) => setMeal(d, e.target.value)}
-                    />
+                  <div className="meal-field">
+                    <label htmlFor={`${listId}-${d.date}-meal`}>{d.eatOut ? "Restaurant" : d.meal?.mealKit ? "Meal kit" : "Meal"}</label>
+                    <div className="meal-input">
+                      <input
+                        id={`${listId}-${d.date}-meal`}
+                        list={d.meal?.mealKit ? undefined : `${listId}-${d.eatOut ? "restaurants" : "recipes"}`}
+                        maxLength={MAX_MEAL_NAME}
+                        placeholder={
+                          d.eatOut ? "Pick a restaurant or type one" : d.meal?.mealKit ? "Which kit? (optional)" : "Pick a recipe or type a meal"
+                        }
+                        value={d.meal?.name ?? ""}
+                        onChange={(e) => setMeal(d, e.target.value)}
+                      />
+                      {!d.eatOut && (
+                        <label className="chip toggle meal-kit">
+                          <input type="checkbox" checked={!!d.meal?.mealKit} onChange={(e) => setMealKit(d, e.target.checked)} />
+                          Meal kit
+                        </label>
+                      )}
+                    </div>
                     {(d.meal?.recipeId || d.meal?.restaurantId) && (
                       <span className="hint">{d.meal.recipeId ? "From your recipes" : "From your restaurants"}</span>
                     )}
-                  </label>
+                  </div>
                 )}
                 <AllergyNote day={d} members={members} />
               </fieldset>

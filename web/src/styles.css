@@ -244,5 +244,7 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .allergy-note { color: var(--danger); font-size: 0.85rem; }
 .day-form .allergy-note { display: block; margin-top: 0.4rem; }
 .meal-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin-top: 0.5rem; font-size: 0.9rem; color: var(--muted); }
-.meal-field input { flex: 1 1 220px; color: var(--ink); }
+.meal-field .meal-input { display: flex; flex: 1 1 260px; align-items: center; gap: 0.5rem; }
+.meal-field .meal-input > input { flex: 1 1 auto; min-width: 0; color: var(--ink); }
+.meal-field .chip { flex: none; }
 .meal-field .hint { flex-basis: 100%; }

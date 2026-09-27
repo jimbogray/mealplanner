@@ -923,14 +923,14 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { name: "Soup" } }, teenToken)).status, 403);
       const lasagne = await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: recipe.id } });
       assert.equal(lasagne.status, 200);
-      assert.deepEqual(lasagne.body.meal, { name: "Lasagne", recipeId: recipe.id, restaurantId: null, url: recipe.url });
+      assert.deepEqual(lasagne.body.meal, { name: "Lasagne", mealKit: false, recipeId: recipe.id, restaurantId: null, url: recipe.url });
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { restaurantId: restaurant.id } })).status, 400);
       assert.equal((await patch(tuesday, { eatOut: true, meal: { recipeId: recipe.id } })).status, 400);
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: "00000000-0000-0000-0000-000000000000" } })).status, 400);
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { name: " " } })).status, 400);
 
       const out = await patch(tuesday, { eatOut: true, meal: { restaurantId: restaurant.id } });
-      assert.deepEqual(out.body.meal, { name: "Pizza Place", recipeId: null, restaurantId: restaurant.id, url: null });
+      assert.deepEqual(out.body.meal, { name: "Pizza Place", mealKit: false, recipeId: null, restaurantId: restaurant.id, url: null });
 
       // Anyone can still change who's joining; the meal stays.
       const kept = await patch(monday, { memberIds: [everyone[0]], guests: 2 }, teenToken);
@@ -939,14 +939,34 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const backIn = await patch(tuesday, { memberIds: everyone, guests: 0 }, teenToken);
       assert.equal(backIn.body.meal, null);
       const typed = await patch(tuesday, { memberIds: everyone, guests: 0, meal: { name: " Takeaway curry " } });
-      assert.deepEqual(typed.body.meal, { name: "Takeaway curry", recipeId: null, restaurantId: null, url: null });
+      assert.deepEqual(typed.body.meal, { name: "Takeaway curry", mealKit: false, recipeId: null, restaurantId: null, url: null });
 
       // Removing the recipe keeps its name on the schedule.
       assert.equal((await call("DELETE", `/api/family/recipes/${recipe.id}`, { token: parentToken })).status, 204);
       const week = (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: teenToken })).body.find((w) => w.startsOn === startsOn)!;
-      assert.deepEqual(week.days.find((d) => d.date === monday)!.meal, { name: "Lasagne", recipeId: null, restaurantId: null, url: null });
+      assert.deepEqual(week.days.find((d) => d.date === monday)!.meal, { name: "Lasagne", mealKit: false, recipeId: null, restaurantId: null, url: null });
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: null })).body.meal, null);
       assert.equal((await call("DELETE", `/api/family/restaurants/${restaurant.id}`, { token: parentToken })).status, 204);
+    });
+
+    test("a Family Manager can choose a meal kit for eating in, saying which one or not", async () => {
+      const startsOn = addDays(thisWeek, 7);
+      const [monday, tuesday] = [startsOn, addDays(startsOn, 1)];
+      const patch = (date: string, body: unknown, token = parentToken) =>
+        call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, { token, body });
+
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { mealKit: true } }, teenToken)).status, 403);
+      const kit = await patch(monday, { memberIds: everyone, guests: 0, meal: { mealKit: true } });
+      assert.equal(kit.status, 200);
+      assert.deepEqual(kit.body.meal, { name: "", mealKit: true, recipeId: null, restaurantId: null, url: null });
+      const named = await patch(monday, { memberIds: everyone, guests: 0, meal: { mealKit: true, name: " Chicken katsu " } });
+      assert.deepEqual(named.body.meal, { name: "Chicken katsu", mealKit: true, recipeId: null, restaurantId: null, url: null });
+      assert.equal((await patch(tuesday, { eatOut: true, meal: { mealKit: true } })).status, 400);
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { mealKit: "yes" } })).status, 400);
+
+      // It stays when who's joining changes, and goes when the day becomes eating out.
+      assert.equal((await patch(monday, { memberIds: [everyone[0]], guests: 1 }, teenToken)).body.meal?.mealKit, true);
+      assert.equal((await patch(monday, { eatOut: true }, teenToken)).body.meal, null);
     });
 
     test("meals can be chosen when a week is added, by a Family Manager only", async () => {

@@ -510,6 +510,7 @@ interface ScheduleRow {
   meal_name: string | null;
   meal_recipe_id: string | null;
   meal_restaurant_id: string | null;
+  meal_kit: boolean;
   meal_url: string | null;
 }
 
@@ -519,7 +520,7 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
     `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests, d.eat_out,
             coalesce(array_agg(s.member_id::text ORDER BY s.member_id) FILTER (WHERE s.member_id IS NOT NULL), '{}') AS member_ids,
             -- A linked recipe or restaurant shows its current name.
-            coalesce(fr.name, rs.name, d.meal_name) AS meal_name, d.meal_recipe_id, d.meal_restaurant_id,
+            coalesce(fr.name, rs.name, d.meal_name) AS meal_name, d.meal_recipe_id, d.meal_restaurant_id, d.meal_kit,
             coalesce(fr.url, rs.url) AS meal_url
        FROM schedule_week w
        JOIN schedule_day d ON d.week_id = w.id
@@ -527,15 +528,16 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
        LEFT JOIN favourite_recipe fr ON fr.id = d.meal_recipe_id
        LEFT JOIN restaurant rs ON rs.id = d.meal_restaurant_id
       WHERE w.family_id = $1 AND ($2::date IS NULL OR w.starts_on = $2::date)
-      GROUP BY w.id, w.starts_on, d.day, d.guests, d.eat_out, d.meal_name, d.meal_recipe_id, d.meal_restaurant_id, fr.name, fr.url, rs.name, rs.url
+      GROUP BY w.id, w.starts_on, d.day, d.guests, d.eat_out, d.meal_name, d.meal_recipe_id, d.meal_restaurant_id, d.meal_kit, fr.name, fr.url, rs.name, rs.url
       ORDER BY w.starts_on, d.day`,
     [familyId, startsOn ?? null],
   );
   const weeks: ScheduleWeek[] = [];
   for (const r of rows) {
     if (weeks.at(-1)?.id !== r.id) weeks.push({ id: r.id, startsOn: r.starts_on, days: [] });
-    const meal: ScheduleMeal | null = r.meal_name
-      ? { name: r.meal_name, recipeId: r.meal_recipe_id, restaurantId: r.meal_restaurant_id, url: r.meal_url }
+    const meal: ScheduleMeal | null =
+      r.meal_name || r.meal_kit
+        ? { name: r.meal_name ?? "", mealKit: r.meal_kit, recipeId: r.meal_recipe_id, restaurantId: r.meal_restaurant_id, url: r.meal_url }
       : null;
     weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, memberIds: r.member_ids, guests: r.guests, meal });
   }
@@ -552,7 +554,9 @@ type DayInput = Omit<ScheduleDay, "meal"> & { meal?: MealRow | null };
 
 /** A chosen meal as stored. */
 interface MealRow {
-  name: string;
+  /** null only for a meal kit that doesn't say which one. */
+  name: string | null;
+  mealKit: boolean;
   recipeId: string | null;
   restaurantId: string | null;
 }
@@ -584,7 +588,7 @@ async function mealFrom(db: Queryable, b: Record<string, unknown>, member: Membe
       ])
     ).rows[0];
     if (!r) throw new HttpError(400, "That recipe isn't in your family's recipes");
-    return { name: r.name, recipeId: r.id, restaurantId: null };
+    return { name: r.name, mealKit: false, recipeId: r.id, restaurantId: null };
   }
   if (m.restaurantId !== undefined) {
     if (!eatOut) throw new HttpError(400, "A restaurant is for eating out; mark the day as eating out first");
@@ -595,9 +599,15 @@ async function mealFrom(db: Queryable, b: Record<string, unknown>, member: Membe
       ])
     ).rows[0];
     if (!r) throw new HttpError(400, "That restaurant isn't in your family's restaurants");
-    return { name: r.name, recipeId: null, restaurantId: r.id };
+    return { name: r.name, mealKit: false, recipeId: null, restaurantId: r.id };
   }
-  return { name: v.text(m.name, "Meal", MAX_MEAL_NAME), recipeId: null, restaurantId: null };
+  if (m.mealKit !== undefined && typeof m.mealKit !== "boolean") throw new HttpError(400, "Meal kit must be true or false");
+  if (m.mealKit) {
+    if (eatOut) throw new HttpError(400, "A meal kit is for eating in");
+    const name = m.name === undefined || m.name === null || (typeof m.name === "string" && !m.name.trim()) ? null : v.text(m.name, "Meal kit", MAX_MEAL_NAME);
+    return { name, mealKit: true, recipeId: null, restaurantId: null };
+  }
+  return { name: v.text(m.name, "Meal", MAX_MEAL_NAME), mealKit: false, recipeId: null, restaurantId: null };
 }
 
 async function saveDay(tx: Tx, weekId: string, day: DayInput): Promise<void> {
@@ -605,13 +615,14 @@ async function saveDay(tx: Tx, weekId: string, day: DayInput): Promise<void> {
   // Without a meal in the request, the day keeps its meal, unless eating in or out changed (a recipe or
   // restaurant no longer fits).
   await tx.query(
-    `INSERT INTO schedule_day (week_id, day, guests, eat_out, meal_name, meal_recipe_id, meal_restaurant_id)
-     VALUES ($1, $2, $3, $4, $6, $7, $8)
+    `INSERT INTO schedule_day (week_id, day, guests, eat_out, meal_name, meal_recipe_id, meal_restaurant_id, meal_kit)
+     VALUES ($1, $2, $3, $4, $6, $7, $8, $9)
      ON CONFLICT (week_id, day) DO UPDATE SET guests = EXCLUDED.guests, eat_out = EXCLUDED.eat_out,
        meal_name = CASE WHEN $5 THEN EXCLUDED.meal_name WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_name END,
        meal_recipe_id = CASE WHEN $5 THEN EXCLUDED.meal_recipe_id WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_recipe_id END,
-       meal_restaurant_id = CASE WHEN $5 THEN EXCLUDED.meal_restaurant_id WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_restaurant_id END`,
-    [weekId, day.date, day.guests, day.eatOut, day.meal !== undefined, meal?.name ?? null, meal?.recipeId ?? null, meal?.restaurantId ?? null],
+       meal_restaurant_id = CASE WHEN $5 THEN EXCLUDED.meal_restaurant_id WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_restaurant_id END,
+       meal_kit = CASE WHEN $5 THEN EXCLUDED.meal_kit WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN false ELSE schedule_day.meal_kit END`,
+    [weekId, day.date, day.guests, day.eatOut, day.meal !== undefined, meal?.name ?? null, meal?.recipeId ?? null, meal?.restaurantId ?? null, meal?.mealKit ?? false],
   );
   await tx.query("DELETE FROM schedule_diner WHERE week_id = $1 AND day = $2", [weekId, day.date]);
   await tx.query(
