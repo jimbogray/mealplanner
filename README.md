@@ -3,7 +3,7 @@
 A simple starting point: someone signs up and creates a **family**, then invites the
 rest of the family with a shareable link. Every family member has a **life stage**
 (baby, toddler, child, teenager or adult), a **diet** (no restriction, vegetarian or
-vegan) and any **allergies** from the UK's 14 major food allergens. Admins can add
+vegan) and any **allergies** from the US's 9 major food allergens. Admins can add
 members whether or not they'll ever sign in, and later send an added member a link to
 sign in as themselves.
 

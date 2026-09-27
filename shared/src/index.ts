@@ -38,40 +38,20 @@ export function isDiet(value: unknown): value is Diet {
   return typeof value === "string" && (DIETS as readonly string[]).includes(value);
 }
 
-/** The UK's 14 major food allergens (also the database's allowed values). */
-export const ALLERGENS = [
-  "gluten",
-  "dairy",
-  "egg",
-  "peanut",
-  "tree_nuts",
-  "soy",
-  "fish",
-  "crustaceans",
-  "molluscs",
-  "sesame",
-  "mustard",
-  "celery",
-  "lupin",
-  "sulphites",
-] as const;
+/** The US's 9 major food allergens (FALCPA and the FASTER Act), also the database's allowed values. */
+export const ALLERGENS = ["dairy", "egg", "fish", "crustaceans", "tree_nuts", "peanut", "wheat", "soy", "sesame"] as const;
 export type Allergen = (typeof ALLERGENS)[number];
 
 export const ALLERGEN_LABELS: Record<Allergen, string> = {
-  gluten: "Gluten",
-  dairy: "Dairy (milk)",
-  egg: "Egg",
-  peanut: "Peanuts",
-  tree_nuts: "Tree nuts",
-  soy: "Soya",
+  dairy: "Milk",
+  egg: "Eggs",
   fish: "Fish",
-  crustaceans: "Shellfish (crustaceans)",
-  molluscs: "Molluscs",
+  crustaceans: "Shellfish",
+  tree_nuts: "Tree nuts",
+  peanut: "Peanuts",
+  wheat: "Wheat",
+  soy: "Soy",
   sesame: "Sesame",
-  mustard: "Mustard",
-  celery: "Celery",
-  lupin: "Lupin",
-  sulphites: "Sulphites",
 };
 
 export function isAllergen(value: unknown): value is Allergen {
