@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import {
   addDays,
+  eventOn,
   type Address,
   mondayOf,
   type AddressSearchResponse,
@@ -20,6 +21,7 @@ import {
   type Restaurant,
   type RestaurantPreview,
   type ScheduleDay,
+  type ScheduleEvent,
   type ScheduleWeek,
 } from "@mealplanner/shared";
 import { AddressSearchError } from "../src/places.js";
@@ -968,7 +970,14 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: "00000000-0000-0000-0000-000000000000" } })).status, 400);
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { name: " " } })).status, 400);
 
+      // Each day a recipe or restaurant is picked for shows on it.
+      const chosen = async () => ({
+        recipe: (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: teenToken })).body.find((r) => r.id === recipe.id)!.chosenOn,
+        restaurant: (await call<Restaurant[]>("GET", "/api/family/restaurants", { token: teenToken })).body.find((r) => r.id === restaurant.id)!.chosenOn,
+      });
+      assert.deepEqual(await chosen(), { recipe: [monday], restaurant: [] });
       const out = await patch(tuesday, { eatOut: true, meal: { restaurantId: restaurant.id } });
+      assert.deepEqual(await chosen(), { recipe: [monday], restaurant: [tuesday] });
       assert.deepEqual(out.body.meal, { name: "Pizza Place", mealKit: false, recipeId: null, restaurantId: restaurant.id, url: null });
 
       // Anyone can still change who's joining; the meal stays.
@@ -977,6 +986,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Eating in again drops the restaurant.
       const backIn = await patch(tuesday, { memberIds: everyone, guests: 0 }, teenToken);
       assert.equal(backIn.body.meal, null);
+      assert.deepEqual((await chosen()).restaurant, []);
       const typed = await patch(tuesday, { memberIds: everyone, guests: 0, meal: { name: " Takeaway curry " } });
       assert.deepEqual(typed.body.meal, { name: "Takeaway curry", mealKit: false, recipeId: null, restaurantId: null, url: null });
 
@@ -1016,6 +1026,61 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal(res.status, 201);
       assert.equal(res.body.days[0].meal?.name, "Roast chicken");
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+    });
+
+    test("anyone in the family adds events, one-off or weekly, with who's going and when", async () => {
+      const date = addDays(thisWeek, 9); // Wednesday next week
+      const body = { title: "Football", date, startTime: "17:00", endTime: "18:30", memberIds: [everyone[0]], weekly: true };
+      const added = await call<ScheduleEvent>("POST", "/api/family/events", { token: teenToken, body: { ...body, title: " Football " } });
+      assert.equal(added.status, 201);
+      assert.deepEqual({ ...added.body, id: undefined }, { ...body, id: undefined, until: null });
+
+      for (const bad of [
+        { ...body, title: " " },
+        { ...body, startTime: "5pm" },
+        { ...body, endTime: "17:00" },
+        { ...body, endTime: "16:00" },
+        { ...body, memberIds: [] },
+        { ...body, memberIds: ["00000000-0000-0000-0000-000000000000"] },
+        { ...body, date: "2026-02-30" },
+        { ...body, weekly: "yes" },
+      ]) {
+        assert.equal((await call("POST", "/api/family/events", { token: teenToken, body: bad })).status, 400, JSON.stringify(bad));
+      }
+
+      const oneOff = await call<ScheduleEvent>("POST", "/api/family/events", {
+        token: parentToken,
+        body: { title: "Work dinner", date, startTime: "19:00", endTime: "22:00", memberIds: everyone, weekly: false, until: addDays(date, 7) },
+      });
+      assert.equal(oneOff.body.until, null);
+
+      // Other families don't see or change them.
+      const other = await call<AuthResponse>("POST", "/api/auth/login", { body: { email: "jones@example.com", password: "password123" } });
+      assert.deepEqual((await call<ScheduleEvent[]>("GET", "/api/family/events", { token: other.body.token })).body, []);
+      assert.equal((await call("PATCH", `/api/family/events/${added.body.id}`, { token: other.body.token, body: { title: "X" } })).status, 404);
+      assert.equal((await call("DELETE", `/api/family/events/${added.body.id}`, { token: other.body.token })).status, 404);
+
+      const list = (await call<ScheduleEvent[]>("GET", "/api/family/events", { token: parentToken })).body;
+      assert.deepEqual(list.map((e) => e.title), ["Football", "Work dinner"]);
+
+      // Changing only some fields keeps the rest; stopping a weekly event sets its last day.
+      const changed = await call<ScheduleEvent>("PATCH", `/api/family/events/${added.body.id}`, {
+        token: parentToken,
+        body: { endTime: "19:00", memberIds: everyone, until: addDays(date, 13) },
+      });
+      assert.equal(changed.status, 200);
+      assert.deepEqual(changed.body, { ...added.body, endTime: "19:00", memberIds: [...everyone].sort(), until: addDays(date, 13) });
+      assert.ok(eventOn(changed.body, addDays(date, 7)));
+      assert.ok(!eventOn(changed.body, addDays(date, 14)));
+      assert.ok(!eventOn(changed.body, addDays(date, 1)));
+      assert.equal(
+        (await call("PATCH", `/api/family/events/${added.body.id}`, { token: parentToken, body: { until: addDays(date, -1) } })).status,
+        400,
+      );
+
+      assert.equal((await call("DELETE", `/api/family/events/${added.body.id}`, { token: teenToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/events/${oneOff.body.id}`, { token: teenToken })).status, 204);
+      assert.deepEqual((await call<ScheduleEvent[]>("GET", "/api/family/events", { token: parentToken })).body, []);
     });
 
     test("a week can be removed", async () => {

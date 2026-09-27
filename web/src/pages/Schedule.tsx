@@ -12,6 +12,7 @@ import {
   type FamilyMember,
   type MealInput,
   type ScheduleDay,
+  type ScheduleEvent,
   type ScheduleMeal,
   type ScheduleWeek,
   type UpdateDayRequest,
@@ -20,6 +21,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "../components/Field";
+import { DayEvents, EventsContext } from "../components/ScheduleEvents";
 import { useSession } from "../session";
 
 /** The family's weekly schedule: who's in for dinner each day, Monday to Sunday. */
@@ -58,6 +60,7 @@ function weekLabel(startsOn: string): string {
 function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: boolean }) {
   const [weeks, setWeeks] = useState<ScheduleWeek[] | null>(null);
   const [choices, setChoices] = useState<MealChoices | null>(null);
+  const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = localToday();
@@ -65,6 +68,7 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
 
   useEffect(() => {
     api.weeks().then(setWeeks, (err) => setError(errorMessage(err)));
+    api.events().then(setEvents, (err) => setError(errorMessage(err)));
   }, []);
 
   useEffect(() => {
@@ -96,71 +100,73 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
   }
 
   return (
-    <div className="stack">
-      <section className="card">
-        <h1>Schedule</h1>
-        <p className="note">
-          Who's in for dinner each day, and what's cooking. Weeks run Monday to Sunday; anyone in the family can change who's in, and a
-          Family Manager picks the meals.
-        </p>
-        {next && !adding && (
-          <div className="row">
-            <button onClick={() => setAdding(next)}>
-              Add {next === thisWeek ? "this week" : `week of ${dayLabel(next)}`}
-            </button>
-          </div>
-        )}
-        {adding && (
-          <WeekForm
-            title={next === thisWeek ? "This week" : weekLabel(adding)}
+    <EventsContext.Provider value={{ events, setEvents, members }}>
+      <div className="stack">
+        <section className="card">
+          <h1>Schedule</h1>
+          <p className="note">
+            Who's in for dinner each day, and what's cooking. Weeks run Monday to Sunday; anyone in the family can change who's in, and a
+            Family Manager picks the meals.
+          </p>
+          {next && !adding && (
+            <div className="row">
+              <button onClick={() => setAdding(next)}>
+                Add {next === thisWeek ? "this week" : `week of ${dayLabel(next)}`}
+              </button>
+            </div>
+          )}
+          {adding && (
+            <WeekForm
+              title={next === thisWeek ? "This week" : weekLabel(adding)}
+              members={members}
+              choices={isManager ? choices : null}
+              dates={daysToPlan(adding, today)}
+              days={daysToPlan(adding, today).map((date) => everyone(date, members))}
+              submitLabel="Add week"
+              onCancel={() => setAdding(null)}
+              onSave={async (days) => {
+                const week = await api.addWeek({ startsOn: adding, today, days: days.map((d) => ({ date: d.date, ...dayRequest(d, isManager) })) });
+                setWeeks((list) => [...(list ?? []), week].sort((a, b) => a.startsOn.localeCompare(b.startsOn)));
+                setAdding(null);
+              }}
+            />
+          )}
+        </section>
+        <ErrorNote error={error} />
+        {weeks && upcoming.length === 0 && !adding && <p className="note center">No weeks planned yet. Add this week above.</p>}
+        {upcoming.map((w) => (
+          <Week
+            key={w.startsOn}
+            week={w}
             members={members}
             choices={isManager ? choices : null}
-            dates={daysToPlan(adding, today)}
-            days={daysToPlan(adding, today).map((date) => everyone(date, members))}
-            submitLabel="Add week"
-            onCancel={() => setAdding(null)}
-            onSave={async (days) => {
-              const week = await api.addWeek({ startsOn: adding, today, days: days.map((d) => ({ date: d.date, ...dayRequest(d, isManager) })) });
-              setWeeks((list) => [...(list ?? []), week].sort((a, b) => a.startsOn.localeCompare(b.startsOn)));
-              setAdding(null);
-            }}
+            today={today}
+            isCurrent={w.startsOn === thisWeek}
+            onChange={replace}
+            onRemove={() => void remove(w)}
           />
+        ))}
+        {past.length > 0 && (
+          <details className="past-weeks">
+            <summary>Earlier weeks ({past.length})</summary>
+            <div className="stack">
+              {past.map((w) => (
+                <Week
+                  key={w.startsOn}
+                  week={w}
+                  members={members}
+                  choices={isManager ? choices : null}
+                  today={today}
+                  isCurrent={false}
+                  onChange={replace}
+                  onRemove={() => void remove(w)}
+                />
+              ))}
+            </div>
+          </details>
         )}
-      </section>
-      <ErrorNote error={error} />
-      {weeks && upcoming.length === 0 && !adding && <p className="note center">No weeks planned yet. Add this week above.</p>}
-      {upcoming.map((w) => (
-        <Week
-          key={w.startsOn}
-          week={w}
-          members={members}
-          choices={isManager ? choices : null}
-          today={today}
-          isCurrent={w.startsOn === thisWeek}
-          onChange={replace}
-          onRemove={() => void remove(w)}
-        />
-      ))}
-      {past.length > 0 && (
-        <details className="past-weeks">
-          <summary>Earlier weeks ({past.length})</summary>
-          <div className="stack">
-            {past.map((w) => (
-              <Week
-                key={w.startsOn}
-                week={w}
-                members={members}
-                choices={isManager ? choices : null}
-                today={today}
-                isCurrent={false}
-                onChange={replace}
-                onRemove={() => void remove(w)}
-              />
-            ))}
-          </div>
-        </details>
-      )}
-    </div>
+      </div>
+    </EventsContext.Provider>
   );
 }
 
@@ -277,6 +283,7 @@ function Week({
                 </span>
               )}
               <AllergyNote day={d} members={members} />
+              <DayEvents date={d.date} />
             </span>
             <span className="diner-count">{d.eatOut ? "" : `${d.memberIds.length + d.guests} for dinner`}</span>
           </li>
@@ -396,7 +403,7 @@ function WeekForm({
       <div>
         <h2>{title}</h2>
         <p className="hint">
-          Tap who's joining for dinner each day, and add any guests.
+          Tap who's joining for dinner each day, and add any guests or events that affect dinner.
           {choices && " Pick a meal from your recipes (or restaurants, eating out), choose Meal kit, or type one in."}
         </p>
       </div>
@@ -498,6 +505,7 @@ function WeekForm({
                   </div>
                 )}
                 <AllergyNote day={d} members={members} />
+                <DayEvents date={d.date} editable />
               </fieldset>
             </li>
           );

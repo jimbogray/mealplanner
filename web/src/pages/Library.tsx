@@ -5,6 +5,7 @@ import { api } from "../api";
 import { AddRecipe, recipeFacts, Thumb } from "../components/AddRecipe";
 import { ErrorNote, errorMessage } from "../components/Field";
 import { AverageRating, StarRating } from "../components/Stars";
+import { ChosenCount } from "../components/ChosenCount";
 import { useSession } from "../session";
 
 /** The family's recipe library: add a recipe by its link, and browse them all as tiles. */
@@ -83,6 +84,7 @@ function Library({ isManager }: { isManager: boolean }) {
         </button>
         <div className="tile-foot">
           <StarRating mine={r.myRating} onRate={(stars) => void rate(r, stars)} />
+          <ChosenCount dates={r.chosenOn} />
         </div>
       </li>
     );

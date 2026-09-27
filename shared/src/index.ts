@@ -274,6 +274,8 @@ export interface FavouriteRecipe extends RecipeDetails {
   ratingCount: number;
   /** The signed-in member's own rating (1 to 5); null if they haven't rated it. */
   myRating: number | null;
+  /** Each day on the schedule it's the meal for, oldest first (so its length is how many times it's been chosen). */
+  chosenOn: IsoDate[];
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;
@@ -409,6 +411,51 @@ export interface UpdateDayRequest {
   meal?: MealInput | null;
 }
 
+/**
+ * Something on a day that affects dinner, like a match or a work do. A weekly event also happens every seven
+ * days after `date`, up to `until` when it's been stopped.
+ */
+export interface ScheduleEvent {
+  id: Uuid;
+  title: string;
+  /** The day it happens (for a weekly event, the first time). */
+  date: IsoDate;
+  /** "HH:MM", 24-hour. */
+  startTime: string;
+  endTime: string;
+  /** Who's going. */
+  memberIds: Uuid[];
+  weekly: boolean;
+  /** The last day a weekly event happens; null while it keeps repeating. */
+  until: IsoDate | null;
+}
+
+/** Add an event (POST), or change one (PATCH, any of these fields). `until` stops a weekly event after that day. */
+export interface EventRequest {
+  title: string;
+  date: IsoDate;
+  startTime: string;
+  endTime: string;
+  memberIds: Uuid[];
+  weekly: boolean;
+  until?: IsoDate | null;
+}
+
+export const MAX_EVENT_TITLE = 80;
+
+/** True if the event happens on `date`. */
+export function eventOn(event: Pick<ScheduleEvent, "date" | "weekly" | "until">, date: IsoDate): boolean {
+  if (date < event.date || (event.until !== null && date > event.until)) return false;
+  if (!event.weekly) return date === event.date;
+  const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${event.date}T00:00:00Z`)) / 86_400_000);
+  return days % 7 === 0;
+}
+
+/** True for a time of day written as "HH:MM" (24-hour). */
+export function isTimeOfDay(value: unknown): value is string {
+  return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
 /** A restaurant the family likes. */
 export interface Restaurant {
   id: Uuid;
@@ -430,6 +477,8 @@ export interface Restaurant {
   ratingCount: number;
   /** The signed-in member's own rating (1 to 5); null if they haven't rated it. */
   myRating: number | null;
+  /** Each day on the schedule it's the meal for, oldest first (so its length is how many times it's been chosen). */
+  chosenOn: IsoDate[];
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;
