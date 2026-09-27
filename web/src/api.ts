@@ -6,6 +6,7 @@ import type {
   AddWeekRequest,
   AuthResponse,
   CreateFamilyRequest,
+  EventRequest,
   FamilyMember,
   FavouriteRecipe,
   GoogleAuthRequest,
@@ -18,6 +19,7 @@ import type {
   Restaurant,
   RestaurantInput,
   RestaurantPreview,
+  ScheduleEvent,
   MemberUpdate,
   ScheduleDay,
   ScheduleWeek,
@@ -148,6 +150,10 @@ export const api = {
     request<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, body),
   removeDay: (startsOn: string, date: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}/days/${date}`),
   removeWeek: (startsOn: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}`),
+  events: () => request<ScheduleEvent[]>("GET", "/api/family/events"),
+  addEvent: (body: EventRequest) => request<ScheduleEvent>("POST", "/api/family/events", body),
+  updateEvent: (id: string, body: Partial<EventRequest>) => request<ScheduleEvent>("PATCH", `/api/family/events/${id}`, body),
+  removeEvent: (id: string) => request<void>("DELETE", `/api/family/events/${id}`),
 };
 
 export function inviteUrl(code: string): string {

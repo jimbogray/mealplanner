@@ -4,6 +4,8 @@ import {
   canSignIn,
   daysToPlan,
   isIsoDate,
+  isTimeOfDay,
+  MAX_EVENT_TITLE,
   MAX_MEAL_NAME,
   mondayOf,
   nextWeekToAdd,
@@ -22,6 +24,7 @@ import {
   type Restaurant,
   type RestaurantPreview,
   type ScheduleDay,
+  type ScheduleEvent,
   type ScheduleMeal,
   type ScheduleWeek,
 } from "@mealplanner/shared";
@@ -582,6 +585,66 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
     weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, memberIds: r.member_ids, guests: r.guests, meal });
   }
   return weeks;
+}
+
+interface EventRow {
+  id: string;
+  title: string;
+  day: string;
+  starts_at: string;
+  ends_at: string;
+  weekly: boolean;
+  until: string | null;
+  member_ids: string[];
+}
+
+/** The family's events (or just one), in date then time order. */
+async function loadEvents(db: Queryable, familyId: string, id?: string): Promise<ScheduleEvent[]> {
+  const { rows } = await db.query<EventRow>(
+    `SELECT e.id, e.title, to_char(e.day, 'YYYY-MM-DD') AS day, to_char(e.starts_at, 'HH24:MI') AS starts_at,
+            to_char(e.ends_at, 'HH24:MI') AS ends_at, e.weekly, to_char(e.until, 'YYYY-MM-DD') AS until,
+            ARRAY(SELECT member_id::text FROM schedule_event_member WHERE event_id = e.id ORDER BY member_id) AS member_ids
+       FROM schedule_event e
+      WHERE e.family_id = $1 AND ($2::uuid IS NULL OR e.id = $2::uuid)
+      ORDER BY e.day, e.starts_at, e.created_at`,
+    [familyId, id ?? null],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    date: r.day,
+    startTime: r.starts_at,
+    endTime: r.ends_at,
+    memberIds: r.member_ids,
+    weekly: r.weekly,
+    until: r.until,
+  }));
+}
+
+/** An event as sent in, checked against the family's members; `base` fills in anything left out (PATCH). */
+function eventFrom(b: Record<string, unknown>, familyIds: string[], base?: ScheduleEvent): Omit<ScheduleEvent, "id"> {
+  const pick = <K extends keyof ScheduleEvent>(k: K): unknown => (b[k] === undefined && base ? base[k] : b[k]);
+  const title = v.text(pick("title"), "Event", MAX_EVENT_TITLE);
+  const date = v.isoDate(pick("date"), "Day");
+  const startTime = pick("startTime");
+  const endTime = pick("endTime");
+  if (!isTimeOfDay(startTime)) throw new HttpError(400, "Start time must be a time like 17:30");
+  if (!isTimeOfDay(endTime)) throw new HttpError(400, "End time must be a time like 18:45");
+  if (endTime <= startTime) throw new HttpError(400, "An event has to end after it starts");
+  const memberIds = v.ids(pick("memberIds"), "Who's going");
+  if (!memberIds.length) throw new HttpError(400, "Choose who's going");
+  if (memberIds.some((id) => !familyIds.includes(id))) throw new HttpError(400, "Only members of your family can go");
+  const weekly = pick("weekly") ?? false;
+  if (typeof weekly !== "boolean") throw new HttpError(400, "Weekly must be true or false");
+  const rawUntil = pick("until");
+  const until = weekly && rawUntil !== undefined && rawUntil !== null ? v.isoDate(rawUntil, "Until") : null;
+  if (until !== null && until < date) throw new HttpError(400, "A weekly event can't stop before it starts");
+  return { title, date, startTime, endTime, memberIds, weekly, until };
+}
+
+async function saveEventMembers(tx: Tx, eventId: string, memberIds: string[]): Promise<void> {
+  await tx.query("DELETE FROM schedule_event_member WHERE event_id = $1", [eventId]);
+  await tx.query("INSERT INTO schedule_event_member (event_id, member_id) SELECT $1, unnest($2::uuid[])", [eventId, memberIds]);
 }
 
 async function familyMemberIds(db: Queryable, familyId: string): Promise<string[]> {
@@ -1436,6 +1499,56 @@ export function buildRouter(
       if (rows.length === 1) throw new HttpError(400, "That's the week's only day; remove the week instead");
       await tx.query("DELETE FROM schedule_day WHERE week_id = $1 AND day = $2", [week.id, req.params.date]);
     });
+    return { status: 204 };
+  });
+
+  // --- events ---
+  // Anyone in the family can add, change or remove them. They're shown on the schedule; they don't change who's
+  // in for dinner by themselves.
+
+  router.add("GET", "/api/family/events", async (req) => {
+    const { member } = await requireMember(db, req);
+    return { body: await loadEvents(db, member.family_id) };
+  });
+
+  router.add("POST", "/api/family/events", async (req) => {
+    const { member } = await requireMember(db, req);
+    const e = eventFrom(v.object(req.body), await familyMemberIds(db, member.family_id));
+    const id = await withTransaction(db, async (tx) => {
+      const { rows } = await tx.query<{ id: string }>(
+        `INSERT INTO schedule_event (family_id, title, day, starts_at, ends_at, weekly, until, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [member.family_id, e.title, e.date, e.startTime, e.endTime, e.weekly, e.until, member.id],
+      );
+      await saveEventMembers(tx, rows[0].id, e.memberIds);
+      return rows[0].id;
+    });
+    return { status: 201, body: (await loadEvents(db, member.family_id, id))[0] };
+  });
+
+  router.add("PATCH", "/api/family/events/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = v.uuid(req.params.id);
+    const [existing] = await loadEvents(db, member.family_id, id);
+    if (!existing) throw new HttpError(404, "That event isn't in your schedule");
+    const e = eventFrom(v.object(req.body), await familyMemberIds(db, member.family_id), existing);
+    await withTransaction(db, async (tx) => {
+      await tx.query(
+        "UPDATE schedule_event SET title = $2, day = $3, starts_at = $4, ends_at = $5, weekly = $6, until = $7 WHERE id = $1",
+        [id, e.title, e.date, e.startTime, e.endTime, e.weekly, e.until],
+      );
+      await saveEventMembers(tx, id, e.memberIds);
+    });
+    return { body: (await loadEvents(db, member.family_id, id))[0] };
+  });
+
+  router.add("DELETE", "/api/family/events/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM schedule_event WHERE id = $1 AND family_id = $2", [
+      v.uuid(req.params.id),
+      member.family_id,
+    ]);
+    if (!rowCount) throw new HttpError(404, "That event isn't in your schedule");
     return { status: 204 };
   });
 

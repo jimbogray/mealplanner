@@ -66,6 +66,10 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `PATCH /api/family/weeks/:startsOn/days/:date` | family member | `{memberIds, guests}` changes one day, or `{eatOut: true}` marks it as eating out (no one joining, no guests); Family Managers can also send `meal`: `{recipeId}` (eating in), `{restaurantId}` (eating out), `{mealKit: true, name?}` (eating in; name optional), `{name}`, or `null` |
 | `DELETE /api/family/weeks/:startsOn/days/:date` | family member | takes a day out of the schedule (a week keeps at least one); `PATCH` adds it back |
 | `DELETE /api/family/weeks/:startsOn` | family member | removes a week |
+| `GET /api/family/events` | family member | the family's events (a match, a work do); a `weekly` one also happens every 7 days after `date`, up to `until` |
+| `POST /api/family/events` | family member | `{title, date, startTime, endTime, memberIds, weekly}` (times "HH:MM"; at least one person going) |
+| `PATCH /api/family/events/:id` | family member | any of those fields; `until` stops a weekly event after that day |
+| `DELETE /api/family/events/:id` | family member | removes it (every week, if weekly) |
 | `GET /api/health` | anyone | checks the database connection |
 
 ## Local development
