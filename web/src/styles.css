@@ -206,7 +206,7 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .past-weeks > .stack { margin-top: 0.75rem; }
 @media (max-width: 480px) {
   .days li { grid-template-columns: 1fr auto; gap: 0.1rem 0.75rem; }
-  .days .diners { grid-column: 1 / -1; grid-row: 2; }
+  .days .day-details { grid-column: 1 / -1; grid-row: 2; }
 }
 /* A pill that toggles on click; its checkbox is hidden but still keyboard- and screen-reader-accessible. */
 .chip.toggle { position: relative; user-select: none; }
@@ -239,3 +239,10 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .book { font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; border: 1px solid var(--accent); text-decoration: none; font-weight: 500; }
 .book:hover { background: #e1f5ee; }
 .address-search { display: flex; flex-direction: column; }
+.day-details { min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; overflow-wrap: anywhere; }
+.day-details .meal { font-weight: 500; }
+.allergy-note { color: var(--danger); font-size: 0.85rem; }
+.day-form .allergy-note { display: block; margin-top: 0.4rem; }
+.meal-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin-top: 0.5rem; font-size: 0.9rem; color: var(--muted); }
+.meal-field input { flex: 1 1 220px; color: var(--ink); }
+.meal-field .hint { flex-basis: 100%; }
