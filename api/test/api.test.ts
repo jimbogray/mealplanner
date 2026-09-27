@@ -153,12 +153,13 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     await admin.end();
   });
 
-  async function call<T = unknown>(method: string, path: string, opts: { token?: string; body?: unknown } = {}) {
+  async function call<T = unknown>(method: string, path: string, opts: { token?: string; body?: unknown; actAs?: string } = {}) {
     const res = await fetch(base + path, {
       method,
       headers: {
         ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
         ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+        ...(opts.actAs ? { "x-act-as": opts.actAs } : {}),
       },
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
@@ -401,6 +402,31 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     await call("PATCH", `/api/family/members/${teenMemberId}`, { token: teenToken, body: { familiarName: null } });
   });
 
+  test("a Family Manager can switch to another member and gets only their permissions", async () => {
+    const asTeen = await call<Me>("GET", "/api/me", { token: parentToken, actAs: teenMemberId });
+    assert.equal(asTeen.status, 200);
+    assert.equal(asTeen.body.member?.id, teenMemberId);
+    assert.equal(asTeen.body.signedInAs?.id, parentMe.member!.id);
+    assert.equal((await call<Me>("GET", "/api/me", { token: parentToken })).body.signedInAs, null);
+    // Acting as yourself is the same as not switching.
+    const asSelf = await call<Me>("GET", "/api/me", { token: parentToken, actAs: parentMe.member!.id });
+    assert.equal(asSelf.body.signedInAs, null);
+
+    // As the teenager, a Family Manager can't manage the family, but can edit the teenager.
+    const opts = { token: parentToken, actAs: teenMemberId };
+    assert.equal((await call("POST", "/api/family/members", { ...opts, body: { name: "X", lifeStage: "baby" } })).status, 403);
+    assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { ...opts, body: { name: "X" } })).status, 403);
+    assert.equal((await call("PATCH", `/api/family/members/${teenMemberId}`, { ...opts, body: { diet: "none" } })).status, 200);
+    // Members without a login can be switched to as well.
+    assert.equal((await call<Me>("GET", "/api/me", { token: parentToken, actAs: babyId })).body.member?.id, babyId);
+
+    // Only a Family Manager can switch, and only to their own family.
+    assert.equal((await call("GET", "/api/me", { token: teenToken, actAs: babyId })).status, 403);
+    assert.equal((await call("GET", "/api/family/weeks", { token: teenToken, actAs: babyId })).status, 403);
+    assert.equal((await call("GET", "/api/me", { token: parentToken, actAs: "00000000-0000-4000-8000-000000000000" })).status, 404);
+    assert.equal((await call("GET", "/api/me", { token: parentToken, actAs: "nope" })).status, 404);
+  });
+
   test("members of another family are invisible", async () => {
     const other = await call<AuthResponse>("POST", "/api/auth/signup", {
       body: { email: "jones@example.com", password: "password123", name: "Jo", lifeStage: "adult", familyName: "The Joneses" },
@@ -536,6 +562,18 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       for (const stars of [6, -1, 2.5, "4", null]) {
         assert.equal((await call("PUT", path, { token: parentToken, body: { stars } })).status, 400, String(stars));
       }
+    });
+
+    test("a Family Manager can rate as another member, who then sees it as their own", async () => {
+      const path = `/api/family/recipes/${pancakesId}/rating`;
+      const res = await call<FavouriteRecipe>("PUT", path, { token: parentToken, actAs: babyId, body: { stars: 4 } });
+      assert.equal(res.status, 200);
+      assert.deepEqual([res.body.myRating, res.body.averageRating, res.body.ratingCount], [4, 3.5, 2]);
+      const asParent = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken })).body;
+      assert.equal(asParent.find((r) => r.id === pancakesId)!.myRating, null);
+      const asBaby = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken, actAs: babyId })).body;
+      assert.equal(asBaby.find((r) => r.id === pancakesId)!.myRating, 4);
+      await call("PUT", path, { token: parentToken, actAs: babyId, body: { stars: 0 } });
     });
 
     test("other families can't see or remove them", async () => {

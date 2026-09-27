@@ -28,6 +28,7 @@ import type {
 
 const BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 const TOKEN_KEY = "family.token";
+const ACT_AS_KEY = "family.actAs";
 
 /** Absolute URL of an API path, for places that navigate there rather than fetch. */
 export function apiUrl(path: string): string {
@@ -51,6 +52,24 @@ export function setToken(token: string | null): void {
   }
 }
 
+/** The member a Family Manager is using the app as, or null for themselves. */
+export function getActingAs(): string | null {
+  try {
+    return localStorage.getItem(ACT_AS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setActingAs(memberId: string | null): void {
+  try {
+    if (memberId) localStorage.setItem(ACT_AS_KEY, memberId);
+    else localStorage.removeItem(ACT_AS_KEY);
+  } catch {
+    // Private mode etc.: switching just won't survive a reload.
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -62,6 +81,7 @@ export class ApiError extends Error {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = getToken();
+  const actAs = getActingAs();
   let res: Response;
   try {
     res = await fetch(BASE + path, {
@@ -69,6 +89,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       headers: {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(token && actAs ? { "x-act-as": actAs } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

@@ -38,6 +38,9 @@ import * as v from "./validate.js";
 
 export const INVITE_DAYS = 14;
 
+/** Request header a Family Manager sets to a member id to act as that member (lower case, as node gives it). */
+export const ACT_AS_HEADER = "x-act-as";
+
 type Queryable = Pick<Db, "query">;
 
 interface MemberRow {
@@ -98,10 +101,11 @@ function toAddress(r: FamilyRow): Address | null {
   };
 }
 
-async function loadMe(db: Queryable, userId: string, email: string, addressSearch: boolean): Promise<Me> {
+async function loadMe(db: Queryable, userId: string, email: string, addressSearch: boolean, req?: Request): Promise<Me> {
   const user = { id: userId, email };
   const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [userId])).rows[0];
-  if (!self) return { user, family: null, member: null, members: [], addressSearch };
+  if (!self) return { user, family: null, member: null, signedInAs: null, members: [], addressSearch };
+  const actor = req ? await actingAs(db, req, self) : self;
   const fam = (await db.query<FamilyRow>("SELECT * FROM family WHERE id = $1", [self.family_id])).rows[0];
   const members = (
     await db.query<MemberRow>(
@@ -111,15 +115,40 @@ async function loadMe(db: Queryable, userId: string, email: string, addressSearc
     )
   ).rows.map(toMember);
   const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), createdAt: fam.created_at.toISOString() };
-  return { user, family, member: toMember(self), members, addressSearch };
+  return {
+    user,
+    family,
+    member: toMember(actor),
+    signedInAs: actor.id === self.id ? null : toMember(self),
+    members,
+    addressSearch,
+  };
 }
 
-/** The signed-in user's own family_member row, or 403 if they aren't in a family. */
-async function requireMember(db: Db, req: Request): Promise<{ userId: string; email: string; member: MemberRow }> {
+/**
+ * The member the request acts as: a Family Manager can send ACT_AS_HEADER with another
+ * member's id to use the app as them, with that member's permissions. Otherwise, themselves.
+ */
+async function actingAs(db: Queryable, req: Request, self: MemberRow): Promise<MemberRow> {
+  const header = req.headers[ACT_AS_HEADER];
+  const id = Array.isArray(header) ? header[0] : header;
+  if (!id || id === self.id) return self;
+  if (self.role !== "admin") throw new HttpError(403, "Only a Family Manager can switch to another family member");
+  return familyMember(db, self.family_id, id);
+}
+
+/**
+ * The member the request acts as (see actingAs), or 403 if the signed-in user isn't in a family.
+ * `self` is always the signed-in user's own member row.
+ */
+async function requireMember(
+  db: Db,
+  req: Request,
+): Promise<{ userId: string; email: string; member: MemberRow; self: MemberRow }> {
   const user = await requireUser(db, req);
-  const member = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [user.userId])).rows[0];
-  if (!member) throw new HttpError(403, "You're not part of a family yet");
-  return { ...user, member };
+  const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [user.userId])).rows[0];
+  if (!self) throw new HttpError(403, "You're not part of a family yet");
+  return { ...user, member: await actingAs(db, req, self), self };
 }
 
 async function requireAdmin(db: Db, req: Request) {
@@ -631,7 +660,8 @@ export function buildRouter(
   options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "addressSearch" | "maps" | "readRestaurant"> & { webOrigins?: string[] } = {},
 ): Router {
   const router = new Router();
-  const me = (userId: string, email: string) => loadMe(db, userId, email, options.addressSearch !== undefined);
+  const me = (userId: string, email: string, req?: Request) =>
+    loadMe(db, userId, email, options.addressSearch !== undefined, req);
   const requireAddressSearch = (): AddressSearch => {
     if (!options.addressSearch) throw new HttpError(503, "Address search isn't set up yet");
     return options.addressSearch;
@@ -776,7 +806,7 @@ export function buildRouter(
 
   router.add("GET", "/api/me", async (req) => {
     const { userId, email } = await requireUser(db, req);
-    return { body: await me(userId, email) };
+    return { body: await me(userId, email, req) };
   });
 
   // --- family -----------------------------------------------------------

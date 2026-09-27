@@ -1,6 +1,6 @@
 import type { Me } from "@mealplanner/shared";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, ApiError, getToken, setToken } from "./api";
+import { api, ApiError, getActingAs, getToken, setActingAs, setToken } from "./api";
 
 interface Session {
   /** undefined while loading, null when signed out. */
@@ -9,6 +9,8 @@ interface Session {
   signOut: () => Promise<void>;
   setMe: (me: Me) => void;
   refresh: () => Promise<void>;
+  /** For a Family Manager: use the app as another member (their id), or as themselves again (null). */
+  actAs: (memberId: string | null) => Promise<void>;
 }
 
 const SessionContext = createContext<Session | null>(null);
@@ -21,16 +23,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       setMe(await api.me());
     } catch (err) {
+      // The member we switched to was removed, or we're no longer a Family Manager: go back to ourselves.
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404) && getActingAs()) {
+        setActingAs(null);
+        try {
+          return setMe(await api.me());
+        } catch (retryErr) {
+          err = retryErr;
+        }
+      }
       if (err instanceof ApiError && err.status === 401) setToken(null);
       setMe(null);
     }
   }, []);
+
+  const actAs = useCallback(
+    async (memberId: string | null) => {
+      setActingAs(memberId);
+      await refresh();
+    },
+    [refresh],
+  );
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const signIn = useCallback((token: string, next: Me) => {
+    setActingAs(null);
     setToken(token);
     setMe(next);
   }, []);
@@ -38,10 +58,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     await api.logout().catch(() => {});
     setToken(null);
+    setActingAs(null);
     setMe(null);
   }, []);
 
-  return <SessionContext.Provider value={{ me, signIn, signOut, setMe, refresh }}>{children}</SessionContext.Provider>;
+  return <SessionContext.Provider value={{ me, signIn, signOut, setMe, refresh, actAs }}>{children}</SessionContext.Provider>;
 }
 
 export function useSession(): Session {
