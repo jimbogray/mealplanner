@@ -304,8 +304,14 @@ interface RecipeRow {
   average_rating: string | null;
   rating_count: number;
   my_rating: number | null;
+  chosen_on: string[];
   added_by: string | null;
   created_at: Date;
+}
+
+/** The dates on the schedule a recipe or restaurant (`r`) is the meal for, oldest first. */
+function chosenOn(column: "meal_recipe_id" | "meal_restaurant_id"): string {
+  return `ARRAY(SELECT to_char(day, 'YYYY-MM-DD') FROM schedule_day WHERE ${column} = r.id ORDER BY day) AS chosen_on`;
 }
 
 /** Selects recipes with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
@@ -314,7 +320,8 @@ function recipeSelect(me: string): string {
     r.prepared, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at,
     (SELECT round(avg(stars), 1) FROM recipe_rating WHERE recipe_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM recipe_rating WHERE recipe_id = r.id) AS rating_count,
-    (SELECT stars FROM recipe_rating WHERE recipe_id = r.id AND member_id = ${me}) AS my_rating
+    (SELECT stars FROM recipe_rating WHERE recipe_id = r.id AND member_id = ${me}) AS my_rating,
+    ${chosenOn("meal_recipe_id")}
   FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
 }
 
@@ -332,6 +339,7 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     averageRating: r.average_rating === null ? null : Number(r.average_rating),
     ratingCount: r.rating_count,
     myRating: r.my_rating,
+    chosenOn: r.chosen_on,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };
@@ -349,6 +357,7 @@ interface RestaurantRow {
   average_rating: string | null;
   rating_count: number;
   my_rating: number | null;
+  chosen_on: string[];
   added_by: string | null;
   created_at: Date;
 }
@@ -358,7 +367,8 @@ function restaurantSelect(me: string): string {
   return `SELECT r.id, r.name, r.url, r.notes, r.address, r.cuisine, r.booking_url, r.drive_minutes, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at,
     (SELECT round(avg(stars), 1) FROM restaurant_rating WHERE restaurant_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM restaurant_rating WHERE restaurant_id = r.id) AS rating_count,
-    (SELECT stars FROM restaurant_rating WHERE restaurant_id = r.id AND member_id = ${me}) AS my_rating
+    (SELECT stars FROM restaurant_rating WHERE restaurant_id = r.id AND member_id = ${me}) AS my_rating,
+    ${chosenOn("meal_restaurant_id")}
   FROM restaurant r LEFT JOIN family_member m ON m.id = r.added_by`;
 }
 
@@ -375,6 +385,7 @@ function toRestaurant(r: RestaurantRow): Restaurant {
     averageRating: r.average_rating === null ? null : Number(r.average_rating),
     ratingCount: r.rating_count,
     myRating: r.my_rating,
+    chosenOn: r.chosen_on,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
   };

@@ -266,3 +266,10 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .meal-field .meal-input > input { flex: 1 1 auto; min-width: 0; color: var(--ink); }
 .meal-field .chip { flex: none; }
 .meal-field .hint { flex-basis: 100%; }
+
+/* Times picked on the schedule, bottom right of a recipe tile or restaurant. */
+.chosen-count { margin-left: auto; font-size: 0.85rem; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+.chosen-count.none { color: var(--muted); font-weight: 400; }
+.restaurant { position: relative; }
+.restaurant .chosen-count { position: absolute; right: 0; bottom: 0; }
+.restaurants li:not(:last-child) .chosen-count { bottom: 0.75rem; }

@@ -5,6 +5,7 @@ import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
 import { PlaceInput, type PickedPlace } from "../components/PlaceInput";
 import { AverageRating, StarRating } from "../components/Stars";
+import { ChosenCount } from "../components/ChosenCount";
 import { useSession } from "../session";
 
 /** The family's favourite restaurants: a name, an optional link and notes. */
@@ -103,6 +104,7 @@ function Restaurants() {
           </p>
           <StarRating mine={r.myRating} onRate={(stars) => void rate(r, stars)} />
         </div>
+        <ChosenCount dates={r.chosenOn} />
         <div className="actions">
           <button className="link" onClick={() => setEditing(r.id)}>
             Edit

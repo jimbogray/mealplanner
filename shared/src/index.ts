@@ -263,6 +263,8 @@ export interface FavouriteRecipe extends RecipeDetails {
   ratingCount: number;
   /** The signed-in member's own rating (1 to 5); null if they haven't rated it. */
   myRating: number | null;
+  /** Each day on the schedule it's the meal for, oldest first (so its length is how many times it's been chosen). */
+  chosenOn: IsoDate[];
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;
@@ -419,6 +421,8 @@ export interface Restaurant {
   ratingCount: number;
   /** The signed-in member's own rating (1 to 5); null if they haven't rated it. */
   myRating: number | null;
+  /** Each day on the schedule it's the meal for, oldest first (so its length is how many times it's been chosen). */
+  chosenOn: IsoDate[];
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;

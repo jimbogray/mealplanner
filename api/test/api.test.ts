@@ -967,7 +967,14 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: "00000000-0000-0000-0000-000000000000" } })).status, 400);
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { name: " " } })).status, 400);
 
+      // Each day a recipe or restaurant is picked for shows on it.
+      const chosen = async () => ({
+        recipe: (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: teenToken })).body.find((r) => r.id === recipe.id)!.chosenOn,
+        restaurant: (await call<Restaurant[]>("GET", "/api/family/restaurants", { token: teenToken })).body.find((r) => r.id === restaurant.id)!.chosenOn,
+      });
+      assert.deepEqual(await chosen(), { recipe: [monday], restaurant: [] });
       const out = await patch(tuesday, { eatOut: true, meal: { restaurantId: restaurant.id } });
+      assert.deepEqual(await chosen(), { recipe: [monday], restaurant: [tuesday] });
       assert.deepEqual(out.body.meal, { name: "Pizza Place", mealKit: false, recipeId: null, restaurantId: restaurant.id, url: null });
 
       // Anyone can still change who's joining; the meal stays.
@@ -976,6 +983,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Eating in again drops the restaurant.
       const backIn = await patch(tuesday, { memberIds: everyone, guests: 0 }, teenToken);
       assert.equal(backIn.body.meal, null);
+      assert.deepEqual((await chosen()).restaurant, []);
       const typed = await patch(tuesday, { memberIds: everyone, guests: 0, meal: { name: " Takeaway curry " } });
       assert.deepEqual(typed.body.meal, { name: "Takeaway curry", mealKit: false, recipeId: null, restaurantId: null, url: null });
 
