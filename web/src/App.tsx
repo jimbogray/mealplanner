@@ -1,3 +1,4 @@
+import { displayName, type Me } from "@mealplanner/shared";
 import type { ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { FamilyPage } from "./pages/Family";
@@ -11,11 +12,12 @@ import { SignupPage } from "./pages/Signup";
 import { useSession } from "./session";
 
 export function App() {
-  const { me, signOut } = useSession();
+  const { me, signOut, actAs } = useSession();
+  const signedInAs = me?.signedInAs;
 
   return (
     <>
-      <header className="topbar">
+      <header className={signedInAs ? "topbar acting" : "topbar"}>
         <Link to="/" className="brand">
           {me?.family ? me.family.name : "Family"}
         </Link>
@@ -29,14 +31,25 @@ export function App() {
         )}
         {me && (
           <div className="auth">
-            <span className="note">{me.user.email}</span>
+            <UserLabel me={me} onSwitch={(id) => void actAs(id)} />
             <button className="link" onClick={() => void signOut()}>
               Sign out
             </button>
           </div>
         )}
       </header>
-      <main>
+      {signedInAs && me?.member && (
+        <div className="acting-banner" role="status">
+          <span>
+            You're using the app as <strong>{displayName(me.member)}</strong>. Ratings and changes are saved as them, with
+            their permissions.
+          </span>
+          <button className="secondary" onClick={() => void actAs(null)}>
+            Switch back to {displayName(signedInAs)}
+          </button>
+        </div>
+      )}
+      <main key={me?.member?.id ?? "none"}>
         {me === undefined ? (
           <p className="note">Loading…</p>
         ) : (
@@ -83,6 +96,38 @@ export function App() {
         )}
       </main>
     </>
+  );
+}
+
+/**
+ * Who's using the app: their familiar name, or for a Family Manager a dropdown of the whole family
+ * to switch to someone else (and back).
+ */
+function UserLabel({ me, onSwitch }: { me: Me; onSwitch: (memberId: string | null) => void }) {
+  const self = me.signedInAs ?? me.member;
+  if (!self || !me.member) return <span className="note">{me.user.email}</span>;
+  if (self.role !== "admin" || me.members.length < 2) {
+    return (
+      <span className="note" title={me.user.email}>
+        {displayName(self)}
+      </span>
+    );
+  }
+  return (
+    <select
+      className="user-switch"
+      aria-label="Use the app as"
+      title="Use the app as another family member"
+      value={me.member.id}
+      onChange={(e) => onSwitch(e.target.value === self.id ? null : e.target.value)}
+    >
+      {me.members.map((m) => (
+        <option key={m.id} value={m.id}>
+          {displayName(m)}
+          {m.id === self.id ? " (you)" : ""}
+        </option>
+      ))}
+    </select>
   );
 }
 

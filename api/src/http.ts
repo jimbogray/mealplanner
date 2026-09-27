@@ -101,7 +101,7 @@ export function listener(router: Router, allowedOrigins: string[]) {
     if (origin && allowedOrigins.includes(origin)) {
       res.setHeader("access-control-allow-origin", origin);
       res.setHeader("vary", "origin");
-      res.setHeader("access-control-allow-headers", "authorization, content-type");
+      res.setHeader("access-control-allow-headers", "authorization, content-type, x-act-as");
       res.setHeader("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
       res.setHeader("access-control-max-age", "600");
     }

@@ -125,7 +125,10 @@ export interface Invite {
 export interface Me {
   user: { id: Uuid; email: string };
   family: Family | null;
+  /** Who the app is being used as: the signed-in member, or the member a Family Manager switched to. */
   member: FamilyMember | null;
+  /** The signed-in member while a Family Manager is using the app as someone else (member); otherwise null. */
+  signedInAs: FamilyMember | null;
   members: FamilyMember[];
   /** True when the API can search for addresses (Google Places is set up). */
   addressSearch: boolean;
