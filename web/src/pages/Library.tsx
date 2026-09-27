@@ -91,7 +91,7 @@ function Library({ isManager }: { isManager: boolean }) {
   return (
     <div className="stack">
       <section className="card">
-        <h1>Recipe</h1>
+        <h1>Recipes</h1>
         <p className="note">Your family's favourite recipes. Paste a link to a recipe page to add one; anyone in the family can add, rate or remove them.</p>
         <AddRecipe onAdded={(recipe) => setRecipes((list) => [recipe, ...(list ?? [])])} />
       </section>
