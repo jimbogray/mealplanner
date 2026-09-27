@@ -134,7 +134,7 @@ Pages on private or loopback addresses are never fetched.
 ### Home address search (optional)
 
 A Family Manager adds the family's home address on the Family page by typing into one search
-box and picking their address from Google's suggestions (UK addresses only). Its latitude and
+box and picking their address from Google's suggestions (US street addresses only, stored as street, city, state and ZIP code). Its latitude and
 longitude are stored too, for restaurant driving times. The API calls
 [Places API (New)](https://developers.google.com/maps/documentation/places/web-service/op-overview)
 itself (Autocomplete, then Place Details for the pick, in one billing session), so the key never
@@ -161,7 +161,7 @@ table (OpenTable, ResDiary and so on). It only fills in what was left blank, and
 is kept only if it really is on the page. The address it finds is then used for the driving time.
 
 With `GOOGLE_PLACES_API_KEY` set (the key used for the home address), the restaurant's address box
-suggests places as you type (restaurant names, streets or postcodes), nearest home first. Picking
+suggests places as you type (restaurant names, streets or ZIP codes), nearest home first. Picking
 one saves its exact location, so the driving time needs no further map lookup.
 
 ## Deploying

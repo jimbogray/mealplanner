@@ -34,7 +34,7 @@ export function HomeAddress({ address, isAdmin, search }: { address: Address | n
         <>
           {address ? (
             <address className="address">
-              {[address.line1, address.line2, address.town, address.county, address.postcode].filter(Boolean).map((line) => (
+              {[address.line1, address.line2, `${address.city}, ${address.state} ${address.zip}`].filter(Boolean).map((line) => (
                 <span key={line}>{line}</span>
               ))}
             </address>
@@ -122,7 +122,7 @@ function AddressSearch({ onDone }: { onDone: (saved: boolean) => Promise<void> }
         <input
           type="search"
           aria-label="Search for your address"
-          placeholder="Start typing your address or postcode"
+          placeholder="Start typing your street address"
           autoComplete="off"
           autoFocus
           maxLength={200}

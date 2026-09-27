@@ -209,7 +209,7 @@ function RestaurantForm({
       </div>
       {!initial && <p className="hint">With a link, the cuisine, address and booking link are read from the restaurant's website.</p>}
       <Field
-        label="Address or postcode (optional)"
+        label="Address or ZIP code (optional)"
         htmlFor={`${id}-address`}
         hint="Leave blank to read it from the link, or find it by name near home. Used to work out the driving time."
       >

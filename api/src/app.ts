@@ -6,7 +6,6 @@ import {
   isIsoDate,
   mondayOf,
   nextWeekToAdd,
-  normalisePostcode,
   type Address,
   type AddressSearchResponse,
   weekDays,
@@ -73,22 +72,22 @@ interface FamilyRow {
   name: string;
   address_line1: string | null;
   address_line2: string | null;
-  address_town: string | null;
-  address_county: string | null;
-  address_postcode: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_zip: string | null;
   address_latitude: number | null;
   address_longitude: number | null;
   created_at: Date;
 }
 
 function toAddress(r: FamilyRow): Address | null {
-  if (!r.address_line1 || !r.address_town || !r.address_postcode) return null;
+  if (!r.address_line1 || !r.address_city || !r.address_state || !r.address_zip) return null;
   return {
     line1: r.address_line1,
     line2: r.address_line2,
-    town: r.address_town,
-    county: r.address_county,
-    postcode: r.address_postcode,
+    city: r.address_city,
+    state: r.address_state,
+    zip: r.address_zip,
     latitude: r.address_latitude,
     longitude: r.address_longitude,
   };
@@ -416,7 +415,7 @@ async function homeLocation(db: Queryable, maps: Maps | undefined, familyId: str
   const home = (
     await db.query<{ lat: number | null; lng: number | null; address: string | null }>(
       `SELECT address_latitude AS lat, address_longitude AS lng,
-         nullif(concat_ws(', ', address_line1, address_line2, address_town, address_postcode), '') AS address
+         nullif(concat_ws(', ', address_line1, address_line2, address_city, concat_ws(' ', address_state, address_zip)), '') AS address
        FROM family WHERE id = $1`,
       [familyId],
     )
@@ -720,12 +719,12 @@ export function buildRouter(
     const b = v.object(req.body);
     const placeId = v.text(b.placeId, "Address", 1000);
     const a = await searching(() => search.details(placeId, sessionToken(b.sessionToken)));
-    if (!a) throw new HttpError(400, "Choose a full UK address with a postcode");
+    if (!a) throw new HttpError(400, "Choose a full US street address with a ZIP code");
     await db.query(
-      `UPDATE family SET address_line1 = $1, address_line2 = $2, address_town = $3, address_county = $4, address_postcode = $5,
+      `UPDATE family SET address_line1 = $1, address_line2 = $2, address_city = $3, address_state = $4, address_zip = $5,
           address_latitude = $6, address_longitude = $7
         WHERE id = $8`,
-      [a.line1, a.line2, a.town, a.county, a.postcode, a.latitude, a.longitude, member.family_id],
+      [a.line1, a.line2, a.city, a.state, a.zip, a.latitude, a.longitude, member.family_id],
     );
     return { body: a };
   });
@@ -733,7 +732,7 @@ export function buildRouter(
   router.add("DELETE", "/api/family/address", async (req) => {
     const { member } = await requireAdmin(db, req);
     await db.query(
-      `UPDATE family SET address_line1 = NULL, address_line2 = NULL, address_town = NULL, address_county = NULL, address_postcode = NULL,
+      `UPDATE family SET address_line1 = NULL, address_line2 = NULL, address_city = NULL, address_state = NULL, address_zip = NULL,
           address_latitude = NULL, address_longitude = NULL
         WHERE id = $1`,
       [member.family_id],
