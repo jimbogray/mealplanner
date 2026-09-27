@@ -30,7 +30,8 @@ export function azureMaps(key: string, fetchImpl: typeof fetch = fetch): Maps {
 
   return {
     async findPlace(query, near) {
-      const params: Record<string, string> = { query, limit: "1" };
+      // Only US places, like the address search.
+      const params: Record<string, string> = { query, limit: "1", countrySet: "US" };
       if (near) Object.assign(params, { lat: String(near.lat), lon: String(near.lng), radius: String(NEARBY_METRES) });
       const body = await get<{ results?: { address?: { freeformAddress?: string }; poi?: { name?: string }; position: { lat: number; lon: number } }[] }>(
         "/search/fuzzy/json",

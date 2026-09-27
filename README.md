@@ -144,14 +144,15 @@ Set `GOOGLE_PLACES_API_KEY` for the API: in the Google Cloud console, enable **P
 on a project with billing, create an API key under *APIs & Services > Credentials*, and restrict it
 to that API. Without the key, the Family page says address search isn't set up.
 
-### Restaurant driving times (optional)
+### Restaurant driving times
 
 With `AZURE_MAPS_KEY` set on the API, adding a restaurant finds it on the map (by the address
-typed in, or else by its name near home) and, when the family has a home address, stores the
-driving time from home. Create an Azure Maps account in the Azure portal and copy its primary
-key from Authentication; the free monthly allowance is far more than a family uses. A home
-address typed in without coordinates is found on the map too. Without the key, restaurants
-have no driving time.
+typed in, or else by its name near home, US only) and, when the family has a home address,
+stores the driving time from home. The azd deploy creates an Azure Maps account (Gen2) and
+passes its key to the API, so there's nothing to set up there; running the API elsewhere,
+create an account in the Azure portal and copy its primary key from Authentication. The free
+monthly allowance is far more than a family uses. A home address typed in without coordinates
+is found on the map too. Without the key, restaurants have no driving time.
 
 ### Restaurant details from their link (optional)
 
@@ -170,7 +171,7 @@ one saves its exact location, so the driving time needs no further map lookup.
 
 `infra/` (Bicep) and `azure.yaml` create a Container App for the API (image built from the
 root `Dockerfile` in a Basic container registry; scales to zero when idle), a Static Web App
-for the web app, and a PostgreSQL 16 Flexible Server (Burstable B1ms), all in resource group
+for the web app, a PostgreSQL 16 Flexible Server (Burstable B1ms) and an Azure Maps account, all in resource group
 `rg-<env>`. Needs the [Azure Developer CLI](https://aka.ms/azd); on Apple Silicon, also
 Rosetta (`softwareupdate --install-rosetta`), because the Static Web Apps deploy tool is
 Intel-only.
@@ -182,7 +183,6 @@ azd env set POSTGRES_ADMIN_PASSWORD "$(openssl rand -hex 24)"
 azd env set GOOGLE_CLIENT_ID <client-id>   # optional
 azd env set ANTHROPIC_API_KEY <key>        # optional, for reading recipe pages
 azd env set GOOGLE_PLACES_API_KEY <key>  # optional, for searching for the home address
-azd env set AZURE_MAPS_KEY <key>           # optional, for restaurant driving times
 azd provision
 azd deploy
 ```
@@ -211,7 +211,7 @@ This creates a service principal that GitHub signs in as (OIDC, no stored passwo
 federated credential for `main`, gives it access to the subscription, and sets the repo's
 Actions variables (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `AZURE_ENV_NAME`, `AZURE_LOCATION`, `GOOGLE_CLIENT_ID`, `RECIPE_MODEL`) and secrets
-(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`, `GOOGLE_PLACES_API_KEY`, `AZURE_MAPS_KEY`) from your local azd environment, as listed
+(`POSTGRES_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`, `GOOGLE_PLACES_API_KEY`) from your local azd environment, as listed
 under `pipeline:` in `azure.yaml`. If it offers to push, say no and merge the workflow
 through a pull request instead. Re-run it after changing any of those values locally.
 
