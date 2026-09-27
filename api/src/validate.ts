@@ -94,6 +94,15 @@ export function optionalMinutes(value: unknown): number | null {
   return value;
 }
 
+/** A time of day, "HH:MM" (24-hour), or null when left out or blank. */
+export function optionalTimeOfDay(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw new HttpError(400, `${field} must be a time like 18:30`);
+  }
+  return value;
+}
+
 export function role(value: unknown): MemberRole {
   if (value !== "admin" && value !== "member") throw new HttpError(400, "Role must be admin or member");
   return value;
