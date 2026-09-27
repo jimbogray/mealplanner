@@ -64,6 +64,8 @@ export type MemberRole = "admin" | "member";
 export interface FamilyMember {
   id: Uuid;
   name: string;
+  /** What the family calls them day to day (e.g. "Mum"); null to use their name. */
+  familiarName: string | null;
   lifeStage: LifeStage;
   diet: Diet;
   /** In ALLERGENS order. */
@@ -73,6 +75,11 @@ export interface FamilyMember {
   hasAccount: boolean;
   email: string | null;
   createdAt: string;
+}
+
+/** The name to show for a member around the app: their familiar name, or else their name. */
+export function displayName(member: Pick<FamilyMember, "name" | "familiarName">): string {
+  return member.familiarName ?? member.name;
 }
 
 /** A US postal address. */
@@ -178,6 +185,8 @@ export interface MemberInput {
 
 export interface MemberUpdate {
   name?: string;
+  /** Blank or null clears it. */
+  familiarName?: string | null;
   lifeStage?: LifeStage;
   diet?: Diet;
   allergies?: Allergen[];

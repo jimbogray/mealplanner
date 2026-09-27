@@ -379,6 +379,28 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     assert.equal((await call("DELETE", `/api/family/members/${babyId}`, { token: teenToken })).status, 403);
   });
 
+  test("familiar names: anyone sets their own, a Family Manager sets anyone's", async () => {
+    const own = await call<FamilyMember>("PATCH", `/api/family/members/${teenMemberId}`, { token: teenToken, body: { familiarName: "  Tee " } });
+    assert.equal(own.status, 200);
+    assert.equal(own.body.familiarName, "Tee");
+    assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: teenToken, body: { familiarName: "Bub" } })).status, 403);
+
+    const baby = await call<FamilyMember>("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body: { familiarName: "Bub" } });
+    assert.equal(baby.status, 200);
+    assert.equal(baby.body.familiarName, "Bub");
+    // Changing something else keeps it; a blank one clears it.
+    const kept = await call<FamilyMember>("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body: { diet: "none" } });
+    assert.equal(kept.body.familiarName, "Bub");
+    const cleared = await call<FamilyMember>("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body: { familiarName: " " } });
+    assert.equal(cleared.body.familiarName, null);
+    const tooLong = { familiarName: "x".repeat(41) };
+    assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body: tooLong })).status, 400);
+
+    const me = await call<Me>("GET", "/api/me", { token: parentToken });
+    assert.equal(me.body.members.find((m) => m.id === teenMemberId)?.familiarName, "Tee");
+    await call("PATCH", `/api/family/members/${teenMemberId}`, { token: teenToken, body: { familiarName: null } });
+  });
+
   test("members of another family are invisible", async () => {
     const other = await call<AuthResponse>("POST", "/api/auth/signup", {
       body: { email: "jones@example.com", password: "password123", name: "Jo", lifeStage: "adult", familyName: "The Joneses" },

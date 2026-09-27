@@ -1,4 +1,4 @@
-import { daysToPlan, MAX_GUESTS, mondayOf, nextWeekToAdd, weekDays, type FamilyMember, type ScheduleDay, type ScheduleWeek } from "@mealplanner/shared";
+import { daysToPlan, displayName, MAX_GUESTS, mondayOf, nextWeekToAdd, weekDays, type FamilyMember, type ScheduleDay, type ScheduleWeek } from "@mealplanner/shared";
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
@@ -197,7 +197,7 @@ function sameDay(a: ScheduleDay, b: ScheduleDay): boolean {
 function dinersSummary(day: ScheduleDay, members: FamilyMember[]): string {
   if (day.eatOut) return "Eating out";
   const joining = members.filter((m) => day.memberIds.includes(m.id));
-  const names = joining.length === members.length && members.length > 1 ? "Everyone" : joining.map((m) => m.name).join(", ");
+  const names = joining.length === members.length && members.length > 1 ? "Everyone" : joining.map(displayName).join(", ");
   const guests = day.guests ? `${day.guests} ${day.guests === 1 ? "guest" : "guests"}` : "";
   return [names, guests].filter(Boolean).join(" + ") || "No one";
 }
@@ -305,7 +305,7 @@ function WeekForm({
                       members.map((m) => (
                         <label key={m.id} className="chip toggle">
                           <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
-                          {m.name}
+                          {displayName(m)}
                         </label>
                       ))}
                     <label className="chip toggle eat-out">

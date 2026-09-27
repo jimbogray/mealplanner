@@ -43,6 +43,7 @@ interface MemberRow {
   family_id: string;
   user_id: string | null;
   name: string;
+  familiar_name: string | null;
   life_stage: FamilyMember["lifeStage"];
   diet: FamilyMember["diet"];
   allergies: FamilyMember["allergies"];
@@ -51,13 +52,14 @@ interface MemberRow {
   created_at: Date;
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.life_stage, m.diet, m.allergies, m.role, u.email, m.created_at
+const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.familiar_name, m.life_stage, m.diet, m.allergies, m.role, u.email, m.created_at
   FROM family_member m LEFT JOIN app_user u ON u.id = m.user_id`;
 
 function toMember(r: MemberRow): FamilyMember {
   return {
     id: r.id,
     name: r.name,
+    familiarName: r.familiar_name,
     lifeStage: r.life_stage,
     diet: r.diet,
     allergies: r.allergies,
@@ -278,7 +280,7 @@ interface RecipeRow {
 /** Selects recipes with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
 function recipeSelect(me: string): string {
   return `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
-    r.prepared, m.name AS added_by, r.created_at,
+    r.prepared, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at,
     (SELECT round(avg(stars), 1) FROM recipe_rating WHERE recipe_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM recipe_rating WHERE recipe_id = r.id) AS rating_count,
     (SELECT stars FROM recipe_rating WHERE recipe_id = r.id AND member_id = ${me}) AS my_rating
@@ -322,7 +324,7 @@ interface RestaurantRow {
 
 /** Selects restaurants with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
 function restaurantSelect(me: string): string {
-  return `SELECT r.id, r.name, r.url, r.notes, r.address, r.cuisine, r.booking_url, r.drive_minutes, m.name AS added_by, r.created_at,
+  return `SELECT r.id, r.name, r.url, r.notes, r.address, r.cuisine, r.booking_url, r.drive_minutes, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at,
     (SELECT round(avg(stars), 1) FROM restaurant_rating WHERE restaurant_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM restaurant_rating WHERE restaurant_id = r.id) AS rating_count,
     (SELECT stars FROM restaurant_rating WHERE restaurant_id = r.id AND member_id = ${me}) AS my_rating
@@ -796,7 +798,7 @@ export function buildRouter(
     return { status: 201, body: toMember(await familyMember(db, member.family_id, rows[0].id)) };
   });
 
-  // Admins can edit anyone; everyone can edit their own name, life stage, diet and allergies.
+  // Admins can edit anyone; everyone can edit their own name, familiar name, life stage, diet and allergies.
   router.add("PATCH", "/api/family/members/:id", async (req) => {
     const { member: self } = await requireMember(db, req);
     const target = await familyMember(db, self.family_id, req.params.id);
@@ -805,6 +807,7 @@ export function buildRouter(
 
     const b = v.object(req.body);
     const name = b.name === undefined ? target.name : v.text(b.name, "Name");
+    const familiarName = b.familiarName === undefined ? target.familiar_name : v.optionalText(b.familiarName, "Familiar name", 40);
     const lifeStage = b.lifeStage === undefined ? target.life_stage : v.lifeStage(b.lifeStage);
     const diet = b.diet === undefined ? target.diet : v.diet(b.diet);
     const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
@@ -821,8 +824,8 @@ export function buildRouter(
       role = newRole;
     }
     await db.query(
-      "UPDATE family_member SET name = $1, life_stage = $2, diet = $3, allergies = $4, role = $5 WHERE id = $6",
-      [name, lifeStage, diet, allergies, role, target.id],
+      "UPDATE family_member SET name = $1, familiar_name = $2, life_stage = $3, diet = $4, allergies = $5, role = $6 WHERE id = $7",
+      [name, familiarName, lifeStage, diet, allergies, role, target.id],
     );
     return { body: toMember(await familyMember(db, self.family_id, target.id)) };
   });
@@ -844,7 +847,7 @@ export function buildRouter(
   router.add("GET", "/api/family/invites", async (req) => {
     const { member } = await requireAdmin(db, req);
     const { rows } = await db.query<InviteRow>(
-      `SELECT i.id, i.code, i.member_id, m.name AS member_name, i.created_at, i.expires_at
+      `SELECT i.id, i.code, i.member_id, COALESCE(m.familiar_name, m.name) AS member_name, i.created_at, i.expires_at
          FROM invite i LEFT JOIN family_member m ON m.id = i.member_id
         WHERE i.family_id = $1 AND i.accepted_at IS NULL AND i.expires_at > now() ORDER BY i.created_at DESC`,
       [member.family_id],
@@ -859,7 +862,7 @@ export function buildRouter(
     let target: MemberRow | null = null;
     if (b.memberId !== undefined && b.memberId !== null) {
       target = await familyMember(db, member.family_id, String(b.memberId));
-      if (target.user_id) throw new HttpError(400, `${target.name} already has their own login`);
+      if (target.user_id) throw new HttpError(400, `${target.familiar_name ?? target.name} already has their own login`);
       if (!canSignIn(target.life_stage)) throw new HttpError(400, "Only adults and teenagers can be invited to sign in");
     }
     const { rows } = await db.query<InviteRow>(
@@ -868,7 +871,7 @@ export function buildRouter(
        RETURNING id, code, member_id, NULL::text AS member_name, created_at, expires_at`,
       [member.family_id, newInviteCode(), member.id, target?.id ?? null, INVITE_DAYS],
     );
-    const body = toInvite({ ...rows[0], member_name: target?.name ?? null });
+    const body = toInvite({ ...rows[0], member_name: target ? (target.familiar_name ?? target.name) : null });
     return { status: 201, body };
   });
 
@@ -891,7 +894,7 @@ export function buildRouter(
       expires_at: Date;
       accepted_at: Date | null;
     }>(
-      `SELECT f.name AS family_name, m.name AS invited_by, t.name AS member_name, i.expires_at, i.accepted_at
+      `SELECT f.name AS family_name, COALESCE(m.familiar_name, m.name) AS invited_by, COALESCE(t.familiar_name, t.name) AS member_name, i.expires_at, i.accepted_at
          FROM invite i JOIN family f ON f.id = i.family_id
          LEFT JOIN family_member m ON m.id = i.created_by
          LEFT JOIN family_member t ON t.id = i.member_id

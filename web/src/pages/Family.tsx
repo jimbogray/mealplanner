@@ -1,4 +1,4 @@
-import { canSignIn, type Allergen, type Diet, type FamilyMember, type Invite, type LifeStage, type Me } from "@mealplanner/shared";
+import { canSignIn, displayName, type Allergen, type Diet, type FamilyMember, type Invite, type LifeStage, type Me } from "@mealplanner/shared";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, inviteUrl } from "../api";
 import { HomeAddress } from "../components/HomeAddress";
@@ -93,6 +93,7 @@ function MemberRow({
   const { refresh } = useSession();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(member.name);
+  const [familiarName, setFamiliarName] = useState(member.familiarName ?? "");
   const [lifeStage, setLifeStage] = useState<LifeStage>(member.lifeStage);
   const [diet, setDiet] = useState<Diet>(member.diet);
   const [allergies, setAllergies] = useState<Allergen[]>(member.allergies);
@@ -101,6 +102,7 @@ function MemberRow({
 
   function startEditing() {
     setName(member.name);
+    setFamiliarName(member.familiarName ?? "");
     setLifeStage(member.lifeStage);
     setDiet(member.diet);
     setAllergies(member.allergies);
@@ -120,11 +122,11 @@ function MemberRow({
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    await run(() => api.updateMember(member.id, { name, lifeStage, diet, allergies }));
+    await run(() => api.updateMember(member.id, { name, familiarName: familiarName.trim() || null, lifeStage, diet, allergies }));
   }
 
   function remove() {
-    const question = isSelf ? "Leave this family?" : `Remove ${member.name} from the family?`;
+    const question = isSelf ? "Leave this family?" : `Remove ${displayName(member)} from the family?`;
     if (window.confirm(question)) void run(() => api.removeMember(member.id));
   }
 
@@ -136,6 +138,19 @@ function MemberRow({
             <input aria-label="Name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
             <LifeStageSelect value={lifeStage} onChange={setLifeStage} />
           </div>
+          <Field
+            label="Familiar name"
+            htmlFor={`familiar-${member.id}`}
+            hint={`Shown on the schedule and around the app instead of ${isSelf ? "your" : "their"} name. Leave blank to use the name.`}
+          >
+            <input
+              id={`familiar-${member.id}`}
+              placeholder={`What the family calls ${isSelf ? "you" : "them"}, e.g. Mum`}
+              maxLength={40}
+              value={familiarName}
+              onChange={(e) => setFamiliarName(e.target.value)}
+            />
+          </Field>
           <DietFields idPrefix={`edit-${member.id}`} diet={diet} allergies={allergies} onDiet={setDiet} onAllergies={setAllergies} />
           <div className="row">
             <button type="submit">Save</button>
@@ -153,9 +168,10 @@ function MemberRow({
     <li>
       <div className="member">
         <div>
-          <strong>{member.name}</strong>
+          <strong>{displayName(member)}</strong>
           {isSelf && <span className="note"> (you)</span>}
           <div className="note small">
+            {member.familiarName && `${member.name} · `}
             {member.email ?? "No login"}
             {member.role === "admin" && " · Family Manager"}
           </div>
@@ -190,7 +206,7 @@ function MemberRow({
       </div>
       {invite && (
         <p className="note small">
-          Sign-in link for {member.name}: <InviteLink invite={invite} />
+          Sign-in link for {displayName(member)}: <InviteLink invite={invite} />
         </p>
       )}
       <ErrorNote error={error} />
