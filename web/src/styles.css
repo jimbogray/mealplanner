@@ -161,7 +161,7 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 }
 .group-by { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .group-by button { padding: 0.35rem 0.9rem; }
-.recipe-group h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
+.recipe-group h2, .group-heading { margin: 0 0 0.75rem; font-size: 1.1rem; }
 
 .tile-prepared {
   padding: 0.25rem 0.7rem;
