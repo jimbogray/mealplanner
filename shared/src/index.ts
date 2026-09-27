@@ -103,8 +103,19 @@ export interface Family {
   name: string;
   /** The family's home address, if a Family Manager has added one. */
   address: Address | null;
+  /** When the family usually has dinner, if a Family Manager has said. */
+  dinnerTimes: DinnerTimes;
   createdAt: string;
 }
+
+/** Usual dinner times as 24-hour "HH:MM", each null when not given. Weekend is Saturday and Sunday. */
+export interface DinnerTimes {
+  weekday: string | null;
+  weekend: string | null;
+}
+
+/** PUT /api/family/dinner-times body (null or "" clears a time); the response is the saved DinnerTimes. */
+export type SetDinnerTimesRequest = DinnerTimes;
 
 /** The five-digit ZIP code in a ZIP or ZIP+4 ("20500-0003" → "20500"), or null if it isn't one. */
 export function normaliseZip(value: string): string | null {

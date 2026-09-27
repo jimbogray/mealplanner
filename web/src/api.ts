@@ -22,6 +22,8 @@ import type {
   ScheduleDay,
   ScheduleWeek,
   SetAddressRequest,
+  DinnerTimes,
+  SetDinnerTimesRequest,
   SignupRequest,
   UpdateDayRequest,
 } from "@mealplanner/shared";
@@ -113,6 +115,7 @@ export const api = {
   renameFamily: (name: string) => request<void>("PATCH", "/api/family", { name }),
   setAddress: (body: SetAddressRequest) => request<Address>("PUT", "/api/family/address", body),
   removeAddress: () => request<void>("DELETE", "/api/family/address"),
+  setDinnerTimes: (body: SetDinnerTimesRequest) => request<DinnerTimes>("PUT", "/api/family/dinner-times", body),
   searchAddress: (body: AddressSearchRequest) => request<AddressSearchResponse>("POST", "/api/family/address/search", body),
   addMember: (body: MemberInput) => request<FamilyMember>("POST", "/api/family/members", body),
   updateMember: (id: string, body: MemberUpdate) => request<FamilyMember>("PATCH", `/api/family/members/${id}`, body),

@@ -9,6 +9,7 @@ import {
   nextWeekToAdd,
   type Address,
   type AddressSearchResponse,
+  type DinnerTimes,
   weekDays,
   type AuthResponse,
   type Family,
@@ -85,6 +86,9 @@ interface FamilyRow {
   address_zip: string | null;
   address_latitude: number | null;
   address_longitude: number | null;
+  /** Postgres TIME, e.g. "18:30:00". */
+  dinner_weekday: string | null;
+  dinner_weekend: string | null;
   created_at: Date;
 }
 
@@ -101,6 +105,10 @@ function toAddress(r: FamilyRow): Address | null {
   };
 }
 
+function toDinnerTimes(r: Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">): DinnerTimes {
+  return { weekday: r.dinner_weekday?.slice(0, 5) ?? null, weekend: r.dinner_weekend?.slice(0, 5) ?? null };
+}
+
 async function loadMe(db: Queryable, userId: string, email: string, addressSearch: boolean, req?: Request): Promise<Me> {
   const user = { id: userId, email };
   const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [userId])).rows[0];
@@ -114,7 +122,7 @@ async function loadMe(db: Queryable, userId: string, email: string, addressSearc
       [self.family_id],
     )
   ).rows.map(toMember);
-  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), createdAt: fam.created_at.toISOString() };
+  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), dinnerTimes: toDinnerTimes(fam), createdAt: fam.created_at.toISOString() };
   return {
     user,
     family,
@@ -845,6 +853,20 @@ export function buildRouter(
     const name = v.text(v.object(req.body).name, "Family name");
     await db.query("UPDATE family SET name = $1 WHERE id = $2", [name, member.family_id]);
     return { status: 204 };
+  });
+
+  router.add("PUT", "/api/family/dinner-times", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const b = v.object(req.body);
+    const weekday = v.optionalTimeOfDay(b.weekday, "Mid-week dinner time");
+    const weekend = v.optionalTimeOfDay(b.weekend, "Weekend dinner time");
+    const row = (
+      await db.query<Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">>(
+        "UPDATE family SET dinner_weekday = $1, dinner_weekend = $2 WHERE id = $3 RETURNING dinner_weekday, dinner_weekend",
+        [weekday, weekend, member.family_id],
+      )
+    ).rows[0];
+    return { body: toDinnerTimes(row) };
   });
 
   // Google is called from the API, not the browser, so its key stays on the server and the

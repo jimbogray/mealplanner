@@ -1,6 +1,7 @@
 import { canSignIn, displayName, type Allergen, type Diet, type FamilyMember, type Invite, type LifeStage, type Me } from "@mealplanner/shared";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, inviteUrl } from "../api";
+import { DinnerTimesCard } from "../components/DinnerTimes";
 import { HomeAddress } from "../components/HomeAddress";
 import { DietFields, dietSummary } from "../components/DietFields";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
@@ -33,6 +34,7 @@ function FamilyView({ me, isAdmin }: { me: Me; isAdmin: boolean }) {
     <div className="stack">
       <Members me={me} isAdmin={isAdmin} invites={invites} onInvite={createInvite} />
       <HomeAddress address={me.family!.address} isAdmin={isAdmin} search={me.addressSearch} />
+      <DinnerTimesCard times={me.family!.dinnerTimes} isAdmin={isAdmin} />
       {isAdmin && <AddMember />}
       {isAdmin && (
         <Invites invites={invites} setInvites={setInvites} onCreate={() => createInvite()} error={inviteError} setError={setInviteError} />
