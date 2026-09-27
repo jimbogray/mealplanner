@@ -348,19 +348,21 @@ export interface ScheduleDay {
 }
 
 /**
- * What's for dinner: one of the family's recipes (eating in), one of its restaurants (eating out), or typed in.
- * The name stays if the recipe or restaurant is later removed from the family's lists.
+ * What's for dinner: one of the family's recipes (eating in), one of its restaurants (eating out), a meal kit
+ * (eating in), or typed in. The name stays if the recipe or restaurant is later removed from the family's lists.
  */
 export interface ScheduleMeal {
+  /** Empty only for a meal kit that doesn't say which one. */
   name: string;
+  mealKit: boolean;
   recipeId: Uuid | null;
   restaurantId: Uuid | null;
   /** The recipe's or restaurant's link, if it has one. */
   url: string | null;
 }
 
-/** Choose a meal: a recipe (eating in), a restaurant (eating out), or a typed-in name. */
-export type MealInput = { recipeId: Uuid } | { restaurantId: Uuid } | { name: string };
+/** Choose a meal: a recipe (eating in), a restaurant (eating out), a meal kit (eating in, name optional), or a typed-in name. */
+export type MealInput = { recipeId: Uuid } | { restaurantId: Uuid } | { mealKit: true; name?: string } | { name: string };
 
 export const MAX_MEAL_NAME = 120;
 
