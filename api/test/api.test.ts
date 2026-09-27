@@ -787,8 +787,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         assert.equal(past.status, 404);
       }
       for (const d of res.body.days) {
-        if (d.date === sunday) assert.deepEqual(d, { date: sunday, eatOut: false, memberIds: [everyone[0]], guests: 3 });
-        else assert.deepEqual(d, { date: d.date, eatOut: false, memberIds: everyone, guests: 0 });
+        if (d.date === sunday) assert.deepEqual(d, { date: sunday, eatOut: false, memberIds: [everyone[0]], guests: 3, meal: null });
+        else assert.deepEqual(d, { date: d.date, eatOut: false, memberIds: everyone, guests: 0, meal: null });
       }
     });
 
@@ -825,7 +825,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         body: { memberIds: [], guests: 2 },
       });
       assert.equal(res.status, 200);
-      assert.deepEqual(res.body, { date: monday, eatOut: false, memberIds: [], guests: 2 });
+      assert.deepEqual(res.body, { date: monday, eatOut: false, memberIds: [], guests: 2, meal: null });
       const outside = await call("PATCH", `/api/family/weeks/${monday}/days/${thisWeek}`, { token: teenToken, body: { memberIds: [], guests: 0 } });
       assert.equal(outside.status, 404);
       const missing = addDays(thisWeek, 21);
@@ -861,7 +861,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         token: parentToken,
         body: { memberIds: [], guests: 1 },
       });
-      assert.deepEqual(back.body, { date: wednesday, eatOut: false, memberIds: [], guests: 1 });
+      assert.deepEqual(back.body, { date: wednesday, eatOut: false, memberIds: [], guests: 1, meal: null });
     });
 
     test("eating out clears who's joining and guests, and can be undone", async () => {
@@ -872,14 +872,14 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         body: { eatOut: true, memberIds: everyone, guests: 4 },
       });
       assert.equal(out.status, 200);
-      assert.deepEqual(out.body, { date: friday, eatOut: true, memberIds: [], guests: 0 });
+      assert.deepEqual(out.body, { date: friday, eatOut: true, memberIds: [], guests: 0, meal: null });
       const week = (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken })).body.find((w) => w.startsOn === startsOn)!;
       assert.deepEqual(week.days.find((d) => d.date === friday), out.body);
       const back = await call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${friday}`, {
         token: teenToken,
         body: { eatOut: false, memberIds: everyone, guests: 0 },
       });
-      assert.deepEqual(back.body, { date: friday, eatOut: false, memberIds: everyone, guests: 0 });
+      assert.deepEqual(back.body, { date: friday, eatOut: false, memberIds: everyone, guests: 0, meal: null });
       const bad = await call("PATCH", `/api/family/weeks/${startsOn}/days/${friday}`, { token: teenToken, body: { eatOut: "yes" } });
       assert.equal(bad.status, 400);
     });
@@ -891,7 +891,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         body: { startsOn, today, days: [{ date: startsOn, eatOut: true }] },
       });
       assert.equal(res.status, 201);
-      assert.deepEqual(res.body.days, [{ date: startsOn, eatOut: true, memberIds: [], guests: 0 }]);
+      assert.deepEqual(res.body.days, [{ date: startsOn, eatOut: true, memberIds: [], guests: 0, meal: null }]);
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
     });
 
@@ -904,6 +904,58 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       });
       assert.deepEqual(res.body.days.map((d) => d.date), [startsOn]);
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}/days/${startsOn}`, { token: parentToken })).status, 400);
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+    });
+
+    test("a Family Manager chooses meals: a recipe eating in, a restaurant eating out, or typed in", async () => {
+      const startsOn = addDays(thisWeek, 7);
+      const [monday, tuesday] = [startsOn, addDays(startsOn, 1)];
+      const recipe = (
+        await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+          token: parentToken,
+          body: { url: "https://www.example.com/recipes/lasagne", name: "Lasagne" },
+        })
+      ).body;
+      const restaurant = (await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { name: "Pizza Place" } })).body;
+      const patch = (date: string, body: unknown, token = parentToken) =>
+        call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, { token, body });
+
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { name: "Soup" } }, teenToken)).status, 403);
+      const lasagne = await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: recipe.id } });
+      assert.equal(lasagne.status, 200);
+      assert.deepEqual(lasagne.body.meal, { name: "Lasagne", recipeId: recipe.id, restaurantId: null, url: recipe.url });
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { restaurantId: restaurant.id } })).status, 400);
+      assert.equal((await patch(tuesday, { eatOut: true, meal: { recipeId: recipe.id } })).status, 400);
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: "00000000-0000-0000-0000-000000000000" } })).status, 400);
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { name: " " } })).status, 400);
+
+      const out = await patch(tuesday, { eatOut: true, meal: { restaurantId: restaurant.id } });
+      assert.deepEqual(out.body.meal, { name: "Pizza Place", recipeId: null, restaurantId: restaurant.id, url: null });
+
+      // Anyone can still change who's joining; the meal stays.
+      const kept = await patch(monday, { memberIds: [everyone[0]], guests: 2 }, teenToken);
+      assert.equal(kept.body.meal?.recipeId, recipe.id);
+      // Eating in again drops the restaurant.
+      const backIn = await patch(tuesday, { memberIds: everyone, guests: 0 }, teenToken);
+      assert.equal(backIn.body.meal, null);
+      const typed = await patch(tuesday, { memberIds: everyone, guests: 0, meal: { name: " Takeaway curry " } });
+      assert.deepEqual(typed.body.meal, { name: "Takeaway curry", recipeId: null, restaurantId: null, url: null });
+
+      // Removing the recipe keeps its name on the schedule.
+      assert.equal((await call("DELETE", `/api/family/recipes/${recipe.id}`, { token: parentToken })).status, 204);
+      const week = (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: teenToken })).body.find((w) => w.startsOn === startsOn)!;
+      assert.deepEqual(week.days.find((d) => d.date === monday)!.meal, { name: "Lasagne", recipeId: null, restaurantId: null, url: null });
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: null })).body.meal, null);
+      assert.equal((await call("DELETE", `/api/family/restaurants/${restaurant.id}`, { token: parentToken })).status, 204);
+    });
+
+    test("meals can be chosen when a week is added, by a Family Manager only", async () => {
+      const startsOn = addDays(thisWeek, 14);
+      const days = [{ date: startsOn, memberIds: everyone, guests: 0, meal: { name: "Roast chicken" } }];
+      assert.equal((await call("POST", "/api/family/weeks", { token: teenToken, body: { startsOn, today, days } })).status, 403);
+      const res = await call<ScheduleWeek>("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days } });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.days[0].meal?.name, "Roast chicken");
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
     });
 

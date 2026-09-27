@@ -334,14 +334,32 @@ export function nextWeekToAdd(weeks: IsoDate[], today: IsoDate): IsoDate {
 
 export const MAX_GUESTS = 50;
 
-/** Dinner on one day: which family members are joining, and how many guests. */
+/** Dinner on one day: which family members are joining, how many guests, and what's for dinner. */
 export interface ScheduleDay {
   date: IsoDate;
   /** The family is eating out: memberIds is empty and guests is 0. */
   eatOut: boolean;
   memberIds: Uuid[];
   guests: number;
+  meal: ScheduleMeal | null;
 }
+
+/**
+ * What's for dinner: one of the family's recipes (eating in), one of its restaurants (eating out), or typed in.
+ * The name stays if the recipe or restaurant is later removed from the family's lists.
+ */
+export interface ScheduleMeal {
+  name: string;
+  recipeId: Uuid | null;
+  restaurantId: Uuid | null;
+  /** The recipe's or restaurant's link, if it has one. */
+  url: string | null;
+}
+
+/** Choose a meal: a recipe (eating in), a restaurant (eating out), or a typed-in name. */
+export type MealInput = { recipeId: Uuid } | { restaurantId: Uuid } | { name: string };
+
+export const MAX_MEAL_NAME = 120;
 
 /** A week of the family's schedule, Monday to Sunday. */
 export interface ScheduleWeek {
@@ -368,6 +386,11 @@ export interface UpdateDayRequest {
   eatOut?: boolean;
   memberIds?: Uuid[];
   guests?: number;
+  /**
+   * Family Managers only. null clears it; left out keeps the day's meal (unless eating in or out changes,
+   * which clears it, since a recipe goes with eating in and a restaurant with eating out).
+   */
+  meal?: MealInput | null;
 }
 
 /** A restaurant the family likes. */
