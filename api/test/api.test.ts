@@ -58,6 +58,13 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Stand in for the web and for Claude, so tests stay offline.
       fetchPage: async (url) => {
         if (url.includes("unreachable")) throw new Error("offline");
+        if (url.includes("trattoria")) {
+          return {
+            url,
+            html: `<title>Trattoria</title><h1>Trattoria Roma</h1><p>Proper Roman food. 5 Market Street, Bath BA1 1AB</p>
+              <a href="/menu">Menu</a><a href="https://www.opentable.co.uk/r/trattoria-roma">Book a table</a>`,
+          };
+        }
         // "noimage" pages have no share image, just photos in the page for Claude to choose from.
         const head = url.includes("noimage")
           ? `<title>Page title</title>`
@@ -87,6 +94,18 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
           if (!(placeId in places)) throw new AddressSearchError("unknown place");
           return places[placeId];
         },
+        // Restaurants: "Mill" finds one in Bristol (the only place nearer than London when searching from Bath).
+        suggestPlaces: async (input, _token, near) => {
+          if (!input.includes("Mill")) return [];
+          const bristol = { placeId: "place-mill", text: "The Mill", secondaryText: "3 Mill Lane, Bristol BS1 1AA" };
+          const london = { placeId: "place-mill-london", text: "Mill Kitchen", secondaryText: "London" };
+          return near ? [bristol, london] : [london, bristol];
+        },
+        place: async (placeId) => {
+          if (placeId === "place-nowhere") return null;
+          if (placeId !== "place-mill") throw new AddressSearchError("unknown place");
+          return { address: "3 Mill Lane, Bristol BS1 1AA", lat: 51.45, lng: -2.59 };
+        },
       },
       // A tiny map: a few known places, "broken" stands for the service being down.
       maps: {
@@ -104,6 +123,12 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         },
         // One minute per hundredth of a degree, give or take.
         driveMinutes: async (from, to) => Math.round((Math.abs(from.lat - to.lat) + Math.abs(from.lng - to.lng)) * 100),
+      },
+      // Claude reading a restaurant's page: "trattoria" pages are restaurants; "madeup" ones return a booking link not on the page.
+      readRestaurant: async ({ url, text, links }) => {
+        if (!text.includes("Trattoria Roma")) return { isRestaurant: false, cuisine: null, address: null, bookingUrl: null };
+        const booking = url.includes("madeup") ? "https://evil.example.com/book" : links.find((l) => l.text === "Book a table")?.url ?? null;
+        return { isRestaurant: true, cuisine: "Italian", address: "5 Market Street, Bath BA1 1AB", bookingUrl: booking };
       },
       readRecipe: async ({ url, text, images }) => {
         const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
@@ -534,6 +559,40 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       );
     });
 
+    test("with a link, the cuisine, address and booking link are read from the restaurant's page", async () => {
+      const res = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: parentToken,
+        body: { name: "Trattoria Roma", url: "https://trattoria.example.com/" },
+      });
+      assert.equal(res.status, 201);
+      assert.deepEqual(
+        [res.body.cuisine, res.body.address, res.body.bookingUrl],
+        ["Italian", "5 Market Street, Bath BA1 1AB", "https://www.opentable.co.uk/r/trattoria-roma"],
+      );
+      // What's typed in wins, and a booking link that isn't on the page is dropped.
+      const typed = await call<Restaurant>("POST", "/api/family/restaurants", {
+        token: parentToken,
+        body: { name: "Trattoria Two", url: "https://trattoria.example.com/madeup", cuisine: "Roman", address: "1 Other Road" },
+      });
+      assert.deepEqual([typed.body.cuisine, typed.body.address, typed.body.bookingUrl], ["Roman", "1 Other Road", null]);
+      // A page that isn't a restaurant's, or can't be read, leaves the details blank.
+      for (const [name, url] of [["Shop", "https://shop.example.com/"], ["Offline", "https://unreachable.example.com/"]]) {
+        const other = await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { name, url } });
+        assert.equal(other.status, 201);
+        assert.deepEqual([other.body.cuisine, other.body.address, other.body.bookingUrl], [null, null, null]);
+        await call("DELETE", `/api/family/restaurants/${other.body.id}`, { token: parentToken });
+      }
+      // Editing reads the page again only when the link changes, filling in what's blank.
+      const path = `/api/family/restaurants/${typed.body.id}`;
+      const kept = await call<Restaurant>("PUT", path, { token: parentToken, body: { name: "Trattoria Two", url: "https://trattoria.example.com/madeup" } });
+      assert.deepEqual([kept.body.cuisine, kept.body.bookingUrl], [null, null]);
+      const relinked = await call<Restaurant>("PUT", path, { token: parentToken, body: { name: "Trattoria Two", url: "https://trattoria.example.com/two" } });
+      assert.deepEqual([relinked.body.cuisine, relinked.body.bookingUrl], ["Italian", "https://www.opentable.co.uk/r/trattoria-roma"]);
+      for (const id of [res.body.id, typed.body.id]) await call("DELETE", `/api/family/restaurants/${id}`, { token: parentToken });
+      const bad = await call("POST", "/api/family/restaurants", { token: parentToken, body: { name: "X", bookingUrl: "javascript:alert(1)" } });
+      assert.equal(bad.status, 400);
+    });
+
     test("names are unique within the family, ignoring case", async () => {
       const res = await call("POST", "/api/family/restaurants", { token: parentToken, body: { name: "luigi's pizza" } });
       assert.equal(res.status, 409);
@@ -884,6 +943,28 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual([res.body.notes, res.body.driveMinutes], ["Nice", 30]);
       res = await call<Restaurant>("PUT", path, { token, body: { name: "Moving Mill", address: "somewhere unknown" } });
       assert.deepEqual([res.body.address, res.body.driveMinutes], ["somewhere unknown", null]);
+    });
+
+    test("the address can be picked from suggestions, nearest home first", async () => {
+      const session = "restaurant-session-1";
+      // The home, with its coordinates, is where suggestions are centred.
+      assert.equal((await call("PUT", "/api/family/address", { token, body: { placeId: "place-bath", sessionToken: session } })).status, 200);
+      const res = await call<AddressSearchResponse>("POST", "/api/family/restaurants/address/search", {
+        token,
+        body: { input: "Mill", sessionToken: session },
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.suggestions.map((s) => s.placeId), ["place-mill", "place-mill-london"]);
+      const picked = await add({ name: "Picked Mill", address: "The Mill", placeId: "place-mill", sessionToken: session });
+      assert.deepEqual([picked.address, picked.driveMinutes], ["3 Mill Lane, Bristol BS1 1AA", 30]);
+      // Picking again when editing replaces the address.
+      const edited = await call<Restaurant>("PUT", `/api/family/restaurants/${picked.id}`, {
+        token,
+        body: { name: "Picked Mill", address: "The Mill", placeId: "place-nowhere", sessionToken: session },
+      });
+      assert.equal(edited.status, 400);
+      const missing = await call("POST", "/api/family/restaurants", { token, body: { name: "No Session", placeId: "place-mill" } });
+      assert.equal(missing.status, 400);
     });
 
     test("if the map service is down the restaurant is still saved", async () => {

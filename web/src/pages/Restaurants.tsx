@@ -3,6 +3,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage, Field } from "../components/Field";
+import { PlaceInput, type PickedPlace } from "../components/PlaceInput";
 import { AverageRating, StarRating } from "../components/Stars";
 import { useSession } from "../session";
 
@@ -90,10 +91,20 @@ function Restaurants() {
                         r.name
                       )}
                     </strong>
-                    {r.driveMinutes !== null && (
-                      <span className="drive" title="Driving time from home">
-                        🚗 {formatDrive(r.driveMinutes)} from home
-                      </span>
+                    {(r.cuisine || r.driveMinutes !== null || r.bookingUrl) && (
+                      <div className="restaurant-tags">
+                        {r.cuisine && <span className="cuisine">{r.cuisine}</span>}
+                        {r.driveMinutes !== null && (
+                          <span className="drive" title="Driving time from home">
+                            🚗 {formatDrive(r.driveMinutes)} from home
+                          </span>
+                        )}
+                        {r.bookingUrl && (
+                          <a className="book" href={r.bookingUrl} target="_blank" rel="noopener noreferrer">
+                            Book a table
+                          </a>
+                        )}
+                      </div>
                     )}
                     {r.notes && <p className="restaurant-notes">{r.notes}</p>}
                     <p className="note small">
@@ -146,6 +157,10 @@ function RestaurantForm({
   const [url, setUrl] = useState(initial?.url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [address, setAddress] = useState(initial?.address ?? "");
+  const [picked, setPicked] = useState<PickedPlace | null>(null);
+  const addressSearch = useSession().me?.addressSearch ?? false;
+  const [cuisine, setCuisine] = useState(initial?.cuisine ?? "");
+  const [bookingUrl, setBookingUrl] = useState(initial?.bookingUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -154,12 +169,24 @@ function RestaurantForm({
     setError(null);
     setBusy(true);
     try {
-      onSaved(await onSave({ name, url: url.trim() || null, notes: notes.trim() || null, address: address.trim() || null }));
+      const saved = await onSave({
+        name,
+        url: url.trim() || null,
+        notes: notes.trim() || null,
+        address: address.trim() || null,
+        cuisine: cuisine.trim() || null,
+        bookingUrl: bookingUrl.trim() || null,
+        ...picked,
+      });
+      onSaved(saved);
       if (!initial) {
         setName("");
         setUrl("");
         setNotes("");
         setAddress("");
+        setPicked(null);
+        setCuisine("");
+        setBookingUrl("");
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -177,16 +204,37 @@ function RestaurantForm({
         </div>
         <div className="field grow">
           <label htmlFor={`${id}-url`}>Link (optional)</label>
-          <input id={`${id}-url`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Website, menu or map" inputMode="url" />
+          <input id={`${id}-url`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Restaurant's website" inputMode="url" />
         </div>
       </div>
+      {!initial && <p className="hint">With a link, the cuisine, address and booking link are read from the restaurant's website.</p>}
       <Field
         label="Address or postcode (optional)"
         htmlFor={`${id}-address`}
-        hint="Leave blank to find it by name near home. Used to work out the driving time."
+        hint="Leave blank to read it from the link, or find it by name near home. Used to work out the driving time."
       >
-        <input id={`${id}-address`} value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} autoComplete="off" />
+        <PlaceInput
+          id={`${id}-address`}
+          value={address}
+          search={addressSearch}
+          onChange={(value, place) => {
+            setAddress(value);
+            setPicked(place);
+          }}
+        />
       </Field>
+      {initial && (
+        <div className="row">
+          <div className="field grow">
+            <label htmlFor={`${id}-cuisine`}>Cuisine</label>
+            <input id={`${id}-cuisine`} value={cuisine} onChange={(e) => setCuisine(e.target.value)} maxLength={60} placeholder="e.g. Italian" />
+          </div>
+          <div className="field grow">
+            <label htmlFor={`${id}-booking`}>Booking link</label>
+            <input id={`${id}-booking`} value={bookingUrl} onChange={(e) => setBookingUrl(e.target.value)} inputMode="url" />
+          </div>
+        </div>
+      )}
       <Field label="Notes (optional)" htmlFor={`${id}-notes`}>
         <textarea
           id={`${id}-notes`}
@@ -200,7 +248,7 @@ function RestaurantForm({
       <ErrorNote error={error} />
       <div className="row">
         <button type="submit" disabled={busy || !name.trim()}>
-          {busy ? "Saving…" : submitLabel}
+          {busy ? (url.trim() && url.trim() !== (initial?.url ?? "") ? "Reading the link…" : "Saving…") : submitLabel}
         </button>
         {onCancel && (
           <button type="button" className="secondary" onClick={onCancel}>

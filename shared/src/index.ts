@@ -390,6 +390,10 @@ export interface Restaurant {
   notes: string | null;
   /** Typed in, or the address the map service found for it by name. */
   address: string | null;
+  /** e.g. "Italian"; typed in, or read from its web page. */
+  cuisine: string | null;
+  /** Where to book a table (OpenTable, the restaurant's own page…); typed in, or read from its web page. */
+  bookingUrl: string | null;
   /** Driving time from the family's home; null when there's no home address or it couldn't be worked out. */
   driveMinutes: number | null;
   /** The family's average star rating (1 to 5, to one decimal place); null if nobody has rated it. */
@@ -409,4 +413,10 @@ export interface RestaurantInput {
   notes?: string | null;
   /** Leave out to have it found on the map by name, near the family's home. */
   address?: string | null;
+  /** Left blank, these are read from the restaurant's web page (url) when there is one. */
+  cuisine?: string | null;
+  bookingUrl?: string | null;
+  /** An address suggestion picked from POST /api/family/restaurants/address/search, with that search's session. */
+  placeId?: string;
+  sessionToken?: string;
 }

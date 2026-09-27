@@ -233,3 +233,9 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .restaurant-name { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .average { padding: 0.1rem 0.55rem; border-radius: 999px; background: var(--ink); color: #fff; font-size: 0.8rem; font-weight: 600; }
 .restaurant .stars { margin-left: -0.15rem; }
+.restaurant-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.restaurant-tags .drive { align-self: auto; }
+.cuisine { font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; background: #fdf3dd; color: #7a5510; }
+.book { font-size: 0.85rem; padding: 0.1rem 0.6rem; border-radius: 999px; border: 1px solid var(--accent); text-decoration: none; font-weight: 500; }
+.book:hover { background: #e1f5ee; }
+.address-search { display: flex; flex-direction: column; }
