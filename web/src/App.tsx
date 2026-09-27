@@ -23,8 +23,8 @@ export function App() {
           <nav className="nav">
             <NavLink to="/family">Family</NavLink>
             <NavLink to="/library">Recipes</NavLink>
-            <NavLink to="/schedule">Schedule</NavLink>
             <NavLink to="/restaurants">Restaurants</NavLink>
+            <NavLink to="/schedule">Schedule</NavLink>
           </nav>
         )}
         {me && (
