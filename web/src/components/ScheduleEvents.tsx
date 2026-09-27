@@ -17,6 +17,23 @@ function clock(time: string): string {
   return new Date(`2000-01-01T${time}:00`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/** Every 10 minutes of the day, "00:00" to "23:50". */
+const TIMES = Array.from({ length: 144 }, (_, i) => `${String(Math.floor(i / 6)).padStart(2, "0")}:${String((i % 6) * 10).padStart(2, "0")}`);
+
+/** A time of day in 10-minute steps (plus `value` itself, if an older event isn't on a step). */
+function TimeSelect({ value, onChange, label }: { value: string; onChange: (time: string) => void; label: string }) {
+  const times = TIMES.includes(value) ? TIMES : [...TIMES, value].sort();
+  return (
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+      {times.map((t) => (
+        <option key={t} value={t}>
+          {clock(t)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function who(event: ScheduleEvent, members: FamilyMember[]): string {
   const going = members.filter((m) => event.memberIds.includes(m.id));
   return going.length === members.length && members.length > 1 ? "Everyone" : going.map(displayName).join(", ");
@@ -167,10 +184,10 @@ function EventForm({ date, event, onDone }: { date: string; event?: ScheduleEven
       </div>
       <div className="event-times">
         <label>
-          From <input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          From <TimeSelect label="Start time" value={startTime} onChange={setStartTime} />
         </label>
         <label>
-          to <input type="time" required value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          to <TimeSelect label="End time" value={endTime} onChange={setEndTime} />
         </label>
         <label className="chip toggle weekly">
           <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} />
