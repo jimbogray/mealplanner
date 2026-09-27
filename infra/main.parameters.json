@@ -8,7 +8,6 @@
     "googleClientId": { "value": "${GOOGLE_CLIENT_ID=}" },
     "anthropicApiKey": { "value": "${ANTHROPIC_API_KEY=}" },
     "googlePlacesApiKey": { "value": "${GOOGLE_PLACES_API_KEY=}" },
-    "azureMapsKey": { "value": "${AZURE_MAPS_KEY=}" },
     "recipeModel": { "value": "${RECIPE_MODEL=}" },
     "apiExists": { "value": "${SERVICE_API_RESOURCE_EXISTS=false}" }
   }

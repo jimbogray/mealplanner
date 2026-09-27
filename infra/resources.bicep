@@ -9,7 +9,6 @@ param anthropicApiKey string
 @secure()
 param googlePlacesApiKey string
 @secure()
-param azureMapsKey string
 param recipeModel string
 @description('Whether the API container app already exists (azd sets this), so re-provisioning keeps its image.')
 param apiExists bool
@@ -19,7 +18,6 @@ var databaseName = 'mealplanner'
 var apiName = 'ca-api-${resourceToken}'
 var hasAnthropicKey = !empty(anthropicApiKey)
 var hasGooglePlacesKey = !empty(googlePlacesApiKey)
-var hasAzureMapsKey = !empty(azureMapsKey)
 
 // ---------- PostgreSQL Flexible Server ----------
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
@@ -54,6 +52,17 @@ resource web 'Microsoft.Web/staticSites@2024-04-01' = {
   tags: union(tags, { 'azd-service-name': 'web' })
   sku: { name: 'Free', tier: 'Free' }
   properties: {}
+}
+
+// ---------- Azure Maps: restaurants on the map and driving times from home ----------
+// Not offered in every region (not eastus2, for one), and where it lives doesn't matter to the app.
+resource maps 'Microsoft.Maps/accounts@2023-06-01' = {
+  name: 'map-${resourceToken}'
+  location: 'eastus'
+  tags: tags
+  sku: { name: 'G2' }
+  kind: 'Gen2'
+  properties: { disableLocalAuth: false }
 }
 
 // ---------- API: Container Apps ----------
@@ -143,7 +152,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         // Container Apps rejects an empty secret, so only add it when set.
         hasAnthropicKey ? [{ name: 'anthropic-api-key', value: anthropicApiKey }] : [],
         hasGooglePlacesKey ? [{ name: 'google-places-api-key', value: googlePlacesApiKey }] : [],
-        hasAzureMapsKey ? [{ name: 'azure-maps-key', value: azureMapsKey }] : []
+        [{ name: 'azure-maps-key', value: maps.listKeys().primaryKey }]
       )
     }
     template: {
@@ -163,7 +172,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             ],
             hasAnthropicKey ? [{ name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }] : [],
             hasGooglePlacesKey ? [{ name: 'GOOGLE_PLACES_API_KEY', secretRef: 'google-places-api-key' }] : [],
-            hasAzureMapsKey ? [{ name: 'AZURE_MAPS_KEY', secretRef: 'azure-maps-key' }] : []
+            [{ name: 'AZURE_MAPS_KEY', secretRef: 'azure-maps-key' }]
           )
         }
       ]
