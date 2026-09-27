@@ -172,12 +172,18 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
 
 /** A day with the whole family joining, no guests and no meal yet. */
 function everyone(date: string, members: FamilyMember[]): ScheduleDay {
-  return { date, eatOut: false, memberIds: members.map((m) => m.id), guests: 0, meal: null };
+  return { date, eatOut: false, memberIds: members.map((m) => m.id), guests: 0, meal: null, workingFromHomeIds: [] };
 }
 
 /** What to send for a day. Only a Family Manager sends the meal. */
 function dayRequest(d: ScheduleDay, isManager: boolean): UpdateDayRequest {
-  return { eatOut: d.eatOut, memberIds: d.memberIds, guests: d.guests, ...(isManager ? { meal: mealRequest(d.meal) } : {}) };
+  return {
+    eatOut: d.eatOut,
+    memberIds: d.memberIds,
+    guests: d.guests,
+    workingFromHomeIds: d.workingFromHomeIds,
+    ...(isManager ? { meal: mealRequest(d.meal) } : {}),
+  };
 }
 
 function mealRequest(meal: ScheduleMeal | null): MealInput | null {
@@ -192,6 +198,13 @@ function mealRequest(meal: ScheduleMeal | null): MealInput | null {
 function allergiesFor(day: ScheduleDay, members: FamilyMember[]): Allergen[] {
   const joining = members.filter((m) => day.memberIds.includes(m.id));
   return ALLERGENS.filter((a) => joining.some((m) => m.allergies.includes(a)));
+}
+
+/** "Working from home: James, Anna"; nothing when nobody is. */
+function WorkingFromHome({ day, members }: { day: ScheduleDay; members: FamilyMember[] }) {
+  const names = members.filter((m) => day.workingFromHomeIds.includes(m.id)).map(displayName);
+  if (!names.length) return null;
+  return <span className="wfh-note">Working from home: {names.join(", ")}</span>;
 }
 
 function AllergyNote({ day, members }: { day: ScheduleDay; members: FamilyMember[] }) {
@@ -282,6 +295,7 @@ function Week({
                   )}
                 </span>
               )}
+              <WorkingFromHome day={d} members={members} />
               <AllergyNote day={d} members={members} />
               <DayEvents date={d.date} />
             </span>
@@ -299,6 +313,8 @@ function sameDay(a: ScheduleDay, b: ScheduleDay): boolean {
     a.guests === b.guests &&
     a.memberIds.length === b.memberIds.length &&
     a.memberIds.every((id) => b.memberIds.includes(id)) &&
+    a.workingFromHomeIds.length === b.workingFromHomeIds.length &&
+    a.workingFromHomeIds.every((id) => b.workingFromHomeIds.includes(id)) &&
     JSON.stringify(mealRequest(a.meal)) === JSON.stringify(mealRequest(b.meal))
   );
 }
@@ -339,6 +355,7 @@ function WeekForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listId = useId();
+  const adults = members.filter((m) => m.lifeStage === "adult");
 
   function update(date: string, change: Partial<ScheduleDay>) {
     setDays((list) => list.map((d) => (d.date === date ? { ...d, ...change } : d)));
@@ -478,6 +495,29 @@ function WeekForm({
                     </label>
                   )}
                 </div>
+                {adults.length > 0 && (
+                  <div className="wfh-field" role="group" aria-label={`Working from home on ${dayLabel(d.date, "long")}`}>
+                    <span>Working from home</span>
+                    <div className="chips">
+                      {adults.map((m) => (
+                        <label key={m.id} className="chip toggle wfh">
+                          <input
+                            type="checkbox"
+                            checked={d.workingFromHomeIds.includes(m.id)}
+                            onChange={(e) =>
+                              update(d.date, {
+                                workingFromHomeIds: e.target.checked
+                                  ? [...d.workingFromHomeIds, m.id]
+                                  : d.workingFromHomeIds.filter((id) => id !== m.id),
+                              })
+                            }
+                          />
+                          {displayName(m)}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {choices && (
                   <div className="meal-field">
                     <label htmlFor={`${listId}-${d.date}-meal`}>{d.eatOut ? "Restaurant" : d.meal?.mealKit ? "Meal kit" : "Meal"}</label>

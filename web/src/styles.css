@@ -290,3 +290,9 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .event-title input { flex: 1 1 auto; min-width: 0; color: var(--ink); }
 .event-times { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; color: var(--muted); }
 .event-times select { width: auto; color: var(--ink); }
+
+/* Adults working from home (more time to cook). */
+.wfh-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin-top: 0.5rem; font-size: 0.9rem; color: var(--muted); }
+.chip.toggle.wfh { border-style: dashed; }
+.chip.toggle.wfh:has(input:checked) { border-style: solid; border-color: #6b5bb5; background: #efecfb; color: #463a86; }
+.wfh-note { font-size: 0.9rem; color: #463a86; }

@@ -358,6 +358,8 @@ export interface ScheduleDay {
   memberIds: Uuid[];
   guests: number;
   meal: ScheduleMeal | null;
+  /** Adults working from home that day, so there's more time to cook. */
+  workingFromHomeIds: Uuid[];
 }
 
 /**
@@ -409,6 +411,8 @@ export interface UpdateDayRequest {
    * which clears it, since a recipe goes with eating in and a restaurant with eating out).
    */
   meal?: MealInput | null;
+  /** Adults only; left out keeps who's working from home that day. */
+  workingFromHomeIds?: Uuid[];
 }
 
 /**
