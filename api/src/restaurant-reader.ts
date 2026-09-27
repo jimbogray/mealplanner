@@ -13,7 +13,7 @@ const RestaurantDetails = z.object({
   address: z
     .string()
     .nullable()
-    .describe("The restaurant's street address on one line, including the postcode if given. Null if the page doesn't give one."),
+    .describe("The restaurant's street address on one line, including the ZIP code if given. Null if the page doesn't give one."),
   bookingUrl: z
     .string()
     .nullable()

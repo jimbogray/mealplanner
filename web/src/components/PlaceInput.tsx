@@ -1,4 +1,4 @@
-// An address box that suggests places as you type (restaurants, cafés, streets, postcodes), nearest home first.
+// An address box that suggests places as you type (restaurants, cafés, streets, ZIP codes), nearest home first.
 import type { AddressSuggestion } from "@mealplanner/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
@@ -66,7 +66,7 @@ export function PlaceInput({
         onKeyDown={(e) => e.key === "Escape" && setSuggestions(null)}
         maxLength={200}
         autoComplete="off"
-        placeholder={search ? "Start typing the address, postcode or restaurant name" : undefined}
+        placeholder={search ? "Start typing the address, ZIP code or restaurant name" : undefined}
       />
       {suggestions && suggestions.length > 0 && (
         <ul className="suggestions" aria-label="Matching places">

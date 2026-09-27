@@ -95,14 +95,17 @@ export interface FamilyMember {
   createdAt: string;
 }
 
-/** A UK postal address. */
+/** A US postal address. */
 export interface Address {
+  /** e.g. "1600 Pennsylvania Ave NW" */
   line1: string;
+  /** e.g. "Apt 4B" */
   line2: string | null;
-  town: string;
-  county: string | null;
-  /** Upper case with a single space, e.g. "SW1A 2AA". */
-  postcode: string;
+  city: string;
+  /** Two-letter state code, e.g. "DC". */
+  state: string;
+  /** Five digits, e.g. "20500". */
+  zip: string;
   /** WGS84 coordinates from Google; null for an address typed in before address search. */
   latitude: number | null;
   longitude: number | null;
@@ -116,11 +119,9 @@ export interface Family {
   createdAt: string;
 }
 
-/** Tidies a UK postcode ("sw1a2aa" → "SW1A 2AA"), or returns null if it isn't shaped like one. */
-export function normalisePostcode(value: string): string | null {
-  const compact = value.replace(/\s+/g, "").toUpperCase();
-  if (!/^[A-Z]{1,2}[0-9][A-Z0-9]?[0-9][A-Z]{2}$/.test(compact)) return null;
-  return `${compact.slice(0, -3)} ${compact.slice(-3)}`;
+/** The five-digit ZIP code in a ZIP or ZIP+4 ("20500-0003" → "20500"), or null if it isn't one. */
+export function normaliseZip(value: string): string | null {
+  return /^\s*(\d{5})(?:-\d{4})?\s*$/.exec(value)?.[1] ?? null;
 }
 
 export interface Invite {
@@ -215,7 +216,7 @@ export interface CreateFamilyRequest {
   lifeStage: LifeStage;
 }
 
-/** One match while searching for an address, e.g. "10 Downing Street" / "London SW1A 2AA, UK". */
+/** One match while searching for an address, e.g. "1600 Pennsylvania Avenue NW" / "Washington, DC, USA". */
 export interface AddressSuggestion {
   placeId: string;
   text: string;

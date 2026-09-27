@@ -75,20 +75,20 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
             <img src="/step-1.jpg" alt="Whisking"><img src="/done.jpg" alt="A stack of pancakes">`,
         };
       },
-      // Stands in for Google Places: typing "Downing" finds two houses and "broken" means Google is down.
+      // Stands in for Google Places: typing "Pennsylvania" finds two addresses and "broken" means Google is down.
       addressSearch: {
         suggest: async (input) => {
           if (input.includes("broken")) throw new AddressSearchError("down");
-          if (!input.includes("Downing")) return [];
+          if (!input.includes("Pennsylvania")) return [];
           return [
-            { placeId: "place-10", text: "10 Downing Street", secondaryText: "London SW1A 2AA, UK" },
-            { placeId: "place-downing", text: "Downing Street", secondaryText: "London, UK" },
+            { placeId: "place-10", text: "1600 Pennsylvania Avenue NW", secondaryText: "Washington, DC 20500, USA" },
+            { placeId: "place-downing", text: "Pennsylvania Avenue NW", secondaryText: "Washington, DC, USA" },
           ];
         },
         details: async (placeId) => {
           const places: Record<string, Address | null> = {
-            "place-10": { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode: "SW1A 2AA", latitude: 51.5034, longitude: -0.1276 },
-            "place-bath": { line1: "1 High Street", line2: null, town: "Bath", county: "Somerset", postcode: "BA1 1AA", latitude: 51.38, longitude: -2.36 },
+            "place-10": { line1: "1600 Pennsylvania Avenue NW", line2: null, city: "Washington", state: "DC", zip: "20500", latitude: 51.5034, longitude: -0.1276 },
+            "place-bath": { line1: "1 Main Street", line2: "Apt 2", city: "Burlington", state: "VT", zip: "05401", latitude: 51.38, longitude: -2.36 },
             "place-downing": null,
           };
           if (!(placeId in places)) throw new AddressSearchError("unknown place");
@@ -112,7 +112,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         findPlace: async (query, near) => {
           if (query.includes("broken")) throw new Error("maps down");
           const places: Record<string, { address: string; lat: number; lng: number }> = {
-            "1 High Street, Bath, BA1 1AA": { address: "1 High Street, Bath BA1 1AA", lat: 51.38, lng: -2.36 },
+            "1 Main Street, Apt 2, Burlington, VT 05401": { address: "1 Main St, Burlington, VT 05401", lat: 51.38, lng: -2.36 },
             "Pizza Place": { address: "Pizza Place, 5 Market Street, Bath BA1 1AB", lat: 51.4, lng: -2.36 },
             "3 Mill Lane, Bristol": { address: "3 Mill Lane, Bristol BS1 1AA", lat: 51.45, lng: -2.59 },
           };
@@ -852,36 +852,36 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     test("a Family Manager can search for addresses as they type", async () => {
       const search = (input: string, sessionToken = session) =>
         call<AddressSearchResponse>("POST", "/api/family/address/search", { token: parentToken, body: { input, sessionToken } });
-      const res = await search("10 Downing");
+      const res = await search("1600 Pennsylvania");
       assert.equal(res.status, 200);
-      assert.deepEqual(res.body.suggestions.map((s) => s.text), ["10 Downing Street", "Downing Street"]);
+      assert.deepEqual(res.body.suggestions.map((s) => s.text), ["1600 Pennsylvania Avenue NW", "Pennsylvania Avenue NW"]);
       assert.deepEqual((await search("nowhere")).body.suggestions, []);
       assert.equal((await search(" ")).status, 400);
-      assert.equal((await search("10 Downing", "")).status, 400);
+      assert.equal((await search("1600 Pennsylvania", "")).status, 400);
       assert.equal((await search("broken")).status, 502);
     });
 
     test("picking a suggestion saves its full address and coordinates", async () => {
       const res = await call("PUT", "/api/family/address", { token: parentToken, body: { placeId: "place-10", sessionToken: session } });
       assert.equal(res.status, 200);
-      const saved = { line1: "10 Downing Street", line2: null, town: "London", county: null, postcode: "SW1A 2AA", latitude: 51.5034, longitude: -0.1276 };
+      const saved = { line1: "1600 Pennsylvania Avenue NW", line2: null, city: "Washington", state: "DC", zip: "20500", latitude: 51.5034, longitude: -0.1276 };
       assert.deepEqual((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address, saved);
     });
 
-    test("a pick that isn't a full UK address is refused", async () => {
+    test("a pick that isn't a full US street address is refused", async () => {
       const street = await call("PUT", "/api/family/address", { token: parentToken, body: { placeId: "place-downing", sessionToken: session } });
       assert.equal(street.status, 400);
       assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: { sessionToken: session } })).status, 400);
       assert.equal((await call("PUT", "/api/family/address", { token: parentToken, body: { placeId: "gone", sessionToken: session } })).status, 502);
-      assert.equal((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address?.town, "London");
+      assert.equal((await call<Me>("GET", "/api/me", { token: parentToken })).body.family?.address?.city, "Washington");
     });
 
     test("everyone in the family sees the address, but only a Family Manager can change or search", async () => {
       const token = teenToken;
-      assert.equal((await call<Me>("GET", "/api/me", { token })).body.family?.address?.town, "London");
+      assert.equal((await call<Me>("GET", "/api/me", { token })).body.family?.address?.city, "Washington");
       assert.equal((await call("PUT", "/api/family/address", { token, body: { placeId: "place-bath", sessionToken: session } })).status, 403);
       assert.equal((await call("DELETE", "/api/family/address", { token })).status, 403);
-      assert.equal((await call("POST", "/api/family/address/search", { token, body: { input: "Downing", sessionToken: session } })).status, 403);
+      assert.equal((await call("POST", "/api/family/address/search", { token, body: { input: "Pennsylvania", sessionToken: session } })).status, 403);
     });
 
     test("the address can be removed", async () => {
