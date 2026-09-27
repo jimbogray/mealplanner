@@ -139,3 +139,11 @@ export function ids(value: unknown, field: string): string[] {
   }
   return [...new Set(value.map((id: string) => id.toLowerCase()))];
 }
+
+/** Weekdays, 1 (Monday) to 5 (Friday): de-duplicated, in order. */
+export function weekdays(value: unknown): number[] {
+  if (!Array.isArray(value) || value.some((d) => !Number.isInteger(d) || d < 1 || d > 5)) {
+    throw new HttpError(400, "Work-from-home days must be weekdays, 1 (Monday) to 5 (Friday)");
+  }
+  return [1, 2, 3, 4, 5].filter((d) => value.includes(d));
+}

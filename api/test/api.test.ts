@@ -1105,6 +1105,32 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const weeks = await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: parentToken });
       assert.deepEqual(weeks.body.map((w) => w.startsOn), [thisWeek]);
     });
+
+    test("adults' usual work-from-home days carry into each new week", async () => {
+      const me = (await call<Me>("GET", "/api/me", { token: parentToken })).body;
+      const parent = me.member!;
+      const child = me.members.find((m) => m.lifeStage !== "adult")!;
+      const set = (id: string, workFromHomeDays: unknown, token = parentToken) =>
+        call<FamilyMember>("PATCH", `/api/family/members/${id}`, { token, body: { workFromHomeDays } });
+
+      assert.deepEqual((await set(parent.id, [3, 1, 3])).body.workFromHomeDays, [1, 3]);
+      assert.equal((await set(parent.id, [6])).status, 400);
+      assert.equal((await set(child.id, [1])).status, 400);
+      assert.equal((await set(parent.id, [2], teenToken)).status, 403);
+
+      const startsOn = addDays(thisWeek, 7);
+      const week = await call<ScheduleWeek>("POST", "/api/family/weeks", { token: teenToken, body: { startsOn, today } });
+      assert.equal(week.status, 201);
+      assert.deepEqual(
+        week.body.days.filter((d) => d.workingFromHomeIds.length).map((d) => [d.date, d.workingFromHomeIds]),
+        [
+          [startsOn, [parent.id]],
+          [addDays(startsOn, 2), [parent.id]],
+        ],
+      );
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+      assert.deepEqual((await set(parent.id, [])).body.workFromHomeDays, []);
+    });
   });
 
   describe("home address", () => {

@@ -54,7 +54,7 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `POST /api/family` | signed in, no family | `{familyName, name, lifeStage}` starts a family |
 | `PATCH /api/family` | admin | `{name}` renames the family |
 | `POST /api/family/members` | admin | `{name, lifeStage, diet?, allergies?}` adds a member without a login |
-| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, diet?, allergies?, role?}` (role: admins only) |
+| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, diet?, allergies?, role?, workFromHomeDays?}` (role: admins only; workFromHomeDays: adults only, 1 = Monday … 5 = Friday, filled into each new schedule week) |
 | `DELETE /api/family/members/:id` | admin, or yourself | removes a member / leaves |
 | `GET /api/family/invites` | admin | open invites |
 | `POST /api/family/invites` | admin | creates an invite → `{code, expiresAt, …}`; `{memberId}` makes it an invite for that existing member to sign in as themselves |

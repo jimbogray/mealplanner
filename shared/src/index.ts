@@ -71,6 +71,8 @@ export interface FamilyMember {
   /** In ALLERGENS order. */
   allergies: Allergen[];
   role: MemberRole;
+  /** Adults: the weekdays they usually work from home, 1 (Monday) to 5 (Friday), in order. */
+  workFromHomeDays: number[];
   /** True when the member has their own login (joined via sign-up or an invite). */
   hasAccount: boolean;
   email: string | null;
@@ -205,6 +207,8 @@ export interface MemberUpdate {
   diet?: Diet;
   allergies?: Allergen[];
   role?: MemberRole;
+  /** Adults only: 1 (Monday) to 5 (Friday). */
+  workFromHomeDays?: number[];
 }
 
 export interface CreateInviteRequest {
@@ -326,6 +330,17 @@ export function isIsoDate(value: unknown): value is IsoDate {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const d = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/** The day of the week, 1 (Monday) to 7 (Sunday). */
+export function isoWeekday(date: IsoDate): number {
+  return new Date(`${date}T00:00:00Z`).getUTCDay() || 7;
+}
+
+/** Adults who usually work from home on that date's weekday. */
+export function usuallyWorkingFromHome(members: Pick<FamilyMember, "id" | "lifeStage" | "workFromHomeDays">[], date: IsoDate): Uuid[] {
+  const day = isoWeekday(date);
+  return members.filter((m) => m.lifeStage === "adult" && m.workFromHomeDays.includes(day)).map((m) => m.id);
 }
 
 /** The seven days of a week, Monday first. */

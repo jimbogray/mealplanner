@@ -99,6 +99,7 @@ function MemberRow({
   const [lifeStage, setLifeStage] = useState<LifeStage>(member.lifeStage);
   const [diet, setDiet] = useState<Diet>(member.diet);
   const [allergies, setAllergies] = useState<Allergen[]>(member.allergies);
+  const [wfhDays, setWfhDays] = useState<number[]>(member.workFromHomeDays);
   const [error, setError] = useState<string | null>(null);
   const summary = dietSummary(member.diet, member.allergies);
 
@@ -108,6 +109,7 @@ function MemberRow({
     setLifeStage(member.lifeStage);
     setDiet(member.diet);
     setAllergies(member.allergies);
+    setWfhDays(member.workFromHomeDays);
     setEditing(true);
   }
 
@@ -124,7 +126,16 @@ function MemberRow({
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    await run(() => api.updateMember(member.id, { name, familiarName: familiarName.trim() || null, lifeStage, diet, allergies }));
+    await run(() =>
+      api.updateMember(member.id, {
+        name,
+        familiarName: familiarName.trim() || null,
+        lifeStage,
+        diet,
+        allergies,
+        ...(lifeStage === "adult" ? { workFromHomeDays: wfhDays } : {}),
+      }),
+    );
   }
 
   function remove() {
@@ -154,6 +165,7 @@ function MemberRow({
             />
           </Field>
           <DietFields idPrefix={`edit-${member.id}`} diet={diet} allergies={allergies} onDiet={setDiet} onAllergies={setAllergies} />
+          {lifeStage === "adult" && <WfhDaysField days={wfhDays} onChange={setWfhDays} />}
           <div className="row">
             <button type="submit">Save</button>
             <button type="button" className="secondary" onClick={() => setEditing(false)}>
@@ -178,6 +190,9 @@ function MemberRow({
             {member.role === "admin" && " · Family Manager"}
           </div>
           {summary && <div className="diet small">{summary}</div>}
+          {member.lifeStage === "adult" && member.workFromHomeDays.length > 0 && (
+            <div className="wfh-note small">Works from home: {member.workFromHomeDays.map((d) => WEEKDAYS[d - 1]).join(", ")}</div>
+          )}
         </div>
         <LifeStageBadge stage={member.lifeStage} />
         <div className="actions">
@@ -213,6 +228,30 @@ function MemberRow({
       )}
       <ErrorNote error={error} />
     </li>
+  );
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+/** Monday to Friday pills for the days an adult usually works from home; new schedule weeks start from these. */
+function WfhDaysField({ days, onChange }: { days: number[]; onChange: (days: number[]) => void }) {
+  return (
+    <fieldset>
+      <legend>Usually works from home</legend>
+      <div className="chips">
+        {WEEKDAYS.map((label, i) => (
+          <label key={label} className="chip toggle wfh">
+            <input
+              type="checkbox"
+              checked={days.includes(i + 1)}
+              onChange={(e) => onChange([1, 2, 3, 4, 5].filter((d) => (d === i + 1 ? e.target.checked : days.includes(d))))}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+      <p className="hint">Filled in on each new week of the schedule; change any day there.</p>
+    </fieldset>
   );
 }
 

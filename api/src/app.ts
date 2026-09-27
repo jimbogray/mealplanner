@@ -4,6 +4,7 @@ import {
   canSignIn,
   daysToPlan,
   isIsoDate,
+  isoWeekday,
   isTimeOfDay,
   MAX_EVENT_TITLE,
   MAX_MEAL_NAME,
@@ -57,11 +58,12 @@ interface MemberRow {
   diet: FamilyMember["diet"];
   allergies: FamilyMember["allergies"];
   role: FamilyMember["role"];
+  wfh_days: number[];
   email: string | null;
   created_at: Date;
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.familiar_name, m.life_stage, m.diet, m.allergies, m.role, u.email, m.created_at
+const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.familiar_name, m.life_stage, m.diet, m.allergies, m.role, m.wfh_days, u.email, m.created_at
   FROM family_member m LEFT JOIN app_user u ON u.id = m.user_id`;
 
 function toMember(r: MemberRow): FamilyMember {
@@ -73,6 +75,7 @@ function toMember(r: MemberRow): FamilyMember {
     diet: r.diet,
     allergies: r.allergies,
     role: r.role,
+    workFromHomeDays: r.wfh_days,
     hasAccount: r.user_id !== null,
     email: r.email,
     createdAt: r.created_at.toISOString(),
@@ -1032,6 +1035,10 @@ export function buildRouter(
     const lifeStage = b.lifeStage === undefined ? target.life_stage : v.lifeStage(b.lifeStage);
     const diet = b.diet === undefined ? target.diet : v.diet(b.diet);
     const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
+    const wfhDays = b.workFromHomeDays === undefined ? target.wfh_days : v.weekdays(b.workFromHomeDays);
+    if (lifeStage !== "adult" && wfhDays.length && b.workFromHomeDays !== undefined) {
+      throw new HttpError(400, "Only adults can have work-from-home days");
+    }
     let role = target.role;
     if (b.role !== undefined) {
       const newRole = v.role(b.role);
@@ -1045,8 +1052,8 @@ export function buildRouter(
       role = newRole;
     }
     await db.query(
-      "UPDATE family_member SET name = $1, familiar_name = $2, life_stage = $3, diet = $4, allergies = $5, role = $6 WHERE id = $7",
-      [name, familiarName, lifeStage, diet, allergies, role, target.id],
+      "UPDATE family_member SET name = $1, familiar_name = $2, life_stage = $3, diet = $4, allergies = $5, role = $6, wfh_days = $7 WHERE id = $8",
+      [name, familiarName, lifeStage, diet, allergies, role, lifeStage === "adult" ? wfhDays : [], target.id],
     );
     return { body: toMember(await familyMember(db, self.family_id, target.id)) };
   });
@@ -1456,7 +1463,21 @@ export function buildRouter(
 
     const familyIds = await familyMemberIds(db, member.family_id);
     // This week starts from today: days already gone aren't planned.
-    const days = daysToPlan(startsOn, today).map((date): DayInput => ({ date, eatOut: false, memberIds: familyIds, guests: 0 }));
+    // Adults' usual work-from-home days carry into each new week.
+    const usual = (
+      await db.query<{ id: string; wfh_days: number[] }>("SELECT id, wfh_days FROM family_member WHERE family_id = $1 AND life_stage = 'adult'", [
+        member.family_id,
+      ])
+    ).rows;
+    const days = daysToPlan(startsOn, today).map(
+      (date): DayInput => ({
+        date,
+        eatOut: false,
+        memberIds: familyIds,
+        guests: 0,
+        workingFromHomeIds: usual.filter((m) => m.wfh_days.includes(isoWeekday(date))).map((m) => m.id),
+      }),
+    );
     // When days are listed, only those days are planned (the rest are left out of the schedule).
     if (b.days !== undefined) {
       if (!Array.isArray(b.days)) throw new HttpError(400, "Days must be a list");

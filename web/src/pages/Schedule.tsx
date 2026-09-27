@@ -7,6 +7,7 @@ import {
   MAX_MEAL_NAME,
   mondayOf,
   nextWeekToAdd,
+  usuallyWorkingFromHome,
   weekDays,
   type Allergen,
   type FamilyMember,
@@ -172,7 +173,15 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
 
 /** A day with the whole family joining, no guests and no meal yet. */
 function everyone(date: string, members: FamilyMember[]): ScheduleDay {
-  return { date, eatOut: false, memberIds: members.map((m) => m.id), guests: 0, meal: null, workingFromHomeIds: [] };
+  return {
+    date,
+    eatOut: false,
+    memberIds: members.map((m) => m.id),
+    guests: 0,
+    meal: null,
+    // Adults' usual work-from-home days carry into each new week.
+    workingFromHomeIds: usuallyWorkingFromHome(members, date),
+  };
 }
 
 /** What to send for a day. Only a Family Manager sends the meal. */
