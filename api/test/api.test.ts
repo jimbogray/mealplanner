@@ -245,11 +245,11 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   test("members have a diet and allergies, editable by an admin", async () => {
     const added = await call<FamilyMember>("POST", "/api/family/members", {
       token: parentToken,
-      body: { name: "Val", lifeStage: "child", diet: "vegan", allergies: ["sesame", "peanut", "peanut"] },
+      body: { name: "Val", lifeStage: "child", diet: "vegan", allergies: ["sesame", "wheat", "peanut", "peanut"] },
     });
     assert.equal(added.status, 201);
     assert.equal(added.body.diet, "vegan");
-    assert.deepEqual(added.body.allergies, ["peanut", "sesame"]);
+    assert.deepEqual(added.body.allergies, ["peanut", "wheat", "sesame"]);
 
     const baby = await call<FamilyMember>("PATCH", `/api/family/members/${babyId}`, {
       token: parentToken,
@@ -266,7 +266,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     assert.equal(cleared.body.diet, "none");
     assert.deepEqual(cleared.body.allergies, []);
 
-    for (const body of [{ diet: "keto" }, { allergies: ["kryptonite"] }, { allergies: "peanut" }]) {
+    // The UK-only allergens (gluten, mustard…) aren't on the US list.
+    for (const body of [{ diet: "keto" }, { allergies: ["kryptonite"] }, { allergies: ["gluten"] }, { allergies: ["mustard"] }, { allergies: "peanut" }]) {
       assert.equal((await call("PATCH", `/api/family/members/${babyId}`, { token: parentToken, body })).status, 400, JSON.stringify(body));
     }
     assert.equal((await call("DELETE", `/api/family/members/${added.body.id}`, { token: parentToken })).status, 204);
