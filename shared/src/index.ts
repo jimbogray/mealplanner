@@ -686,7 +686,7 @@ export function shoppingItems(
   );
 }
 
-/** Everyday groceries, suggested when adding something to the shopping list by hand, with where they're found. */
+/** Everyday foods and drinks (no household items), suggested when adding something to the shopping list by hand, with where they're found. */
 export const COMMON_GROCERIES: readonly { name: string; aisle: Aisle }[] = [
   ...(
     [
@@ -729,12 +729,6 @@ export const COMMON_GROCERIES: readonly { name: string; aisle: Aisle }[] = [
     ] as const
   ).map((name) => ({ name, aisle: "pantry" as const })),
   ...(["Orange juice", "Apple juice", "Sparkling water", "Squash", "Wine", "Beer"] as const).map((name) => ({ name, aisle: "drinks" as const })),
-  ...(
-    [
-      "Toilet roll", "Kitchen roll", "Washing-up liquid", "Dishwasher tablets", "Laundry detergent", "Bin bags",
-      "Foil", "Cling film", "Nappies", "Baby wipes", "Toothpaste", "Shampoo", "Soap",
-    ] as const
-  ).map((name) => ({ name, aisle: "other" as const })),
 ];
 
 /** Where a grocery is found: its aisle in COMMON_GROCERIES, or Other. */

@@ -47,7 +47,7 @@ export function DayIngredients({ meal, onHave }: { meal: ShoppingMeal | undefine
 }
 
 /**
- * A box to add anything else to the week's shopping list (milk, loo roll…), suggesting everyday groceries as you
+ * A box to add anything else to the week's shopping list (milk, bread…), suggesting everyday groceries as you
  * type, with what's been added so far (each can be taken off again).
  */
 export function AddToList({ list, onChange }: { list: ShoppingList; onChange: (list: ShoppingList) => void }) {
@@ -87,7 +87,7 @@ export function AddToList({ list, onChange }: { list: ShoppingList; onChange: (l
         <input
           list={`${id}-groceries`}
           aria-label="Add to the shopping list"
-          placeholder="Add milk, bread, loo roll…"
+          placeholder="Add milk, bread, eggs…"
           maxLength={MAX_EXTRA_NAME}
           value={name}
           onChange={(e) => setName(e.target.value)}
