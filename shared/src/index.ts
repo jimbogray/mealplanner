@@ -107,6 +107,10 @@ export interface Family {
   address: Address | null;
   /** When the family usually has dinner, if a Family Manager has said. */
   dinnerTimes: DinnerTimes;
+  /** Dinners a week the family usually eats out (0 to 7, 0 by default). */
+  eatOutsPerWeek: number;
+  /** Dinners a week the family usually has a meal kit (0 to 7, 0 by default). */
+  mealKitsPerWeek: number;
   createdAt: string;
 }
 
@@ -116,8 +120,18 @@ export interface DinnerTimes {
   weekend: string | null;
 }
 
-/** PUT /api/family/dinner-times body (null or "" clears a time); the response is the saved DinnerTimes. */
-export type SetDinnerTimesRequest = DinnerTimes;
+/** The family's preferences, set by a Family Manager on the family page. */
+export interface FamilyPreferences {
+  dinnerTimes: DinnerTimes;
+  eatOutsPerWeek: number;
+  mealKitsPerWeek: number;
+}
+
+/**
+ * PUT /api/family/preferences body; the response is the saved FamilyPreferences. A dinner time that's null
+ * or "" clears it. Eat-outs and meal kits are whole numbers from 0 to 7 and together at most 7.
+ */
+export type SetFamilyPreferencesRequest = FamilyPreferences;
 
 /** The five-digit ZIP code in a ZIP or ZIP+4 ("20500-0003" → "20500"), or null if it isn't one. */
 export function normaliseZip(value: string): string | null {
@@ -145,6 +159,8 @@ export interface Me {
   members: FamilyMember[];
   /** True when the API can search for addresses (Google Places is set up). */
   addressSearch: boolean;
+  /** True when the API can suggest a week's dinners (Claude is set up). */
+  mealSuggestions: boolean;
 }
 
 /** Public details about an invite, shown on the join page before sign-up. */
@@ -447,6 +463,27 @@ export interface ScheduleEvent {
   weekly: boolean;
   /** The last day a weekly event happens; null while it keeps repeating. */
   until: IsoDate | null;
+}
+
+/**
+ * POST /api/family/suggestions (Family Managers): the days of one week as they stand in the week form. Days without
+ * a meal that haven't passed get a suggestion; the rest are there so the suggestions fit around them.
+ */
+export interface SuggestMealsRequest {
+  days: ScheduleDay[];
+}
+
+/** A suggested dinner for a day: eating out at one of the family's restaurants, or eating in (recipe, meal kit or typed). */
+export interface MealSuggestion {
+  date: IsoDate;
+  eatOut: boolean;
+  meal: ScheduleMeal;
+  /** Why, in a few words, e.g. "Nobody's home before 6:30 and Sam needs picking up". */
+  reason: string;
+}
+
+export interface SuggestMealsResponse {
+  suggestions: MealSuggestion[];
 }
 
 /** Add an event (POST), or change one (PATCH, any of these fields). `until` stops a weekly event after that day. */

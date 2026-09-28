@@ -3,6 +3,8 @@ import {
   addDays,
   canSignIn,
   daysToPlan,
+  displayName,
+  eventOn,
   isIsoDate,
   isoWeekday,
   isTimeOfDay,
@@ -14,7 +16,7 @@ import {
   type AddressSearchResponse,
   type Aisle,
   AISLES,
-  type DinnerTimes,
+  type FamilyPreferences,
   ingredientKey,
   shoppingItems,
   groceryAisle,
@@ -32,6 +34,7 @@ import {
   type InvitePreview,
   type LifeStage,
   type Me,
+  type MealSuggestion,
   type RecipePreview,
   type Restaurant,
   type RestaurantPreview,
@@ -48,6 +51,7 @@ import { HttpError, listener, Router, type Request } from "./http.js";
 import { fetchPage, pageImages, pageLinks, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
 import type { IngredientReader, RecipeIngredients } from "./ingredient-reader.js";
 import type { Maps } from "./maps.js";
+import type { MealSuggester, SuggestBrief } from "./meal-suggester.js";
 import type { RecipeReader } from "./recipe-reader.js";
 import type { RestaurantReader } from "./restaurant-reader.js";
 import * as v from "./validate.js";
@@ -106,6 +110,8 @@ interface FamilyRow {
   /** Postgres TIME, e.g. "18:30:00". */
   dinner_weekday: string | null;
   dinner_weekend: string | null;
+  eat_outs_per_week: number;
+  meal_kits_per_week: number;
   created_at: Date;
 }
 
@@ -122,14 +128,26 @@ function toAddress(r: FamilyRow): Address | null {
   };
 }
 
-function toDinnerTimes(r: Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">): DinnerTimes {
-  return { weekday: r.dinner_weekday?.slice(0, 5) ?? null, weekend: r.dinner_weekend?.slice(0, 5) ?? null };
+type PreferenceColumns = "dinner_weekday" | "dinner_weekend" | "eat_outs_per_week" | "meal_kits_per_week";
+
+function toPreferences(r: Pick<FamilyRow, PreferenceColumns>): FamilyPreferences {
+  return {
+    dinnerTimes: { weekday: r.dinner_weekday?.slice(0, 5) ?? null, weekend: r.dinner_weekend?.slice(0, 5) ?? null },
+    eatOutsPerWeek: r.eat_outs_per_week,
+    mealKitsPerWeek: r.meal_kits_per_week,
+  };
 }
 
-async function loadMe(db: Queryable, userId: string, email: string, addressSearch: boolean, req?: Request): Promise<Me> {
+async function loadMe(
+  db: Queryable,
+  userId: string,
+  email: string,
+  features: Pick<Me, "addressSearch" | "mealSuggestions">,
+  req?: Request,
+): Promise<Me> {
   const user = { id: userId, email };
   const self = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.user_id = $1`, [userId])).rows[0];
-  if (!self) return { user, family: null, member: null, signedInAs: null, members: [], addressSearch };
+  if (!self) return { user, family: null, member: null, signedInAs: null, members: [], ...features };
   const actor = req ? await actingAs(db, req, self) : self;
   const fam = (await db.query<FamilyRow>("SELECT * FROM family WHERE id = $1", [self.family_id])).rows[0];
   const members = (
@@ -139,14 +157,14 @@ async function loadMe(db: Queryable, userId: string, email: string, addressSearc
       [self.family_id],
     )
   ).rows.map(toMember);
-  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), dinnerTimes: toDinnerTimes(fam), createdAt: fam.created_at.toISOString() };
+  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), ...toPreferences(fam), createdAt: fam.created_at.toISOString() };
   return {
     user,
     family,
     member: toMember(actor),
     signedInAs: actor.id === self.id ? null : toMember(self),
     members,
-    addressSearch,
+    ...features,
   };
 }
 
@@ -292,6 +310,8 @@ export interface AppOptions {
   readRestaurant?: RestaurantReader;
   /** Finds UK addresses as people type (Google Places). Without it, the home address can't be set. */
   addressSearch?: AddressSearch;
+  /** Suggests a week's dinners with an LLM. Without it, there's no Suggest button. */
+  suggestMeals?: MealSuggester;
 }
 
 /** A web app's random id for one address search (see AddressSearchRequest). */
@@ -748,6 +768,21 @@ async function mealFrom(db: Queryable, b: Record<string, unknown>, member: Membe
   return { name: v.text(m.name, "Meal", MAX_MEAL_NAME), mealKit: false, recipeId: null, restaurantId: null };
 }
 
+/** When the family has dinner, if they haven't said. */
+const DEFAULT_DINNER_TIME = "18:00";
+
+/** A day's meal as it stands in the week form, described for the meal suggester; null when there isn't one. */
+function chosenMeal(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const m = v.object(value);
+  const name = typeof m.name === "string" ? m.name.trim().slice(0, MAX_MEAL_NAME) : "";
+  if (m.mealKit === true) return name ? `Meal kit: ${name}` : "Meal kit";
+  if (!name) return null;
+  if (typeof m.recipeId === "string") return `Recipe: ${name}`;
+  if (typeof m.restaurantId === "string") return `Restaurant: ${name}`;
+  return name;
+}
+
 async function saveDay(tx: Tx, weekId: string, day: DayInput): Promise<void> {
   const meal = day.meal ?? null;
   // Without a meal in the request, the day keeps its meal, unless eating in or out changed (a recipe or
@@ -860,11 +895,13 @@ async function loadShoppingMeals(db: Queryable, weekId: string): Promise<Shoppin
 
 export function buildRouter(
   db: Db,
-  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "readIngredients" | "addressSearch" | "maps" | "readRestaurant"> & { webOrigins?: string[] } = {},
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "readIngredients" | "addressSearch" | "maps" | "readRestaurant" | "suggestMeals"> & {
+    webOrigins?: string[];
+  } = {},
 ): Router {
   const router = new Router();
   const me = (userId: string, email: string, req?: Request) =>
-    loadMe(db, userId, email, options.addressSearch !== undefined, req);
+    loadMe(db, userId, email, { addressSearch: options.addressSearch !== undefined, mealSuggestions: options.suggestMeals !== undefined }, req);
   const requireAddressSearch = (): AddressSearch => {
     if (!options.addressSearch) throw new HttpError(503, "Address search isn't set up yet");
     return options.addressSearch;
@@ -1039,18 +1076,23 @@ export function buildRouter(
     return { status: 204 };
   });
 
-  router.add("PUT", "/api/family/dinner-times", async (req) => {
+  router.add("PUT", "/api/family/preferences", async (req) => {
     const { member } = await requireAdmin(db, req);
     const b = v.object(req.body);
-    const weekday = v.optionalTimeOfDay(b.weekday, "Mid-week dinner time");
-    const weekend = v.optionalTimeOfDay(b.weekend, "Weekend dinner time");
+    const times = v.object(b.dinnerTimes);
+    const weekday = v.optionalPmHalfHour(times.weekday, "Mid-week dinner time");
+    const weekend = v.optionalPmHalfHour(times.weekend, "Weekend dinner time");
+    const eatOuts = v.perWeek(b.eatOutsPerWeek, "Eat-outs per week");
+    const mealKits = v.perWeek(b.mealKitsPerWeek, "Meal kits per week");
+    if (eatOuts + mealKits > 7) throw new HttpError(400, "Eat-outs and meal kits together can't be more than 7 a week");
     const row = (
-      await db.query<Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">>(
-        "UPDATE family SET dinner_weekday = $1, dinner_weekend = $2 WHERE id = $3 RETURNING dinner_weekday, dinner_weekend",
-        [weekday, weekend, member.family_id],
+      await db.query<Pick<FamilyRow, PreferenceColumns>>(
+        `UPDATE family SET dinner_weekday = $1, dinner_weekend = $2, eat_outs_per_week = $3, meal_kits_per_week = $4
+          WHERE id = $5 RETURNING dinner_weekday, dinner_weekend, eat_outs_per_week, meal_kits_per_week`,
+        [weekday, weekend, eatOuts, mealKits, member.family_id],
       )
     ).rows[0];
-    return { body: toDinnerTimes(row) };
+    return { body: toPreferences(row) };
   });
 
   // Google is called from the API, not the browser, so its key stays on the server and the
@@ -1729,6 +1771,127 @@ export function buildRouter(
       await tx.query("DELETE FROM schedule_day WHERE week_id = $1 AND day = $2", [week.id, req.params.date]);
     });
     return { status: 204 };
+  });
+
+  // Suggests dinners for the days of a week that don't have one yet, fitted around who's in, working from home,
+  // events and the family's preferences. Nothing is saved: the suggestions fill in the week form, to change as wanted.
+  router.add("POST", "/api/family/suggestions", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const suggest = options.suggestMeals;
+    if (!suggest) throw new HttpError(503, "Meal suggestions aren't set up yet");
+    const b = v.object(req.body);
+    if (!Array.isArray(b.days) || b.days.length === 0 || b.days.length > 7) throw new HttpError(400, "Send the week's days");
+    const familyIds = await familyMemberIds(db, member.family_id);
+    const days = b.days
+      .map((raw) => {
+        const d = v.object(raw);
+        const date = v.isoDate(d.date, "Day");
+        const who = dinner(d, familyIds);
+        const wfh = d.workingFromHomeIds === undefined ? [] : v.ids(d.workingFromHomeIds, "Working from home");
+        return { date, ...who, workingFromHomeIds: wfh.filter((id) => familyIds.includes(id)), chosen: chosenMeal(d.meal) };
+      })
+      .sort((a, c) => a.date.localeCompare(c.date));
+    if (days.some((d) => mondayOf(d.date) !== mondayOf(days[0].date))) throw new HttpError(400, "The days must all be in one week");
+    if (new Set(days.map((d) => d.date)).size !== days.length) throw new HttpError(400, "A day is listed twice");
+    // Days that have passed (allowing a day for time zones) are left as they are.
+    const earliest = addDays(new Date().toISOString().slice(0, 10), -1);
+    const needsSuggestion = (d: (typeof days)[number]) => d.chosen === null && d.date >= earliest;
+    if (!days.some(needsSuggestion)) return { body: { suggestions: [] } };
+
+    const fam = (await db.query<FamilyRow>("SELECT * FROM family WHERE id = $1", [member.family_id])).rows[0];
+    const prefs = toPreferences(fam);
+    const members = (await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.family_id = $1 ORDER BY m.created_at`, [member.family_id])).rows.map(
+      toMember,
+    );
+    const nameOf = (id: string) => {
+      const m = members.find((x) => x.id === id);
+      return m ? displayName(m) : "Someone";
+    };
+    const withStage = (id: string) => `${nameOf(id)} (${members.find((x) => x.id === id)?.lifeStage ?? "adult"})`;
+    const events = await loadEvents(db, member.family_id);
+    const recipes = (
+      await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.family_id = $1 ORDER BY r.name`, [member.family_id, member.id])
+    ).rows.map(toRecipe);
+    const restaurants = (
+      await db.query<RestaurantRow>(`${restaurantSelect("$2")} WHERE r.family_id = $1 ORDER BY lower(r.name)`, [member.family_id, member.id])
+    ).rows.map(toRestaurant);
+    const last = (dates: string[]) => (dates.length ? dates.reduce((a, c) => (a > c ? a : c)) : null);
+
+    const brief: SuggestBrief = {
+      preferences: { eatOutsPerWeek: prefs.eatOutsPerWeek, mealKitsPerWeek: prefs.mealKitsPerWeek },
+      family: members.map((m) => ({ name: displayName(m), lifeStage: m.lifeStage, diet: m.diet, allergies: m.allergies })),
+      days: days.map((d) => ({
+        date: d.date,
+        weekday: new Date(`${d.date}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
+        dinnerTime: (isoWeekday(d.date) <= 5 ? prefs.dinnerTimes.weekday : prefs.dinnerTimes.weekend) ?? DEFAULT_DINNER_TIME,
+        eatingOut: d.eatOut,
+        alreadyChosen: d.chosen,
+        needsSuggestion: needsSuggestion(d),
+        joiningForDinner: d.memberIds.map(nameOf),
+        guests: d.guests,
+        adultsWorkingFromHome: d.workingFromHomeIds.map(nameOf),
+        events: events
+          .filter((e) => eventOn(e, d.date))
+          .map((e) => ({ title: e.title, start: e.startTime, end: e.endTime, going: e.memberIds.map(withStage) })),
+      })),
+      recipes: recipes.map((r) => ({
+        id: r.id,
+        name: r.name,
+        cookingMinutes: r.cookingMinutes,
+        mainProtein: r.mainProtein,
+        familyRating: r.averageRating,
+        cookedBefore: r.prepared,
+        timesChosen: r.chosenOn.length,
+        lastChosen: last(r.chosenOn),
+      })),
+      restaurants: restaurants.map((r) => ({
+        id: r.id,
+        name: r.name,
+        cuisine: r.cuisine,
+        driveMinutes: r.driveMinutes,
+        familyRating: r.averageRating,
+        timesChosen: r.chosenOn.length,
+        lastChosen: last(r.chosenOn),
+      })),
+    };
+
+    let found: Awaited<ReturnType<MealSuggester>>;
+    try {
+      found = await suggest(brief);
+    } catch (err) {
+      console.error("Suggesting meals failed", err);
+      throw new HttpError(502, "Couldn't come up with suggestions just now, try again in a moment");
+    }
+
+    // Only what fits: one suggestion per day that needs one, from the family's own recipes and restaurants.
+    const suggestions: MealSuggestion[] = [];
+    const typed = (name: string | null) => name?.trim().slice(0, MAX_MEAL_NAME) || null;
+    for (const s of found.days) {
+      const day = days.find((d) => d.date === s.date);
+      if (!day || !needsSuggestion(day) || suggestions.some((x) => x.date === s.date)) continue;
+      const reason = s.reason.trim().slice(0, 200);
+      const meal = (m: Partial<ScheduleMeal>): ScheduleMeal => ({ name: "", mealKit: false, recipeId: null, restaurantId: null, url: null, ...m });
+      let suggestion: Omit<MealSuggestion, "date" | "reason"> | null = null;
+      if (s.choice === "restaurant") {
+        const r = restaurants.find((x) => x.id === s.restaurantId);
+        if (r) suggestion = { eatOut: true, meal: meal({ name: r.name, restaurantId: r.id, url: r.url }) };
+      } else if (s.choice === "otherOut") {
+        const name = typed(s.name);
+        if (name) suggestion = { eatOut: true, meal: meal({ name }) };
+      } else if (day.eatOut) {
+        continue; // Already eating out: only somewhere to eat out will do.
+      } else if (s.choice === "recipe") {
+        const r = recipes.find((x) => x.id === s.recipeId);
+        if (r) suggestion = { eatOut: false, meal: meal({ name: r.name, recipeId: r.id, url: r.url }) };
+      } else if (s.choice === "mealKit") {
+        suggestion = { eatOut: false, meal: meal({ mealKit: true }) };
+      } else {
+        const name = typed(s.name);
+        if (name) suggestion = { eatOut: false, meal: meal({ name }) };
+      }
+      if (suggestion) suggestions.push({ date: s.date, ...suggestion, reason });
+    }
+    return { body: { suggestions: suggestions.sort((a, c) => a.date.localeCompare(c.date)) } };
   });
 
   // --- events ---

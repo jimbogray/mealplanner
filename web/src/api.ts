@@ -24,13 +24,15 @@ import type {
   ScheduleDay,
   ScheduleWeek,
   SetAddressRequest,
-  DinnerTimes,
-  SetDinnerTimesRequest,
+  FamilyPreferences,
+  SetFamilyPreferencesRequest,
   SetBoughtRequest,
   SetQuantityRequest,
   SetHaveRequest,
   ShoppingList,
   SignupRequest,
+  SuggestMealsRequest,
+  SuggestMealsResponse,
   UpdateDayRequest,
 } from "@mealplanner/shared";
 
@@ -121,7 +123,7 @@ export const api = {
   renameFamily: (name: string) => request<void>("PATCH", "/api/family", { name }),
   setAddress: (body: SetAddressRequest) => request<Address>("PUT", "/api/family/address", body),
   removeAddress: () => request<void>("DELETE", "/api/family/address"),
-  setDinnerTimes: (body: SetDinnerTimesRequest) => request<DinnerTimes>("PUT", "/api/family/dinner-times", body),
+  setPreferences: (body: SetFamilyPreferencesRequest) => request<FamilyPreferences>("PUT", "/api/family/preferences", body),
   searchAddress: (body: AddressSearchRequest) => request<AddressSearchResponse>("POST", "/api/family/address/search", body),
   addMember: (body: MemberInput) => request<FamilyMember>("POST", "/api/family/members", body),
   updateMember: (id: string, body: MemberUpdate) => request<FamilyMember>("PATCH", `/api/family/members/${id}`, body),
@@ -156,6 +158,7 @@ export const api = {
   updateDay: (startsOn: string, date: string, body: UpdateDayRequest) =>
     request<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, body),
   removeDay: (startsOn: string, date: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}/days/${date}`),
+  suggestMeals: (body: SuggestMealsRequest) => request<SuggestMealsResponse>("POST", "/api/family/suggestions", body),
   removeWeek: (startsOn: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}`),
   shopping: (startsOn: string) => request<ShoppingList>("GET", `/api/family/weeks/${startsOn}/shopping`),
   setHave: (startsOn: string, date: string, body: SetHaveRequest) =>

@@ -12,6 +12,7 @@ import {
   type Allergen,
   type FamilyMember,
   type MealInput,
+  type MealSuggestion,
   type ScheduleDay,
   type ScheduleEvent,
   type ScheduleMeal,
@@ -32,7 +33,7 @@ export function SchedulePage() {
   const { me } = useSession();
   if (!me) return null;
   if (!me.family) return <Navigate to="/family" replace />;
-  return <Schedule members={me.members} isManager={me.member?.role === "admin"} />;
+  return <Schedule members={me.members} isManager={me.member?.role === "admin"} canSuggest={me.mealSuggestions} />;
 }
 
 /** The family's recipes and restaurants a Family Manager can pick meals from. */
@@ -60,7 +61,7 @@ function weekLabel(startsOn: string): string {
   return `Week of ${dayLabel(startsOn)}`;
 }
 
-function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: boolean }) {
+function Schedule({ members, isManager, canSuggest }: { members: FamilyMember[]; isManager: boolean; canSuggest: boolean }) {
   const [weeks, setWeeks] = useState<ScheduleWeek[] | null>(null);
   const [choices, setChoices] = useState<MealChoices | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
@@ -123,6 +124,8 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
               title={next === thisWeek ? "This week" : weekLabel(adding)}
               members={members}
               choices={isManager ? choices : null}
+              canSuggest={canSuggest}
+              today={today}
               dates={daysToPlan(adding, today)}
               days={daysToPlan(adding, today).map((date) => everyone(date, members))}
               submitLabel="Add week"
@@ -143,6 +146,7 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
             week={w}
             members={members}
             choices={isManager ? choices : null}
+            canSuggest={canSuggest}
             today={today}
             isCurrent={w.startsOn === thisWeek}
             onChange={replace}
@@ -159,6 +163,7 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
                   week={w}
                   members={members}
                   choices={isManager ? choices : null}
+                  canSuggest={canSuggest}
                   today={today}
                   isCurrent={false}
                   isPast
@@ -229,6 +234,7 @@ function Week({
   week,
   members,
   choices,
+  canSuggest,
   today,
   isCurrent,
   isPast = false,
@@ -238,6 +244,7 @@ function Week({
   week: ScheduleWeek;
   members: FamilyMember[];
   choices: MealChoices | null;
+  canSuggest: boolean;
   today: string;
   isCurrent: boolean;
   /** Earlier weeks don't show ingredients. */
@@ -288,6 +295,8 @@ function Week({
           title={title}
           members={members}
           choices={choices}
+          canSuggest={canSuggest && !isPast}
+          today={today}
           // Days already in the schedule, plus any removed ones that haven't passed yet (so they can be added back).
           dates={weekDays(week.startsOn).filter((date) => date >= today || week.days.some((d) => d.date === date))}
           days={week.days}
@@ -393,12 +402,15 @@ function dinersSummary(day: ScheduleDay, members: FamilyMember[]): string {
 /**
  * A week's days, each with who's joining for dinner (toggle pills), a number of guests and, for a Family
  * Manager (when `choices` is given), the meal. Any of `dates` can be taken out of the schedule, or put back
- * in; saving passes the days still in it.
+ * in; saving passes the days still in it. With `canSuggest`, a Family Manager can have Claude suggest meals
+ * for the days that don't have one yet.
  */
 function WeekForm({
   title,
   members,
   choices,
+  canSuggest,
+  today,
   dates,
   days: initial,
   submitLabel,
@@ -408,6 +420,8 @@ function WeekForm({
   title: string;
   members: FamilyMember[];
   choices: MealChoices | null;
+  canSuggest: boolean;
+  today: string;
   dates: string[];
   days: ScheduleDay[];
   submitLabel: string;
@@ -416,12 +430,43 @@ function WeekForm({
 }) {
   const [days, setDays] = useState(initial);
   const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  /** Why each suggested meal was picked, by date, until that day's meal is changed. */
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const listId = useId();
   const adults = members.filter((m) => m.lifeStage === "adult");
 
   function update(date: string, change: Partial<ScheduleDay>) {
     setDays((list) => list.map((d) => (d.date === date ? { ...d, ...change } : d)));
+    if ("meal" in change) setReasons(({ [date]: _, ...rest }) => rest);
+  }
+
+  /** Days still to come with no meal yet: the ones Suggest fills in. */
+  const open = days.filter((d) => !d.meal && d.date >= today);
+
+  /** Fills in the open days with Claude's suggestions, which can then be changed like any other meal. */
+  async function suggest() {
+    setSuggesting(true);
+    setError(null);
+    try {
+      const { suggestions } = await api.suggestMeals({ days });
+      if (!suggestions.length) setError("No suggestions came back this time. Try again, or pick the meals yourself.");
+      const byDate = new Map(suggestions.map((s) => [s.date, s]));
+      // Only fill days that are still open: anything picked while waiting stays.
+      setDays((list) => list.map((d) => (byDate.has(d.date) && !d.meal ? suggested(d, byDate.get(d.date)!) : d)));
+      setReasons((r) => ({ ...r, ...Object.fromEntries(suggestions.map((s) => [s.date, s.reason])) }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  /** A day with a suggestion applied. Eating out takes everyone and any guests off it, as the Eat out pill does. */
+  function suggested(d: ScheduleDay, s: MealSuggestion): ScheduleDay {
+    if (s.eatOut && !d.eatOut) return { ...d, eatOut: true, memberIds: [], guests: 0, meal: s.meal };
+    return { ...d, meal: s.meal };
   }
 
   function toggle(day: ScheduleDay, memberId: string, joining: boolean) {
@@ -487,6 +532,18 @@ function WeekForm({
           {choices && " Pick a meal from your recipes (or restaurants, eating out), choose Meal kit, or type one in."}
         </p>
       </div>
+      {choices && canSuggest && (
+        <div className="suggest-row">
+          <button type="button" className="secondary" onClick={() => void suggest()} disabled={suggesting || saving || open.length === 0}>
+            {suggesting ? "Suggesting…" : "Suggest"}
+          </button>
+          <span className="hint">
+            {open.length === 0
+              ? "Every day has a meal. Clear one to have it suggested."
+              : "Suggests meals for days without one, around who's home, events and your preferences. Change anything you like before saving."}
+          </span>
+        </div>
+      )}
       {choices && (
         <>
           <datalist id={`${listId}-recipes`}>
@@ -602,8 +659,12 @@ function WeekForm({
                         </label>
                       )}
                     </div>
-                    {(d.meal?.recipeId || d.meal?.restaurantId) && (
-                      <span className="hint">{d.meal.recipeId ? "From your recipes" : "From your restaurants"}</span>
+                    {reasons[d.date] ? (
+                      <span className="hint suggested">Suggested: {reasons[d.date]}</span>
+                    ) : (
+                      (d.meal?.recipeId || d.meal?.restaurantId) && (
+                        <span className="hint">{d.meal.recipeId ? "From your recipes" : "From your restaurants"}</span>
+                      )
                     )}
                   </div>
                 )}
