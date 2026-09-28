@@ -27,6 +27,7 @@ import type {
   DinnerTimes,
   SetDinnerTimesRequest,
   SetBoughtRequest,
+  SetQuantityRequest,
   SetHaveRequest,
   ShoppingList,
   SignupRequest,
@@ -159,6 +160,9 @@ export const api = {
   shopping: (startsOn: string) => request<ShoppingList>("GET", `/api/family/weeks/${startsOn}/shopping`),
   setHave: (startsOn: string, date: string, body: SetHaveRequest) =>
     request<void>("PUT", `/api/family/weeks/${startsOn}/days/${date}/have`, body),
+  addExtra: (startsOn: string, name: string) => request<ShoppingList>("POST", `/api/family/weeks/${startsOn}/shopping/extras`, { name }),
+  removeExtra: (startsOn: string, id: string) => request<ShoppingList>("DELETE", `/api/family/weeks/${startsOn}/shopping/extras/${id}`),
+  setQuantity: (startsOn: string, body: SetQuantityRequest) => request<void>("PUT", `/api/family/weeks/${startsOn}/shopping/quantity`, body),
   setBought: (startsOn: string, body: SetBoughtRequest) => request<void>("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, body),
   events: () => request<ScheduleEvent[]>("GET", "/api/family/events"),
   addEvent: (body: EventRequest) => request<ScheduleEvent>("POST", "/api/family/events", body),

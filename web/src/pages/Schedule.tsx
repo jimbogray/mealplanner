@@ -23,7 +23,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "../components/Field";
-import { DayIngredients, withHave } from "../components/Ingredients";
+import { AddToList, DayIngredients, withHave } from "../components/Ingredients";
 import { DayEvents, EventsContext } from "../components/ScheduleEvents";
 import { useSession } from "../session";
 
@@ -249,12 +249,12 @@ function Week({
   const [shopping, setShopping] = useState<ShoppingList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const title = isCurrent ? "This week" : weekLabel(week.startsOn);
-  const hasRecipes = week.days.some((d) => d.meal?.recipeId);
   const recipes = week.days.map((d) => d.meal?.recipeId ?? "").join();
 
-  // The ingredients of the week's recipes (read from their pages the first time, which can take a moment).
+  // The week's shopping list: its recipes' ingredients (read from their pages the first time, which can take a
+  // moment) and anything added by hand.
   useEffect(() => {
-    if (isPast || !hasRecipes) {
+    if (isPast) {
       setShopping(null);
       return;
     }
@@ -266,7 +266,7 @@ function Week({
     return () => {
       live = false;
     };
-  }, [week.startsOn, recipes, isPast, hasRecipes]);
+  }, [week.startsOn, recipes, isPast]);
 
   async function toggleHave(date: string, name: string, have: boolean) {
     if (!shopping) return;
@@ -316,7 +316,7 @@ function Week({
         <h2>{title}</h2>
         {isCurrent && <span className="note small">from {dayLabel(week.days[0]?.date ?? week.startsOn)}</span>}
         <div className="week-actions">
-          {!isPast && hasRecipes && (
+          {!isPast && (
             <Link to={`/shopping?week=${week.startsOn}`} className="week-link">
               Shopping list
             </Link>
@@ -359,6 +359,12 @@ function Week({
           </li>
         ))}
       </ul>
+      {shopping && (
+        <div className="week-extras">
+          <h3>Also to buy</h3>
+          <AddToList list={shopping} onChange={setShopping} />
+        </div>
+      )}
       <ErrorNote error={error} />
     </section>
   );
