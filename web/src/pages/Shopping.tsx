@@ -129,7 +129,7 @@ function Shopping() {
     <div className="stack">
       <section className="card">
         <div className="week-head">
-          <h1>Shopping list</h1>
+          <h1>Shopping List</h1>
           {choices.length > 1 && startsOn && (
             <select className="week-pick" aria-label="Week" value={startsOn} onChange={(e) => setParams({ week: e.target.value })}>
               {choices.map((w) => (

@@ -25,7 +25,7 @@ export function App() {
         {me?.family && (
           <nav className="nav">
             <NavLink to="/schedule">Schedule</NavLink>
-            <NavLink to="/shopping">Shopping list</NavLink>
+            <NavLink to="/shopping">Shopping List</NavLink>
             <NavLink to="/library">Recipes</NavLink>
             <NavLink to="/restaurants">Restaurants</NavLink>
             <NavLink to="/family">Family</NavLink>
