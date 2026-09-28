@@ -20,7 +20,7 @@ export function App() {
     <>
       <header className={signedInAs ? "topbar acting" : "topbar"}>
         <Link to="/" className="brand">
-          {me?.family ? me.family.name : "Family"}
+          Meal Planner
         </Link>
         {me?.family && (
           <nav className="nav">
