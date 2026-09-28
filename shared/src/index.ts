@@ -582,7 +582,26 @@ export interface ShoppingItem {
   uses: { date: IsoDate; meal: string; quantity: string | null }[];
   /** Set when someone added it to the list by hand (see ShoppingExtra). */
   extraId: Uuid | null;
+  /** How much to buy in all: the recipes' amounts added up, or what someone changed it to. */
+  quantity: string | null;
+  /** The amount the − and + buttons change (see stepQuantity); a count of 1 when there's no number to go on. */
+  amount: Quantity;
+  /** Someone changed the quantity (it no longer comes from the recipes). */
+  adjusted: boolean;
   bought: boolean;
+}
+
+/** An amount of something: 500 g, 2 tins, 3 (with no unit). */
+export interface Quantity {
+  amount: number;
+  /** "g", "ml", "tin", "cloves"…; null for a plain count. */
+  unit: string | null;
+}
+
+/** Change how much of an item to buy; null goes back to what the recipes add up to. */
+export interface SetQuantityRequest {
+  key: string;
+  quantity: Quantity | null;
 }
 
 /** Something added to a week's shopping list by hand, not from a recipe. */
@@ -605,6 +624,8 @@ export interface ShoppingList {
   meals: ShoppingMeal[];
   /** Added by hand, oldest first. */
   extras: ShoppingExtra[];
+  /** Quantities someone changed, by item key. */
+  adjusted: Record<string, Quantity>;
   /** Grouped by aisle (in AISLES order), then A to Z. */
   items: ShoppingItem[];
 }
@@ -630,13 +651,18 @@ export function ingredientKey(name: string): string {
  * The shopping list for a week's meals: every ingredient not already in the house, the same ingredient across
  * recipes on one line, grouped by aisle (in AISLES order) then A to Z. `bought` holds the keys ticked off.
  */
-export function shoppingItems(meals: ShoppingMeal[], bought: string[], extras: ShoppingExtra[] = []): ShoppingItem[] {
+export function shoppingItems(
+  meals: ShoppingMeal[],
+  bought: string[],
+  extras: ShoppingExtra[] = [],
+  adjusted: Record<string, Quantity> = {},
+): ShoppingItem[] {
   const items = new Map<string, ShoppingItem>();
   const item = (name: string, aisle: Aisle): ShoppingItem => {
     const key = ingredientKey(name);
     let found = items.get(key);
     if (!found) {
-      found = { key, name, aisle, uses: [], extraId: null, bought: bought.includes(key) };
+      found = { key, name, aisle, uses: [], extraId: null, quantity: null, amount: { amount: 1, unit: null }, adjusted: false, bought: bought.includes(key) };
       items.set(key, found);
     }
     return found;
@@ -648,6 +674,13 @@ export function shoppingItems(meals: ShoppingMeal[], bought: string[], extras: S
     }
   }
   for (const extra of extras) item(extra.name, extra.aisle).extraId = extra.id;
+  for (const i of items.values()) {
+    const own = adjusted[i.key];
+    const total = own ? { amount: own, text: formatQuantity(own) } : totalQuantity(i.uses.map((u) => u.quantity));
+    i.amount = total.amount;
+    i.quantity = total.text;
+    i.adjusted = !!own;
+  }
   return [...items.values()].sort(
     (a, b) => AISLES.indexOf(a.aisle) - AISLES.indexOf(b.aisle) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
@@ -708,4 +741,82 @@ export const COMMON_GROCERIES: readonly { name: string; aisle: Aisle }[] = [
 export function groceryAisle(name: string): Aisle {
   const key = ingredientKey(name);
   return COMMON_GROCERIES.find((g) => ingredientKey(g.name) === key)?.aisle ?? "other";
+}
+
+const FRACTIONS: Record<string, number> = { "½": 0.5, "¼": 0.25, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3 };
+
+/** A recipe's amount as a number and unit ("500 g", "1½ tins", "1/2 lemon", "2"), or null when there's no number ("a handful"). */
+export function parseQuantity(text: string | null): Quantity | null {
+  const m = text?.trim().match(/^(?:(\d+(?:\.\d+)?)(?![\d./])(?:\s+(?=\d+\/))?)?(?:(\d+)\/(\d+)|([½¼¾⅓⅔]))?(?![\d.])\s*(.*)$/);
+  if (!m || (m[1] === undefined && m[2] === undefined && m[4] === undefined)) return null;
+  const amount = Number(m[1] ?? 0) + (m[2] ? Number(m[2]) / Number(m[3]) : 0) + (m[4] ? FRACTIONS[m[4]] : 0);
+  if (!(amount > 0) || !Number.isFinite(amount)) return null;
+  const unit = m[5].trim().toLowerCase() || null;
+  if (unit === "kg") return { amount: amount * 1000, unit: "g" };
+  if (unit === "l" || unit === "litre" || unit === "litres") return { amount: amount * 1000, unit: "ml" };
+  return { amount, unit: unit && singular(unit) };
+}
+
+/** Units without a plural. */
+const METRIC = ["g", "ml", "tbsp", "tsp", "oz", "lb", "cm"];
+
+function singular(unit: string): string {
+  if (METRIC.includes(unit) || unit.length < 3) return unit;
+  if (/(ch|sh|x|ss)es$/.test(unit)) return unit.slice(0, -2);
+  return unit.endsWith("s") && !unit.endsWith("ss") ? unit.slice(0, -1) : unit;
+}
+
+function plural(unit: string): string {
+  if (METRIC.includes(unit) || unit.length < 3) return unit;
+  return /(ch|sh|x|s)$/.test(unit) ? `${unit}es` : `${unit}s`;
+}
+
+function roundAmount(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** "500 g", "1.5 kg", "2 tins", "1 tin", "3". */
+export function formatQuantity(q: Quantity): string {
+  const n = roundAmount(q.amount);
+  if (q.unit === "g" && n >= 1000) return `${roundAmount(n / 1000)} kg`;
+  if (q.unit === "ml" && n >= 1000) return `${roundAmount(n / 1000)} l`;
+  if (q.unit === null) return String(n);
+  return `${n} ${n === 1 ? q.unit : plural(q.unit)}`;
+}
+
+/**
+ * The recipes' amounts added up: numbers with the same unit are summed (grams with kilos, ml with litres);
+ * anything else is listed after, e.g. "700 g + a handful". `amount` is the first summed amount, for the
+ * − and + buttons, or a count of 1 when there's no number; `text` is null when the recipes don't say.
+ */
+export function totalQuantity(quantities: (string | null)[]): { amount: Quantity; text: string | null } {
+  const sums: Quantity[] = [];
+  const other: string[] = [];
+  for (const text of quantities) {
+    const q = parseQuantity(text);
+    if (!q) {
+      if (text?.trim() && !other.includes(text.trim())) other.push(text.trim());
+      continue;
+    }
+    const same = sums.find((s) => s.unit === q.unit);
+    if (same) same.amount += q.amount;
+    else sums.push({ ...q });
+  }
+  const text = [...sums.map(formatQuantity), ...other].join(" + ") || null;
+  return { amount: sums[0] ?? { amount: 1, unit: null }, text };
+}
+
+/** How much the − and + buttons change an amount by: sensible steps for grams, millilitres and counts. */
+function quantityStep(amount: number, unit: string | null): number {
+  if (unit === "g" || unit === "ml") return amount >= 1000 ? 250 : amount >= 200 ? 50 : 25;
+  return amount < 1 ? 0.25 : 1;
+}
+
+/** An amount one step up (+1) or down (−1), on a round number; never below the smallest step. */
+export function stepQuantity(q: Quantity, direction: 1 | -1): Quantity {
+  // Going down, the step is the one just below (so 1 kg goes to 950 g, not 750 g).
+  const step = quantityStep(direction === 1 ? q.amount : q.amount - 1e-9, q.unit);
+  const next = direction === 1 ? Math.floor(q.amount / step + 1e-9 + 1) * step : Math.ceil(q.amount / step - 1e-9 - 1) * step;
+  const min = q.unit === "g" || q.unit === "ml" ? 25 : q.amount < 1 ? 0.25 : 1;
+  return { amount: roundAmount(Math.max(min, next)), unit: q.unit };
 }

@@ -8,3 +8,12 @@ CREATE TABLE shopping_extra (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX shopping_extra_name ON shopping_extra (week_id, lower(name));
+
+-- How much of an item to buy, when someone changed it from what the recipes add up to.
+CREATE TABLE shopping_quantity (
+    week_id UUID NOT NULL REFERENCES schedule_week(id) ON DELETE CASCADE,
+    item    TEXT NOT NULL,
+    amount  NUMERIC NOT NULL CHECK (amount > 0),
+    unit    TEXT,
+    PRIMARY KEY (week_id, item)
+);

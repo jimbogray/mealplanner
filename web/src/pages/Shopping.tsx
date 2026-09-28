@@ -1,4 +1,15 @@
-import { AISLE_LABELS, AISLES, mondayOf, type ScheduleWeek, type ShoppingItem, type ShoppingList } from "@mealplanner/shared";
+import {
+  AISLE_LABELS,
+  AISLES,
+  formatQuantity,
+  mondayOf,
+  shoppingItems,
+  stepQuantity,
+  type Quantity,
+  type ScheduleWeek,
+  type ShoppingItem,
+  type ShoppingList,
+} from "@mealplanner/shared";
 import { useEffect, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
@@ -26,12 +37,6 @@ function dayLabel(date: string): string {
 
 function weekday(date: string): string {
   return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
-}
-
-/** "2 for Chicken curry (Mon) · 1 for Tacos (Tue) · Added"; just "Added" for something added by hand. */
-function usesLabel(item: ShoppingItem): string {
-  const uses = item.uses.map((u) => `${u.quantity ? `${u.quantity} for ` : ""}${u.meal} (${weekday(u.date)})`);
-  return [...uses, ...(item.extraId ? ["Added"] : [])].join(" · ");
 }
 
 function Shopping() {
@@ -82,6 +87,27 @@ function Shopping() {
     }
   }
 
+  /** Changes how much of an item to buy (null: back to what the recipes add up to), straight away. */
+  async function setQuantity(item: ShoppingItem, quantity: Quantity | null) {
+    if (!list) return;
+    const change = (l: ShoppingList | null): ShoppingList | null => {
+      if (!l) return l;
+      const adjusted = { ...l.adjusted };
+      if (quantity) adjusted[item.key] = quantity;
+      else delete adjusted[item.key];
+      const bought = l.items.filter((i) => i.bought).map((i) => i.key);
+      return { ...l, adjusted, items: shoppingItems(l.meals, bought, l.extras, adjusted) };
+    };
+    const before = list;
+    setList(change);
+    try {
+      await api.setQuantity(list.startsOn, { key: item.key, quantity });
+    } catch (err) {
+      setList(before);
+      setError(errorMessage(err));
+    }
+  }
+
   async function needAfterAll(date: string, name: string) {
     if (!list) return;
     const before = list;
@@ -115,8 +141,8 @@ function Shopping() {
           )}
         </div>
         <p className="note">
-          Everything the week's recipes need, plus anything added, grouped by aisle. Untick what's already in the house on the{" "}
-          <Link to="/schedule">Schedule</Link>, and tick things off here as they go in the basket.
+          Everything the week's recipes need in all, plus anything added, grouped by aisle. Untick what's already in the house on the{" "}
+          <Link to="/schedule">Schedule</Link>, and tick things off here as they go in the basket. Use − and + to change how much.
         </p>
         {shown && shown.items.length > 0 && (
           <p className="shopping-count">
@@ -146,27 +172,21 @@ function Shopping() {
       )}
       {shown &&
         AISLES.map((aisle) => {
-          const items = shown.items.filter((i) => i.aisle === aisle);
+          const items = shown.items.filter((i) => i.aisle === aisle && !i.bought);
           if (!items.length) return null;
           return (
             <section key={aisle} className="card aisle">
               <h2>{AISLE_LABELS[aisle]}</h2>
-              <ul className="shopping-items">
-                {items.map((item) => (
-                  <li key={item.key} className={item.bought ? "bought" : undefined}>
-                    <label>
-                      <input type="checkbox" checked={item.bought} onChange={(e) => void setBought(item, e.target.checked)} />
-                      <span>
-                        <span className="item-name">{capitalise(item.name)}</span>
-                        <span className="item-uses">{usesLabel(item)}</span>
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
+              <ShoppingItems items={items} onBought={setBought} onQuantity={setQuantity} />
             </section>
           );
         })}
+      {shown && shown.items.some((i) => i.bought) && (
+        <section className="card aisle in-basket">
+          <h2>In basket</h2>
+          <ShoppingItems items={shown.items.filter((i) => i.bought)} onBought={setBought} onQuantity={setQuantity} />
+        </section>
+      )}
       {shown && (unread.length > 0 || inHouse.length > 0) && (
         <section className="card stack">
           {unread.length > 0 && (
@@ -195,5 +215,54 @@ function Shopping() {
         </section>
       )}
     </div>
+  );
+}
+
+function ShoppingItems({
+  items,
+  onBought,
+  onQuantity,
+}: {
+  items: ShoppingItem[];
+  onBought: (item: ShoppingItem, bought: boolean) => void;
+  onQuantity: (item: ShoppingItem, quantity: Quantity | null) => void;
+}) {
+  return (
+    <ul className="shopping-items">
+      {items.map((item) => (
+        <li key={item.key} className={item.bought ? "bought" : undefined}>
+          <label>
+            <input type="checkbox" checked={item.bought} onChange={(e) => onBought(item, e.target.checked)} />
+            <span className="item-name">{capitalise(item.name)}</span>
+          </label>
+          <span className="stepper" role="group" aria-label={`How much ${item.name}`}>
+            <button
+              type="button"
+              className="secondary"
+              aria-label="Less"
+              disabled={stepQuantity(item.amount, -1).amount >= item.amount.amount}
+              onClick={() => onQuantity(item, stepQuantity(item.amount, -1))}
+            >
+              −
+            </button>
+            <span className={item.adjusted ? "amount adjusted" : "amount"}>{item.quantity ?? formatQuantity(item.amount)}</span>
+            <button type="button" className="secondary" aria-label="More" onClick={() => onQuantity(item, stepQuantity(item.amount, 1))}>
+              +
+            </button>
+            {/* Always there (hidden until changed) so the rows line up. */}
+            <button
+              type="button"
+              className={item.adjusted ? "link reset" : "link reset unchanged"}
+              title="Back to what the recipes need"
+              aria-label="Reset the amount"
+              disabled={!item.adjusted}
+              onClick={() => onQuantity(item, null)}
+            >
+              ↺
+            </button>
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }

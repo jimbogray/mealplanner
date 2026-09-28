@@ -312,14 +312,20 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .shopping-count { margin: 0.5rem 0 0; font-weight: 600; color: var(--accent); }
 .aisle h2 { margin-bottom: 0.25rem; }
 .shopping-items { list-style: none; margin: 0; padding: 0; }
-.shopping-items li { border-top: 1px solid var(--border); }
+.shopping-items li { display: flex; align-items: center; gap: 0.5rem 0.75rem; border-top: 1px solid var(--border); padding: 0.35rem 0; }
 .shopping-items li:first-child { border-top: none; }
-.shopping-items label { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.6rem 0; cursor: pointer; }
-.shopping-items input { width: 1.35rem; height: 1.35rem; margin: 0.05rem 0 0; flex: none; accent-color: var(--accent); }
-.shopping-items label > span { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; overflow-wrap: anywhere; }
+.shopping-items label { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 0.75rem; padding: 0.3rem 0; cursor: pointer; overflow-wrap: anywhere; }
+.shopping-items input { width: 1.35rem; height: 1.35rem; margin: 0; flex: none; accent-color: var(--accent); }
 .item-name { font-weight: 500; }
-.item-uses { color: var(--muted); font-size: 0.85rem; }
 .shopping-items li.bought .item-name { text-decoration: line-through; color: var(--muted); font-weight: 400; }
+.stepper { flex: none; display: inline-flex; align-items: center; gap: 0.35rem; }
+.stepper button.secondary { width: 2rem; height: 2rem; padding: 0; border-radius: 999px; font-size: 1.1rem; line-height: 1; }
+.stepper .amount { min-width: 4.5rem; text-align: center; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.stepper .amount.adjusted { font-weight: 600; color: var(--accent); }
+.stepper .reset { width: 1.4rem; padding: 0; font-size: 1.1rem; }
+.stepper .reset.unchanged { visibility: hidden; }
+.shopping-items li.bought .stepper { opacity: 0.55; }
+.in-basket { background: #f1f8f5; }
 .in-house summary { cursor: pointer; color: var(--muted); }
 .in-house ul { list-style: none; margin: 0.5rem 0 0; padding: 0; }
 .in-house li { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0; }

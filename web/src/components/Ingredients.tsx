@@ -14,7 +14,7 @@ export function withHave(list: ShoppingList, date: string, name: string, have: b
     m.date === date && m.ingredients ? { ...m, ingredients: m.ingredients.map((i) => (i.name === name ? { ...i, have } : i)) } : m,
   );
   const bought = list.items.filter((i) => i.bought).map((i) => i.key);
-  return { ...list, meals, items: shoppingItems(meals, bought, list.extras) };
+  return { ...list, meals, items: shoppingItems(meals, bought, list.extras, list.adjusted) };
 }
 
 /**
