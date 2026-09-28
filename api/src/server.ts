@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { loadConfig, loadDotEnv } from "./config.js";
 import { createPool, migrate } from "./db.js";
 import { googleKeySource } from "./google.js";
+import { claudeIngredientReader } from "./ingredient-reader.js";
 import { azureMaps } from "./maps.js";
 import { googlePlacesSearch } from "./places.js";
 import { claudeRecipeReader } from "./recipe-reader.js";
@@ -20,6 +21,7 @@ const server = createApp(db, {
   webOrigins: config.webOrigins,
   google: config.googleClientId ? { clientId: config.googleClientId, keys: googleKeySource() } : undefined,
   readRecipe: config.anthropicApiKey ? claudeRecipeReader(config.anthropicApiKey, config.recipeModel) : undefined,
+  readIngredients: config.anthropicApiKey ? claudeIngredientReader(config.anthropicApiKey, config.recipeModel) : undefined,
   addressSearch: config.googlePlacesApiKey ? googlePlacesSearch(config.googlePlacesApiKey) : undefined,
   maps: config.azureMapsKey ? azureMaps(config.azureMapsKey) : undefined,
   readRestaurant: config.anthropicApiKey ? claudeRestaurantReader(config.anthropicApiKey, config.recipeModel) : undefined,

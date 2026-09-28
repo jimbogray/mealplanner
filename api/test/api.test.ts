@@ -23,6 +23,7 @@ import {
   type ScheduleDay,
   type ScheduleEvent,
   type ScheduleWeek,
+  type ShoppingList,
 } from "@mealplanner/shared";
 import { AddressSearchError } from "../src/places.js";
 import { createApp } from "../src/app.js";
@@ -50,6 +51,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   let db: Db;
   let server: ReturnType<typeof createApp>;
   let base: string;
+  // Recipe pages whose ingredients Claude has been asked to read.
+  const ingredientReads: string[] = [];
 
   before(async () => {
     admin = createPool(url!);
@@ -133,6 +136,33 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         if (!text.includes("Trattoria Roma")) return { isRestaurant: false, name: null, cuisine: null, address: null, bookingUrl: null };
         const booking = url.includes("madeup") ? "https://evil.example.com/book" : links.find((l) => l.text === "Book a table")?.url ?? null;
         return { isRestaurant: true, name: "Trattoria Roma", cuisine: "Italian", address: "5 Market Street, Bath BA1 1AB", bookingUrl: booking };
+      },
+      // Claude reading ingredients: "curry" and "tacos" pages have some (onion in both), "broken" ones fail.
+      readIngredients: async ({ url }) => {
+        ingredientReads.push(url);
+        if (url.includes("broken")) throw new Error("model down");
+        if (url.includes("curry")) {
+          return {
+            isRecipe: true,
+            ingredients: [
+              { name: "Chicken thighs", quantity: "500 g", aisle: "meat" },
+              { name: "onion", quantity: "2", aisle: "produce" },
+              { name: "Coconut milk", quantity: "1 tin", aisle: "pantry" },
+              { name: "Onion ", quantity: "1", aisle: "produce" },
+            ],
+          };
+        }
+        if (url.includes("tacos")) {
+          return {
+            isRecipe: true,
+            ingredients: [
+              { name: "Tortillas", quantity: "8", aisle: "bakery" },
+              { name: "Onion", quantity: "1", aisle: "produce" },
+              { name: "Soured cream", quantity: null, aisle: "dairy" },
+            ],
+          };
+        }
+        return { isRecipe: false, ingredients: [] };
       },
       readRecipe: async ({ url, text, images }) => {
         const none = { name: null, description: null, cookingMinutes: null, mainProtein: null, imageUrl: null };
@@ -1130,6 +1160,81 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       );
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
       assert.deepEqual((await set(parent.id, [])).body.workFromHomeDays, []);
+    });
+
+    test("a week's recipes make a shopping list: ingredients read once, what's in the house left off, items ticked off", async () => {
+      const recipe = async (name: string) =>
+        (await call<FavouriteRecipe>("POST", "/api/family/recipes", { token: parentToken, body: { url: `https://www.example.com/${name}`, name } })).body.id;
+      const curry = await recipe("curry");
+      const tacos = await recipe("tacos");
+      const broken = await recipe("broken");
+      const startsOn = addDays(thisWeek, 7);
+      const [mon, tue, wed, thu] = [0, 1, 2, 3].map((i) => addDays(startsOn, i));
+      const days = [
+        { date: mon, memberIds: everyone, guests: 0, meal: { recipeId: curry } },
+        { date: tue, memberIds: everyone, guests: 0, meal: { recipeId: tacos } },
+        { date: wed, memberIds: everyone, guests: 0, meal: { recipeId: curry } },
+        { date: thu, memberIds: everyone, guests: 0, meal: { recipeId: broken } },
+      ];
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days } })).status, 201);
+      const path = `/api/family/weeks/${startsOn}/shopping`;
+
+      const list = await call<ShoppingList>("GET", path, { token: teenToken });
+      assert.equal(list.status, 200);
+      assert.deepEqual(
+        list.body.meals.map((m) => [m.date, m.name, m.ingredients?.length ?? null]),
+        [
+          [mon, "curry", 3],
+          [tue, "tacos", 3],
+          [wed, "curry", 3],
+          [thu, "broken", null],
+        ],
+      );
+      // Grouped by aisle, the same ingredient on one line.
+      assert.deepEqual(
+        list.body.items.map((i) => [i.aisle, i.name, i.uses.map((u) => u.quantity).join(", ")]),
+        [
+          ["produce", "onion", "2, 1, 2"],
+          ["bakery", "Tortillas", "8"],
+          ["meat", "Chicken thighs", "500 g, 500 g"],
+          ["dairy", "Soured cream", ""],
+          ["pantry", "Coconut milk", "1 tin, 1 tin"],
+        ],
+      );
+      // Each page read once; a failed read is tried again.
+      const brokenReads = () => ingredientReads.filter((u) => u.endsWith("/broken")).length;
+      const before = brokenReads();
+      await call("GET", path, { token: parentToken });
+      assert.equal(ingredientReads.filter((u) => u.endsWith("/curry")).length, 1);
+      assert.equal(brokenReads(), before + 1);
+
+      // Onions for Monday are in the house; anyone can say so.
+      const have = (date: string, name: string, value: boolean) =>
+        call("PUT", `/api/family/weeks/${startsOn}/days/${date}/have`, { token: teenToken, body: { name, have: value } });
+      assert.equal((await have(mon, "ONION", true)).status, 204);
+      assert.equal((await have(mon, "Bananas", true)).status, 400);
+      assert.equal((await have(thu, "onion", true)).status, 400);
+      let after = (await call<ShoppingList>("GET", path, { token: parentToken })).body;
+      assert.deepEqual(after.meals[0].ingredients!.map((i) => i.have), [false, true, false]);
+      assert.deepEqual(after.items.find((i) => i.key === "onion")!.uses.map((u) => u.date), [tue, wed]);
+
+      const bought = (key: string, value: boolean) =>
+        call("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, { token: teenToken, body: { key, bought: value } });
+      assert.equal((await bought("Tortillas", true)).status, 204);
+      assert.equal((await bought("onion", true)).status, 204);
+      assert.equal((await bought("onion", false)).status, 204);
+      after = (await call<ShoppingList>("GET", path, { token: parentToken })).body;
+      assert.deepEqual(after.items.filter((i) => i.bought).map((i) => i.key), ["tortillas"]);
+
+      // Other families can't see it.
+      const other = await call<AuthResponse>("POST", "/api/auth/signup", {
+        body: { email: "shopping-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
+      });
+      assert.equal((await call("GET", path, { token: other.body.token })).status, 404);
+      assert.equal((await call("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, { token: other.body.token, body: { key: "x", bought: true } })).status, 404);
+
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+      for (const id of [curry, tacos, broken]) await call("DELETE", `/api/family/recipes/${id}`, { token: parentToken });
     });
   });
 

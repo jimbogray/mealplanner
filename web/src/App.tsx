@@ -8,6 +8,7 @@ import { LibraryPage } from "./pages/Library";
 import { LoginPage } from "./pages/Login";
 import { RestaurantsPage } from "./pages/Restaurants";
 import { SchedulePage } from "./pages/Schedule";
+import { ShoppingPage } from "./pages/Shopping";
 import { SignupPage } from "./pages/Signup";
 import { useSession } from "./session";
 
@@ -24,6 +25,7 @@ export function App() {
         {me?.family && (
           <nav className="nav">
             <NavLink to="/schedule">Schedule</NavLink>
+            <NavLink to="/shopping">Shopping list</NavLink>
             <NavLink to="/library">Recipes</NavLink>
             <NavLink to="/restaurants">Restaurants</NavLink>
             <NavLink to="/family">Family</NavLink>
@@ -80,6 +82,14 @@ export function App() {
               element={
                 <RequireSignIn>
                   <SchedulePage />
+                </RequireSignIn>
+              }
+            />
+            <Route
+              path="/shopping"
+              element={
+                <RequireSignIn>
+                  <ShoppingPage />
                 </RequireSignIn>
               }
             />

@@ -12,7 +12,13 @@ import {
   nextWeekToAdd,
   type Address,
   type AddressSearchResponse,
+  type Aisle,
+  AISLES,
   type DinnerTimes,
+  ingredientKey,
+  shoppingItems,
+  type ShoppingList,
+  type ShoppingMeal,
   weekDays,
   type AuthResponse,
   type Family,
@@ -36,6 +42,7 @@ import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
 import { HttpError, listener, Router, type Request } from "./http.js";
 import { fetchPage, pageImages, pageLinks, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
+import type { IngredientReader, RecipeIngredients } from "./ingredient-reader.js";
 import type { Maps } from "./maps.js";
 import type { RecipeReader } from "./recipe-reader.js";
 import type { RestaurantReader } from "./restaurant-reader.js";
@@ -273,6 +280,8 @@ export interface AppOptions {
   fetchPage?: PageFetcher;
   /** Reads a recipe's details from its page with an LLM. Without it, people type the details in. */
   readRecipe?: RecipeReader;
+  /** Reads a recipe's ingredients from its page with an LLM, for the shopping list. Without it, there's no shopping list. */
+  readIngredients?: IngredientReader;
   /** Finds restaurants on the map and times the drive from home. Without it, there are no driving times. */
   maps?: Maps;
   /** Reads a restaurant's web page for its cuisine, address and booking link. Without it, people type them in. */
@@ -770,9 +779,84 @@ function weekStart(value: string): string {
   return value;
 }
 
+/** A week in the path, as its id, or 404. */
+async function weekId(db: Queryable, familyId: string, startsOn: string): Promise<string> {
+  const week = (
+    await db.query<{ id: string }>("SELECT id FROM schedule_week WHERE family_id = $1 AND starts_on = $2", [familyId, weekStart(startsOn)])
+  ).rows[0];
+  if (!week) throw new HttpError(404, "That week isn't in your schedule");
+  return week.id;
+}
+
+const MAX_INGREDIENTS = 60;
+
+/** What Claude read, tidied: names and amounts trimmed and capped, each ingredient once. */
+function tidyIngredients(found: RecipeIngredients): { name: string; quantity: string | null; aisle: Aisle }[] {
+  if (!found.isRecipe) return [];
+  const seen = new Set<string>();
+  const list: { name: string; quantity: string | null; aisle: Aisle }[] = [];
+  for (const i of found.ingredients) {
+    const name = i.name.trim().replace(/\s+/g, " ").slice(0, 80);
+    const key = ingredientKey(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    list.push({ name, quantity: i.quantity?.trim().slice(0, 40) || null, aisle: AISLES.includes(i.aisle) ? i.aisle : "other" });
+  }
+  return list.slice(0, MAX_INGREDIENTS);
+}
+
+interface ShoppingDayRow {
+  day: string;
+  recipe_id: string;
+  name: string;
+  url: string;
+  read: boolean;
+}
+
+/** A week's recipes (eating in) with their ingredients and which are in the house. Recipes not read yet have null ingredients. */
+async function loadShoppingMeals(db: Queryable, weekId: string): Promise<ShoppingMeal[]> {
+  const days = (
+    await db.query<ShoppingDayRow>(
+      `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, r.id AS recipe_id, r.name, r.url, r.ingredients_read_at IS NOT NULL AS read
+         FROM schedule_day d JOIN favourite_recipe r ON r.id = d.meal_recipe_id
+        WHERE d.week_id = $1 AND NOT d.eat_out
+        ORDER BY d.day`,
+      [weekId],
+    )
+  ).rows;
+  const ingredients = (
+    await db.query<{ recipe_id: string; name: string; quantity: string | null; aisle: Aisle }>(
+      "SELECT recipe_id, name, quantity, aisle FROM recipe_ingredient WHERE recipe_id = ANY($1::uuid[]) ORDER BY position",
+      [days.map((d) => d.recipe_id)],
+    )
+  ).rows;
+  const have = (
+    await db.query<{ day: string; recipe_id: string; item: string }>(
+      "SELECT to_char(day, 'YYYY-MM-DD') AS day, recipe_id, item FROM schedule_have WHERE week_id = $1",
+      [weekId],
+    )
+  ).rows;
+  return days.map((d) => ({
+    date: d.day,
+    recipeId: d.recipe_id,
+    name: d.name,
+    url: d.url,
+    ingredients: d.read
+      ? ingredients
+          .filter((i) => i.recipe_id === d.recipe_id)
+          .map((i) => ({
+            name: i.name,
+            quantity: i.quantity,
+            aisle: i.aisle,
+            have: have.some((h) => h.day === d.day && h.recipe_id === d.recipe_id && h.item === ingredientKey(i.name)),
+          }))
+      : null,
+  }));
+}
+
 export function buildRouter(
   db: Db,
-  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "addressSearch" | "maps" | "readRestaurant"> & { webOrigins?: string[] } = {},
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "readIngredients" | "addressSearch" | "maps" | "readRestaurant"> & { webOrigins?: string[] } = {},
 ): Router {
   const router = new Router();
   const me = (userId: string, email: string, req?: Request) =>
@@ -1439,6 +1523,64 @@ export function buildRouter(
     return { status: 204 };
   });
 
+  // --- ingredients ----------------------------------------------------------
+  // Read from a recipe's page once, the first time it's picked for a day, and kept. A failed read isn't kept,
+  // so it's tried again next time.
+
+  const reading = new Map<string, Promise<void>>();
+  const readIngredients = (recipeId: string): Promise<void> => {
+    const reader = options.readIngredients;
+    if (!reader) return Promise.resolve();
+    let pending = reading.get(recipeId);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const recipe = (
+            await db.query<{ url: string }>("SELECT url FROM favourite_recipe WHERE id = $1 AND ingredients_read_at IS NULL", [recipeId])
+          ).rows[0];
+          if (!recipe) return; // Already read, or removed.
+          const page = await (options.fetchPage ?? fetchPage)(recipe.url);
+          const found = tidyIngredients(await reader({ url: page.url, text: pageText(page.html) }));
+          await withTransaction(db, async (tx) => {
+            const still = await tx.query("SELECT 1 FROM favourite_recipe WHERE id = $1 AND ingredients_read_at IS NULL FOR UPDATE", [recipeId]);
+            if (!still.rowCount) return;
+            await tx.query(
+              `INSERT INTO recipe_ingredient (recipe_id, position, name, quantity, aisle)
+               SELECT $1, t.position, t.name, t.quantity, t.aisle
+                 FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS t(name, quantity, aisle, position)`,
+              [recipeId, found.map((i) => i.name), found.map((i) => i.quantity), found.map((i) => i.aisle)],
+            );
+            await tx.query("UPDATE favourite_recipe SET ingredients_read_at = now() WHERE id = $1", [recipeId]);
+          });
+        } catch (err) {
+          console.error("Reading a recipe's ingredients failed", err);
+        } finally {
+          reading.delete(recipeId);
+        }
+      })();
+      reading.set(recipeId, pending);
+    }
+    return pending;
+  };
+
+  /** Starts reading the ingredients of any recipes just picked, so they're ready for the shopping list. */
+  const readPicked = (days: DayInput[]) => {
+    for (const d of days) if (d.meal?.recipeId) void readIngredients(d.meal.recipeId);
+  };
+
+  /** A week's shopping list, reading any of its recipes' ingredients that haven't been read yet. */
+  const shoppingList = async (familyId: string, startsOn: string): Promise<ShoppingList> => {
+    const id = await weekId(db, familyId, startsOn);
+    let meals = await loadShoppingMeals(db, id);
+    const unread = [...new Set(meals.filter((m) => !m.ingredients).map((m) => m.recipeId))];
+    if (unread.length && options.readIngredients) {
+      await Promise.all(unread.map(readIngredients));
+      meals = await loadShoppingMeals(db, id);
+    }
+    const bought = (await db.query<{ item: string }>("SELECT item FROM shopping_bought WHERE week_id = $1", [id])).rows.map((r) => r.item);
+    return { startsOn, meals, items: shoppingItems(meals, bought) };
+  };
+
   // --- weekly schedule ----------------------------------------------------
   // Weeks run Monday to Sunday. Like recipes, the schedule belongs to the family: anyone in it can change it,
   // but only a Family Manager chooses the meals.
@@ -1522,6 +1664,7 @@ export function buildRouter(
       ).rows[0].id;
       for (const day of days) await saveDay(tx, weekId, day);
     });
+    readPicked(days);
     return { status: 201, body: (await loadWeeks(db, member.family_id, startsOn))[0] };
   });
 
@@ -1548,6 +1691,7 @@ export function buildRouter(
       if (!exists && date < addDays(new Date().toISOString().slice(0, 10), -1)) throw new HttpError(404, "That day has already passed");
       await saveDay(tx, week.id, day);
     });
+    readPicked([day]);
     const body: ScheduleDay = (await loadWeeks(db, member.family_id, startsOn))[0].days.find((d) => d.date === date)!;
     return { body };
   });
@@ -1631,6 +1775,63 @@ export function buildRouter(
       weekStart(req.params.startsOn),
     ]);
     if (!rowCount) throw new HttpError(404, "That week isn't in your schedule");
+    return { status: 204 };
+  });
+
+  // --- shopping list ------------------------------------------------------
+  // Anyone in the family can mark what's already in the house and tick items off.
+
+  router.add("GET", "/api/family/weeks/:startsOn/shopping", async (req) => {
+    const { member } = await requireMember(db, req);
+    return { body: await shoppingList(member.family_id, req.params.startsOn) };
+  });
+
+  // An ingredient of a day's recipe is already in the house (or isn't after all).
+  router.add("PUT", "/api/family/weeks/:startsOn/days/:date/have", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const b = v.object(req.body);
+    const item = ingredientKey(v.text(b.name, "Ingredient", 80));
+    if (typeof b.have !== "boolean") throw new HttpError(400, "Have must be true or false");
+    const day = (
+      await db.query<{ recipe_id: string | null }>("SELECT meal_recipe_id AS recipe_id FROM schedule_day WHERE week_id = $1 AND day = $2", [
+        id,
+        v.isoDate(req.params.date, "Day"),
+      ])
+    ).rows[0];
+    if (!day) throw new HttpError(404, "That day isn't in this week");
+    if (!day.recipe_id) throw new HttpError(400, "That day's meal isn't one of your recipes");
+    const names = (await db.query<{ name: string }>("SELECT name FROM recipe_ingredient WHERE recipe_id = $1", [day.recipe_id])).rows;
+    if (!names.some((n) => ingredientKey(n.name) === item)) throw new HttpError(400, "That isn't one of the recipe's ingredients");
+    if (b.have) {
+      await db.query("INSERT INTO schedule_have (week_id, day, recipe_id, item) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING", [
+        id,
+        req.params.date,
+        day.recipe_id,
+        item,
+      ]);
+    } else {
+      await db.query("DELETE FROM schedule_have WHERE week_id = $1 AND day = $2 AND recipe_id = $3 AND item = $4", [
+        id,
+        req.params.date,
+        day.recipe_id,
+        item,
+      ]);
+    }
+    return { status: 204 };
+  });
+
+  router.add("PUT", "/api/family/weeks/:startsOn/shopping/bought", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const b = v.object(req.body);
+    const item = ingredientKey(v.text(b.key, "Item", 80));
+    if (typeof b.bought !== "boolean") throw new HttpError(400, "Bought must be true or false");
+    if (b.bought) {
+      await db.query("INSERT INTO shopping_bought (week_id, item) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, item]);
+    } else {
+      await db.query("DELETE FROM shopping_bought WHERE week_id = $1 AND item = $2", [id, item]);
+    }
     return { status: 204 };
   });
 

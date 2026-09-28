@@ -296,3 +296,30 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .chip.toggle.wfh { border-style: dashed; }
 .chip.toggle.wfh:has(input:checked) { border-style: solid; border-color: #6b5bb5; background: #efecfb; color: #463a86; }
 .wfh-note { font-size: 0.9rem; color: #463a86; }
+
+/* A day's recipe ingredients on the schedule: ticked pills are to buy, unticked ones are in the house. */
+.ingredients { font-size: 0.9rem; }
+.ingredients summary { cursor: pointer; color: var(--accent); }
+.ingredients .hint { margin: 0.35rem 0; }
+.ingredients .chips { margin-bottom: 0.25rem; }
+.chip.toggle.ingredient { font-size: 0.85rem; gap: 0.35rem; }
+.chip.toggle.ingredient:not(:has(input:checked)) { text-decoration: line-through; border-style: dashed; }
+.chip.toggle.ingredient .qty { color: var(--muted); font-size: 0.8rem; }
+.week-link { font-size: 0.95rem; padding: 0.25rem; }
+
+/* The shopping list page. */
+.week-pick { width: auto; margin-left: auto; }
+.shopping-count { margin: 0.5rem 0 0; font-weight: 600; color: var(--accent); }
+.aisle h2 { margin-bottom: 0.25rem; }
+.shopping-items { list-style: none; margin: 0; padding: 0; }
+.shopping-items li { border-top: 1px solid var(--border); }
+.shopping-items li:first-child { border-top: none; }
+.shopping-items label { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.6rem 0; cursor: pointer; }
+.shopping-items input { width: 1.35rem; height: 1.35rem; margin: 0.05rem 0 0; flex: none; accent-color: var(--accent); }
+.shopping-items label > span { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; overflow-wrap: anywhere; }
+.item-name { font-weight: 500; }
+.item-uses { color: var(--muted); font-size: 0.85rem; }
+.shopping-items li.bought .item-name { text-decoration: line-through; color: var(--muted); font-weight: 400; }
+.in-house summary { cursor: pointer; color: var(--muted); }
+.in-house ul { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.in-house li { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0; }

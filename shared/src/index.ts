@@ -533,3 +533,100 @@ export interface RestaurantPreview {
   /** The name of a restaurant the family already has with this link or name, if any. */
   alreadySaved: string | null;
 }
+
+/** Store sections a shopping list is grouped by, in the order you'd walk round a supermarket. */
+export const AISLES = ["produce", "bakery", "meat", "fish", "dairy", "frozen", "pantry", "drinks", "other"] as const;
+export type Aisle = (typeof AISLES)[number];
+
+export const AISLE_LABELS: Record<Aisle, string> = {
+  produce: "Fruit & veg",
+  bakery: "Bakery",
+  meat: "Meat",
+  fish: "Fish & seafood",
+  dairy: "Dairy & eggs",
+  frozen: "Frozen",
+  pantry: "Cupboard",
+  drinks: "Drinks",
+  other: "Other",
+};
+
+/** An ingredient to buy for a recipe, read from its page (spices, dried herbs, salt, pepper and water left out). */
+export interface Ingredient {
+  /** Plain shopping name, e.g. "red onion", "chicken thighs". */
+  name: string;
+  /** As the recipe gives it, e.g. "2", "400 g", "1 tin"; null if it doesn't say. */
+  quantity: string | null;
+  aisle: Aisle;
+}
+
+/**
+ * A day's recipe on the schedule, with its ingredients. `have` marks the ones already in the house, which stay
+ * off the shopping list.
+ */
+export interface ShoppingMeal {
+  date: IsoDate;
+  recipeId: Uuid;
+  name: string;
+  url: string;
+  /** null when the ingredients couldn't be read (automatic reading is off, or the page couldn't be read). */
+  ingredients: (Ingredient & { have: boolean })[] | null;
+}
+
+/** One line of the week's shopping list: the same ingredient across the week's recipes. */
+export interface ShoppingItem {
+  /** The ingredient's name in lower case; what ticking it off refers to. */
+  key: string;
+  name: string;
+  aisle: Aisle;
+  /** Each recipe that needs it, with how much. */
+  uses: { date: IsoDate; meal: string; quantity: string | null }[];
+  bought: boolean;
+}
+
+/** A week's shopping list, compiled from the recipes on the schedule that week. */
+export interface ShoppingList {
+  startsOn: IsoDate;
+  meals: ShoppingMeal[];
+  /** Grouped by aisle (in AISLES order), then A to Z. */
+  items: ShoppingItem[];
+}
+
+/** Mark an ingredient of a day's recipe as already in the house (have: true) or needing buying. */
+export interface SetHaveRequest {
+  name: string;
+  have: boolean;
+}
+
+/** Tick a shopping list item off as bought, or untick it. */
+export interface SetBoughtRequest {
+  key: string;
+  bought: boolean;
+}
+
+/** An ingredient's key on the shopping list: its name, trimmed and in lower case. */
+export function ingredientKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * The shopping list for a week's meals: every ingredient not already in the house, the same ingredient across
+ * recipes on one line, grouped by aisle (in AISLES order) then A to Z. `bought` holds the keys ticked off.
+ */
+export function shoppingItems(meals: ShoppingMeal[], bought: string[]): ShoppingItem[] {
+  const items = new Map<string, ShoppingItem>();
+  for (const meal of meals) {
+    for (const ingredient of meal.ingredients ?? []) {
+      if (ingredient.have) continue;
+      const key = ingredientKey(ingredient.name);
+      let item = items.get(key);
+      if (!item) {
+        item = { key, name: ingredient.name, aisle: ingredient.aisle, uses: [], bought: bought.includes(key) };
+        items.set(key, item);
+      }
+      item.uses.push({ date: meal.date, meal: meal.name, quantity: ingredient.quantity });
+    }
+  }
+  return [...items.values()].sort(
+    (a, b) => AISLES.indexOf(a.aisle) - AISLES.indexOf(b.aisle) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+}

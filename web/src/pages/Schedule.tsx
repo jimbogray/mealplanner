@@ -16,12 +16,14 @@ import {
   type ScheduleEvent,
   type ScheduleMeal,
   type ScheduleWeek,
+  type ShoppingList,
   type UpdateDayRequest,
 } from "@mealplanner/shared";
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "../components/Field";
+import { DayIngredients, withHave } from "../components/Ingredients";
 import { DayEvents, EventsContext } from "../components/ScheduleEvents";
 import { useSession } from "../session";
 
@@ -159,6 +161,7 @@ function Schedule({ members, isManager }: { members: FamilyMember[]; isManager: 
                   choices={isManager ? choices : null}
                   today={today}
                   isCurrent={false}
+                  isPast
                   onChange={replace}
                   onRemove={() => void remove(w)}
                 />
@@ -228,6 +231,7 @@ function Week({
   choices,
   today,
   isCurrent,
+  isPast = false,
   onChange,
   onRemove,
 }: {
@@ -236,11 +240,46 @@ function Week({
   choices: MealChoices | null;
   today: string;
   isCurrent: boolean;
+  /** Earlier weeks don't show ingredients. */
+  isPast?: boolean;
   onChange: (week: ScheduleWeek) => void;
   onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [shopping, setShopping] = useState<ShoppingList | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const title = isCurrent ? "This week" : weekLabel(week.startsOn);
+  const hasRecipes = week.days.some((d) => d.meal?.recipeId);
+  const recipes = week.days.map((d) => d.meal?.recipeId ?? "").join();
+
+  // The ingredients of the week's recipes (read from their pages the first time, which can take a moment).
+  useEffect(() => {
+    if (isPast || !hasRecipes) {
+      setShopping(null);
+      return;
+    }
+    let live = true;
+    api.shopping(week.startsOn).then(
+      (list) => live && setShopping(list),
+      () => live && setShopping(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [week.startsOn, recipes, isPast, hasRecipes]);
+
+  async function toggleHave(date: string, name: string, have: boolean) {
+    if (!shopping) return;
+    const before = shopping;
+    setShopping(withHave(shopping, date, name, have));
+    setError(null);
+    try {
+      await api.setHave(week.startsOn, date, { name, have });
+    } catch (err) {
+      setShopping(before);
+      setError(errorMessage(err));
+    }
+  }
 
   if (editing) {
     return (
@@ -277,6 +316,11 @@ function Week({
         <h2>{title}</h2>
         {isCurrent && <span className="note small">from {dayLabel(week.days[0]?.date ?? week.startsOn)}</span>}
         <div className="week-actions">
+          {!isPast && hasRecipes && (
+            <Link to={`/shopping?week=${week.startsOn}`} className="week-link">
+              Shopping list
+            </Link>
+          )}
           <button className="link" onClick={() => setEditing(true)}>
             Edit
           </button>
@@ -304,6 +348,9 @@ function Week({
                   )}
                 </span>
               )}
+              {d.meal?.recipeId && (
+                <DayIngredients meal={shopping?.meals.find((m) => m.date === d.date)} onHave={(name, have) => void toggleHave(d.date, name, have)} />
+              )}
               <WorkingFromHome day={d} members={members} />
               <AllergyNote day={d} members={members} />
               <DayEvents date={d.date} />
@@ -312,6 +359,7 @@ function Week({
           </li>
         ))}
       </ul>
+      <ErrorNote error={error} />
     </section>
   );
 }
