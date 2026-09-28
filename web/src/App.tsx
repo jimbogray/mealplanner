@@ -20,12 +20,12 @@ export function App() {
     <>
       <header className={signedInAs ? "topbar acting" : "topbar"}>
         <Link to="/" className="brand">
-          {me?.family ? me.family.name : "Family"}
+          Meal Planner
         </Link>
         {me?.family && (
           <nav className="nav">
             <NavLink to="/schedule">Schedule</NavLink>
-            <NavLink to="/shopping">Shopping list</NavLink>
+            <NavLink to="/shopping">Shopping List</NavLink>
             <NavLink to="/library">Recipes</NavLink>
             <NavLink to="/restaurants">Restaurants</NavLink>
             <NavLink to="/family">Family</NavLink>

@@ -327,7 +327,7 @@ function Week({
         <div className="week-actions">
           {!isPast && (
             <Link to={`/shopping?week=${week.startsOn}`} className="week-link">
-              Shopping list
+              Shopping List
             </Link>
           )}
           <button className="link" onClick={() => setEditing(true)}>

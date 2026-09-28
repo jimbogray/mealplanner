@@ -1997,7 +1997,7 @@ export function buildRouter(
     return { status: 204 };
   });
 
-  // Anything else for the week (milk, loo roll…), added by hand.
+  // Anything else for the week (milk, bread…), added by hand.
   router.add("POST", "/api/family/weeks/:startsOn/shopping/extras", async (req) => {
     const { member } = await requireMember(db, req);
     const id = await weekId(db, member.family_id, req.params.startsOn);
