@@ -24,7 +24,9 @@ import {
   type ScheduleEvent,
   type ScheduleWeek,
   type ShoppingList,
+  type SuggestMealsResponse,
 } from "@mealplanner/shared";
+import type { SuggestBrief, Suggestions } from "../src/meal-suggester.js";
 import { AddressSearchError } from "../src/places.js";
 import { createApp } from "../src/app.js";
 import { createPool, migrate, type Db } from "../src/db.js";
@@ -53,6 +55,9 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   let base: string;
   // Recipe pages whose ingredients Claude has been asked to read.
   const ingredientReads: string[] = [];
+  // What Claude was last told when asked for meal suggestions, and what it answers.
+  let suggestBrief: SuggestBrief | null = null;
+  let suggestAnswer: (brief: SuggestBrief) => Suggestions = () => ({ days: [] });
 
   before(async () => {
     admin = createPool(url!);
@@ -138,6 +143,10 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         return { isRestaurant: true, name: "Trattoria Roma", cuisine: "Italian", address: "5 Market Street, Bath BA1 1AB", bookingUrl: booking };
       },
       // Claude reading ingredients: "curry" and "tacos" pages have some (onion in both), "broken" ones fail.
+      suggestMeals: async (brief) => {
+        suggestBrief = brief;
+        return suggestAnswer(brief);
+      },
       readIngredients: async ({ url }) => {
         ingredientReads.push(url);
         if (url.includes("broken")) throw new Error("model down");
@@ -1361,6 +1370,127 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
 
     test("only a Family Manager can change them", async () => {
       assert.equal((await put(withTimes("17:00"), teenToken)).status, 403);
+    });
+  });
+
+  describe("meal suggestions", () => {
+    // A week well ahead, so no day has passed.
+    const monday = addDays(mondayOf(new Date().toISOString().slice(0, 10)), 21);
+    const date = (i: number) => addDays(monday, i);
+    let members: FamilyMember[];
+    let stewId: string;
+    let dinerId: string;
+    const day = (i: number, extra: Partial<ScheduleDay> = {}): ScheduleDay => ({
+      date: date(i),
+      eatOut: false,
+      memberIds: members.map((m) => m.id),
+      guests: 0,
+      meal: null,
+      workingFromHomeIds: [],
+      ...extra,
+    });
+    const suggest = (days: unknown, token = parentToken) =>
+      call<SuggestMealsResponse>("POST", "/api/family/suggestions", { token, body: { days } });
+
+    before(async () => {
+      members = (await call<Me>("GET", "/api/me", { token: parentToken })).body.members;
+      stewId = (
+        await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+          token: parentToken,
+          body: { url: "https://www.example.com/recipes/slow-stew", name: "Slow stew", cookingMinutes: 180 },
+        })
+      ).body.id;
+      dinerId = (await call<Restaurant>("POST", "/api/family/restaurants", { token: parentToken, body: { name: "Corner Diner", readLink: false } }))
+        .body.id;
+      await call("PUT", "/api/family/preferences", {
+        token: parentToken,
+        body: { dinnerTimes: { weekday: "18:30", weekend: null }, eatOutsPerWeek: 1, mealKitsPerWeek: 2 },
+      });
+      await call("POST", "/api/family/events", {
+        token: parentToken,
+        body: { title: "Swimming", date: date(1), startTime: "17:00", endTime: "18:00", memberIds: [members[0].id], weekly: false },
+      });
+    });
+
+    after(async () => {
+      await call("DELETE", `/api/family/recipes/${stewId}`, { token: parentToken });
+      await call("DELETE", `/api/family/restaurants/${dinerId}`, { token: parentToken });
+      await call("PUT", "/api/family/preferences", {
+        token: parentToken,
+        body: { dinnerTimes: { weekday: null, weekend: null }, eatOutsPerWeek: 0, mealKitsPerWeek: 0 },
+      });
+    });
+
+    test("Claude is told the week, preferences, recipes and restaurants", async () => {
+      suggestAnswer = () => ({ days: [] });
+      const kit: ScheduleDay["meal"] = { name: "", mealKit: true, recipeId: null, restaurantId: null, url: null };
+      const res = await suggest([day(1), day(0, { meal: kit }), day(5, { workingFromHomeIds: [members[0].id] })]);
+      assert.equal(res.status, 200);
+      const brief = suggestBrief!;
+      assert.deepEqual(brief.preferences, { eatOutsPerWeek: 1, mealKitsPerWeek: 2 });
+      assert.deepEqual(
+        brief.days.map((d) => [d.date, d.weekday, d.dinnerTime, d.alreadyChosen, d.needsSuggestion]),
+        [
+          [date(0), "Monday", "18:30", "Meal kit", false],
+          [date(1), "Tuesday", "18:30", null, true],
+          [date(5), "Saturday", "18:00", null, true],
+        ],
+      );
+      assert.equal(brief.days[1].events[0].title, "Swimming");
+      assert.match(brief.days[1].events[0].going[0], /\(adult\)$/);
+      assert.equal(brief.days[2].adultsWorkingFromHome.length, 1);
+      assert.ok(brief.recipes.some((r) => r.id === stewId && r.cookingMinutes === 180));
+      assert.ok(brief.restaurants.some((r) => r.id === dinerId));
+    });
+
+    test("suggestions fill only open days, from the family's own recipes and restaurants", async () => {
+      suggestAnswer = () => ({
+        days: [
+          { date: date(0), choice: "recipe", recipeId: stewId, restaurantId: null, name: null, reason: "Already has a meal" },
+          { date: date(1), choice: "mealKit", recipeId: null, restaurantId: null, name: null, reason: "Swimming ends at six" },
+          { date: date(2), choice: "restaurant", recipeId: null, restaurantId: dinerId, name: null, reason: "Nobody home to cook" },
+          { date: date(3), choice: "recipe", recipeId: "00000000-0000-0000-0000-000000000000", restaurantId: null, name: null, reason: "Made up" },
+          { date: date(4), choice: "recipe", recipeId: stewId, restaurantId: null, name: null, reason: "Time for a long cook" },
+          { date: date(5), choice: "recipe", recipeId: stewId, restaurantId: null, name: null, reason: "Not eating in" },
+          { date: date(6), choice: "otherIn", recipeId: null, restaurantId: null, name: " Leftovers ", reason: "Clear the fridge" },
+        ],
+      });
+      const chosen: ScheduleDay["meal"] = { name: "Pizza", mealKit: false, recipeId: null, restaurantId: null, url: null };
+      const days = [day(0, { meal: chosen }), day(1), day(2), day(3), day(4), day(5, { eatOut: true, memberIds: [] }), day(6)];
+      const res = await suggest(days);
+      assert.equal(res.status, 200);
+      assert.deepEqual(
+        res.body.suggestions.map((s) => [s.date, s.eatOut, s.meal.name, s.meal.mealKit, s.meal.recipeId, s.meal.restaurantId, s.reason]),
+        [
+          [date(1), false, "", true, null, null, "Swimming ends at six"],
+          [date(2), true, "Corner Diner", false, null, dinerId, "Nobody home to cook"],
+          [date(4), false, "Slow stew", false, stewId, null, "Time for a long cook"],
+          [date(6), false, "Leftovers", false, null, null, "Clear the fridge"],
+        ],
+      );
+    });
+
+    test("with every day chosen, Claude isn't asked", async () => {
+      suggestBrief = null;
+      const chosen: ScheduleDay["meal"] = { name: "Pizza", mealKit: false, recipeId: null, restaurantId: null, url: null };
+      const res = await suggest([day(0, { meal: chosen })]);
+      assert.deepEqual(res.body, { suggestions: [] });
+      assert.equal(suggestBrief, null);
+    });
+
+    test("days must be one week's, and Claude failing is a 502", async () => {
+      assert.equal((await suggest([])).status, 400);
+      assert.equal((await suggest([day(0), day(7)])).status, 400);
+      assert.equal((await suggest([day(0), day(0)])).status, 400);
+      suggestAnswer = () => {
+        throw new Error("model down");
+      };
+      assert.equal((await suggest([day(0)])).status, 502);
+    });
+
+    test("only a Family Manager can ask", async () => {
+      assert.equal((await suggest([day(0)], teenToken)).status, 403);
+      assert.equal((await call<Me>("GET", "/api/me", { token: teenToken })).body.mealSuggestions, true);
     });
   });
 

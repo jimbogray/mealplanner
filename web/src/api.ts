@@ -31,6 +31,8 @@ import type {
   SetHaveRequest,
   ShoppingList,
   SignupRequest,
+  SuggestMealsRequest,
+  SuggestMealsResponse,
   UpdateDayRequest,
 } from "@mealplanner/shared";
 
@@ -156,6 +158,7 @@ export const api = {
   updateDay: (startsOn: string, date: string, body: UpdateDayRequest) =>
     request<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, body),
   removeDay: (startsOn: string, date: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}/days/${date}`),
+  suggestMeals: (body: SuggestMealsRequest) => request<SuggestMealsResponse>("POST", "/api/family/suggestions", body),
   removeWeek: (startsOn: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}`),
   shopping: (startsOn: string) => request<ShoppingList>("GET", `/api/family/weeks/${startsOn}/shopping`),
   setHave: (startsOn: string, date: string, body: SetHaveRequest) =>

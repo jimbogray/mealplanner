@@ -269,6 +269,9 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .meal-field .meal-input > input { flex: 1 1 auto; min-width: 0; color: var(--ink); }
 .meal-field .chip { flex: none; }
 .meal-field .hint { flex-basis: 100%; }
+.meal-field .hint.suggested { color: #7a5510; }
+.suggest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; }
+.suggest-row .hint { flex: 1 1 220px; }
 
 /* Times picked on the schedule, bottom right of a recipe tile or restaurant. */
 .chosen-count { margin-left: auto; font-size: 0.85rem; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
