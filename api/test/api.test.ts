@@ -1333,12 +1333,12 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const res = await put({ weekday: "18:30", weekend: null });
       assert.equal(res.status, 200);
       assert.deepEqual(res.body, { weekday: "18:30", weekend: null });
-      assert.deepEqual((await put({ weekday: "18:30", weekend: "19:15" })).body, { weekday: "18:30", weekend: "19:15" });
-      assert.deepEqual(await times(), { weekday: "18:30", weekend: "19:15" });
+      assert.deepEqual((await put({ weekday: "18:30", weekend: "12:00" })).body, { weekday: "18:30", weekend: "12:00" });
+      assert.deepEqual(await times(), { weekday: "18:30", weekend: "12:00" });
     });
 
-    test("times must be HH:MM, and blank clears them", async () => {
-      for (const weekday of ["6pm", "24:00", "18:3", 1830]) assert.equal((await put({ weekday, weekend: null })).status, 400);
+    test("times must be on the hour or half hour from 12 PM to 11 PM, and blank clears them", async () => {
+      for (const weekday of ["6pm", "24:00", "18:3", 1830, "18:15", "08:30", "11:30", "23:30"]) assert.equal((await put({ weekday, weekend: null })).status, 400);
       assert.deepEqual((await put({ weekday: "", weekend: null })).body, { weekday: null, weekend: null });
       assert.deepEqual(await times(), { weekday: null, weekend: null });
     });

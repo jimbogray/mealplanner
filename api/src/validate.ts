@@ -94,11 +94,11 @@ export function optionalMinutes(value: unknown): number | null {
   return value;
 }
 
-/** A time of day, "HH:MM" (24-hour), or null when left out or blank. */
-export function optionalTimeOfDay(value: unknown, field: string): string | null {
+/** An afternoon or evening time on the hour or half hour, "12:00" to "23:00", or null when left out or blank. */
+export function optionalPmHalfHour(value: unknown, field: string): string | null {
   if (value === undefined || value === null || value === "") return null;
-  if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
-    throw new HttpError(400, `${field} must be a time like 18:30`);
+  if (typeof value !== "string" || !/^((1[2-9]|2[0-2]):[03]0|23:00)$/.test(value)) {
+    throw new HttpError(400, `${field} must be on the hour or half hour from 12:00 to 23:00, like 18:30`);
   }
   return value;
 }

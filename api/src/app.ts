@@ -1042,8 +1042,8 @@ export function buildRouter(
   router.add("PUT", "/api/family/dinner-times", async (req) => {
     const { member } = await requireAdmin(db, req);
     const b = v.object(req.body);
-    const weekday = v.optionalTimeOfDay(b.weekday, "Mid-week dinner time");
-    const weekend = v.optionalTimeOfDay(b.weekend, "Weekend dinner time");
+    const weekday = v.optionalPmHalfHour(b.weekday, "Mid-week dinner time");
+    const weekend = v.optionalPmHalfHour(b.weekend, "Weekend dinner time");
     const row = (
       await db.query<Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">>(
         "UPDATE family SET dinner_weekday = $1, dinner_weekend = $2 WHERE id = $3 RETURNING dinner_weekday, dinner_weekend",

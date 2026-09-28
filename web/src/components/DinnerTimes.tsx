@@ -4,10 +4,26 @@ import { api } from "../api";
 import { useSession } from "../session";
 import { ErrorNote, errorMessage, Field } from "./Field";
 
-/** "18:30" → "6:30 PM" (or however the browser shows times). */
+/** "18:30" → "6:30 PM" (in the browser's own style of 12-hour time). */
 function showTime(time: string): string {
   const [h, m] = time.split(":").map(Number);
-  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+/** Dinner time choices: every half hour from 12:00 PM to 11:00 PM. */
+const TIME_CHOICES = Array.from({ length: 23 }, (_, i) => `${String(12 + Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`);
+
+function TimeSelect({ id, value, disabled, onChange }: { id: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  return (
+    <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+      <option value="">Not set</option>
+      {TIME_CHOICES.map((t) => (
+        <option key={t} value={t}>
+          {showTime(t)}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 /** The family's usual dinner times, mid-week (Monday to Friday) and weekend. Both optional. */
@@ -49,8 +65,9 @@ export function DinnerTimesCard({ times, isAdmin }: { times: DinnerTimes; isAdmi
 
 function DinnerTimesForm({ times, onDone }: { times: DinnerTimes; onDone: () => void }) {
   const { refresh } = useSession();
-  const [weekday, setWeekday] = useState(times.weekday ?? "");
-  const [weekend, setWeekend] = useState(times.weekend ?? "");
+  // A time saved before the half-hour choices (e.g. 18:15) starts as "Not set".
+  const [weekday, setWeekday] = useState(TIME_CHOICES.includes(times.weekday ?? "") ? times.weekday! : "");
+  const [weekend, setWeekend] = useState(TIME_CHOICES.includes(times.weekend ?? "") ? times.weekend! : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,10 +88,10 @@ function DinnerTimesForm({ times, onDone }: { times: DinnerTimes; onDone: () => 
   return (
     <form className="stack" onSubmit={(e) => void save(e)}>
       <Field label="Mid-week dinner" htmlFor="dinner-weekday" hint="Monday to Friday. Optional.">
-        <input id="dinner-weekday" type="time" value={weekday} disabled={saving} onChange={(e) => setWeekday(e.target.value)} />
+        <TimeSelect id="dinner-weekday" value={weekday} disabled={saving} onChange={setWeekday} />
       </Field>
       <Field label="Weekend dinner" htmlFor="dinner-weekend" hint="Saturday and Sunday. Optional.">
-        <input id="dinner-weekend" type="time" value={weekend} disabled={saving} onChange={(e) => setWeekend(e.target.value)} />
+        <TimeSelect id="dinner-weekend" value={weekend} disabled={saving} onChange={setWeekend} />
       </Field>
       <ErrorNote error={error} />
       <div className="row">
