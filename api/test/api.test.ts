@@ -16,7 +16,7 @@ import {
   type Invite,
   type InvitePreview,
   type Me,
-  type DinnerTimes,
+  type FamilyPreferences,
   type RecipePreview,
   type Restaurant,
   type RestaurantPreview,
@@ -1321,30 +1321,46 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     });
   });
 
-  describe("dinner times", () => {
-    const put = (body: unknown, token = parentToken) => call<DinnerTimes>("PUT", "/api/family/dinner-times", { token, body });
-    const times = async () => (await call<Me>("GET", "/api/me", { token: teenToken })).body.family?.dinnerTimes;
+  describe("family preferences", () => {
+    const none = { dinnerTimes: { weekday: null, weekend: null }, eatOutsPerWeek: 0, mealKitsPerWeek: 0 };
+    const put = (body: unknown, token = parentToken) => call<FamilyPreferences>("PUT", "/api/family/preferences", { token, body });
+    const withTimes = (weekday: unknown, weekend: unknown = null) => ({ ...none, dinnerTimes: { weekday, weekend } });
+    const saved = async () => {
+      const f = (await call<Me>("GET", "/api/me", { token: teenToken })).body.family!;
+      return { dinnerTimes: f.dinnerTimes, eatOutsPerWeek: f.eatOutsPerWeek, mealKitsPerWeek: f.mealKitsPerWeek };
+    };
 
-    test("a family starts with no usual dinner times", async () => {
-      assert.deepEqual(await times(), { weekday: null, weekend: null });
+    test("a family starts with no dinner times, eat-outs or meal kits", async () => {
+      assert.deepEqual(await saved(), none);
     });
 
-    test("a Family Manager can set either or both, and everyone sees them", async () => {
-      const res = await put({ weekday: "18:30", weekend: null });
+    test("a Family Manager can set them, and everyone sees them", async () => {
+      const res = await put(withTimes("18:30"));
       assert.equal(res.status, 200);
-      assert.deepEqual(res.body, { weekday: "18:30", weekend: null });
-      assert.deepEqual((await put({ weekday: "18:30", weekend: "12:00" })).body, { weekday: "18:30", weekend: "12:00" });
-      assert.deepEqual(await times(), { weekday: "18:30", weekend: "12:00" });
+      assert.deepEqual(res.body, withTimes("18:30"));
+      const all = { dinnerTimes: { weekday: "18:30", weekend: "12:00" }, eatOutsPerWeek: 1, mealKitsPerWeek: 2 };
+      assert.deepEqual((await put(all)).body, all);
+      assert.deepEqual(await saved(), all);
     });
 
     test("times must be on the hour or half hour from 12 PM to 11 PM, and blank clears them", async () => {
-      for (const weekday of ["6pm", "24:00", "18:3", 1830, "18:15", "08:30", "11:30", "23:30"]) assert.equal((await put({ weekday, weekend: null })).status, 400);
-      assert.deepEqual((await put({ weekday: "", weekend: null })).body, { weekday: null, weekend: null });
-      assert.deepEqual(await times(), { weekday: null, weekend: null });
+      for (const weekday of ["6pm", "24:00", "18:3", 1830, "18:15", "08:30", "11:30", "23:30"]) assert.equal((await put(withTimes(weekday))).status, 400);
+      assert.deepEqual((await put(withTimes(""))).body, none);
+      assert.deepEqual(await saved(), none);
+    });
+
+    test("eat-outs and meal kits are 0 to 7 a week, and 7 at most together", async () => {
+      for (const n of [-1, 8, 1.5, "2", null]) {
+        assert.equal((await put({ ...none, eatOutsPerWeek: n })).status, 400);
+        assert.equal((await put({ ...none, mealKitsPerWeek: n })).status, 400);
+      }
+      assert.equal((await put({ ...none, eatOutsPerWeek: 4, mealKitsPerWeek: 4 })).status, 400);
+      assert.equal((await put({ ...none, eatOutsPerWeek: 3, mealKitsPerWeek: 4 })).status, 200);
+      assert.equal((await put({ eatOutsPerWeek: 0, mealKitsPerWeek: 0 })).status, 400);
     });
 
     test("only a Family Manager can change them", async () => {
-      assert.equal((await put({ weekday: "17:00", weekend: null }, teenToken)).status, 403);
+      assert.equal((await put(withTimes("17:00"), teenToken)).status, 403);
     });
   });
 

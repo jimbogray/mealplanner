@@ -103,6 +103,14 @@ export function optionalPmHalfHour(value: unknown, field: string): string | null
   return value;
 }
 
+/** How many dinners a week, 0 to 7. */
+export function perWeek(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 7) {
+    throw new HttpError(400, `${field} must be a whole number from 0 to 7`);
+  }
+  return value;
+}
+
 export function role(value: unknown): MemberRole {
   if (value !== "admin" && value !== "member") throw new HttpError(400, "Role must be admin or member");
   return value;

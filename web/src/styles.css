@@ -96,9 +96,9 @@ legend { font-weight: 500; font-size: 0.95rem; padding: 0; margin-bottom: 0.35re
 .chip input { margin: 0; accent-color: var(--accent); }
 .diet { color: #7a5510; margin-top: 0.15rem; }
 .address { display: flex; flex-direction: column; font-style: normal; }
-.dinner-times { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; margin: 0; }
-.dinner-times dt { font-weight: 500; }
-.dinner-times dd { margin: 0; }
+.preferences { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; margin: 0; }
+.preferences dt { font-weight: 500; }
+.preferences dd { margin: 0; }
 input[type="search"] { width: 100%; }
 .suggestions { list-style: none; margin: 0.25rem 0 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .suggestions li + li { border-top: 1px solid var(--border); }

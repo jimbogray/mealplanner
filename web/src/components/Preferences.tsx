@@ -1,4 +1,4 @@
-import type { DinnerTimes } from "@mealplanner/shared";
+import type { FamilyPreferences } from "@mealplanner/shared";
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useSession } from "../session";
@@ -26,36 +26,53 @@ function TimeSelect({ id, value, disabled, onChange }: { id: string; value: stri
   );
 }
 
-/** The family's usual dinner times, mid-week (Monday to Friday) and weekend. Both optional. */
-export function DinnerTimesCard({ times, isAdmin }: { times: DinnerTimes; isAdmin: boolean }) {
+function perWeek(n: number): string {
+  return n === 0 ? "None" : `${n} a week`;
+}
+
+function CountSelect({ id, value, max, disabled, onChange }: { id: string; value: number; max: number; disabled: boolean; onChange: (value: number) => void }) {
+  return (
+    <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))}>
+      {Array.from({ length: max + 1 }, (_, n) => (
+        <option key={n} value={n}>
+          {n}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** The family's preferences: usual dinner times (mid-week and weekend, both optional), and eat-outs and meal kits a week. */
+export function PreferencesCard({ prefs, isAdmin }: { prefs: FamilyPreferences; isAdmin: boolean }) {
   const [editing, setEditing] = useState(false);
-  const hasAny = times.weekday !== null || times.weekend !== null;
+  const times = prefs.dinnerTimes;
+  const notSet = <span className="note">Not set</span>;
 
   return (
     <section className="card">
-      <h2>Dinner times</h2>
+      <h2>Preferences</h2>
       {editing ? (
-        <DinnerTimesForm times={times} onDone={() => setEditing(false)} />
+        <PreferencesForm prefs={prefs} onDone={() => setEditing(false)} />
       ) : (
         <>
-          {hasAny ? (
-            <dl className="dinner-times">
-              <dt>Mid-week</dt>
-              <dd>{times.weekday ? showTime(times.weekday) : <span className="note">Not set</span>}</dd>
-              <dt>Weekend</dt>
-              <dd>{times.weekend ? showTime(times.weekend) : <span className="note">Not set</span>}</dd>
-            </dl>
-          ) : (
-            <p className="note">
-              {isAdmin ? "Add when you usually have dinner, if you like." : "No usual dinner times yet. A Family Manager can add them."}
-            </p>
-          )}
-          {isAdmin && (
+          <dl className="preferences">
+            <dt>Mid-week dinner</dt>
+            <dd>{times.weekday ? showTime(times.weekday) : notSet}</dd>
+            <dt>Weekend dinner</dt>
+            <dd>{times.weekend ? showTime(times.weekend) : notSet}</dd>
+            <dt>Eating out</dt>
+            <dd>{perWeek(prefs.eatOutsPerWeek)}</dd>
+            <dt>Meal kits</dt>
+            <dd>{perWeek(prefs.mealKitsPerWeek)}</dd>
+          </dl>
+          {isAdmin ? (
             <div className="row">
-              <button className={hasAny ? "secondary" : undefined} onClick={() => setEditing(true)}>
-                {hasAny ? "Change times" : "Add times"}
+              <button className="secondary" onClick={() => setEditing(true)}>
+                Change preferences
               </button>
             </div>
+          ) : (
+            <p className="note small">A Family Manager can change these.</p>
           )}
         </>
       )}
@@ -63,11 +80,14 @@ export function DinnerTimesCard({ times, isAdmin }: { times: DinnerTimes; isAdmi
   );
 }
 
-function DinnerTimesForm({ times, onDone }: { times: DinnerTimes; onDone: () => void }) {
+function PreferencesForm({ prefs, onDone }: { prefs: FamilyPreferences; onDone: () => void }) {
   const { refresh } = useSession();
+  const times = prefs.dinnerTimes;
   // A time saved before the half-hour choices (e.g. 18:15) starts as "Not set".
   const [weekday, setWeekday] = useState(TIME_CHOICES.includes(times.weekday ?? "") ? times.weekday! : "");
   const [weekend, setWeekend] = useState(TIME_CHOICES.includes(times.weekend ?? "") ? times.weekend! : "");
+  const [eatOuts, setEatOuts] = useState(prefs.eatOutsPerWeek);
+  const [mealKits, setMealKits] = useState(prefs.mealKitsPerWeek);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +96,11 @@ function DinnerTimesForm({ times, onDone }: { times: DinnerTimes; onDone: () => 
     setSaving(true);
     setError(null);
     try {
-      await api.setDinnerTimes({ weekday: weekday || null, weekend: weekend || null });
+      await api.setPreferences({
+        dinnerTimes: { weekday: weekday || null, weekend: weekend || null },
+        eatOutsPerWeek: eatOuts,
+        mealKitsPerWeek: mealKits,
+      });
       await refresh();
       onDone();
     } catch (err) {
@@ -92,6 +116,12 @@ function DinnerTimesForm({ times, onDone }: { times: DinnerTimes; onDone: () => 
       </Field>
       <Field label="Weekend dinner" htmlFor="dinner-weekend" hint="Saturday and Sunday. Optional.">
         <TimeSelect id="dinner-weekend" value={weekend} disabled={saving} onChange={setWeekend} />
+      </Field>
+      <Field label="Eat out per week" htmlFor="eat-outs">
+        <CountSelect id="eat-outs" value={eatOuts} max={7 - mealKits} disabled={saving} onChange={setEatOuts} />
+      </Field>
+      <Field label="Meal kits per week" htmlFor="meal-kits">
+        <CountSelect id="meal-kits" value={mealKits} max={7 - eatOuts} disabled={saving} onChange={setMealKits} />
       </Field>
       <ErrorNote error={error} />
       <div className="row">

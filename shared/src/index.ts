@@ -107,6 +107,10 @@ export interface Family {
   address: Address | null;
   /** When the family usually has dinner, if a Family Manager has said. */
   dinnerTimes: DinnerTimes;
+  /** Dinners a week the family usually eats out (0 to 7, 0 by default). */
+  eatOutsPerWeek: number;
+  /** Dinners a week the family usually has a meal kit (0 to 7, 0 by default). */
+  mealKitsPerWeek: number;
   createdAt: string;
 }
 
@@ -116,8 +120,18 @@ export interface DinnerTimes {
   weekend: string | null;
 }
 
-/** PUT /api/family/dinner-times body (null or "" clears a time); the response is the saved DinnerTimes. */
-export type SetDinnerTimesRequest = DinnerTimes;
+/** The family's preferences, set by a Family Manager on the family page. */
+export interface FamilyPreferences {
+  dinnerTimes: DinnerTimes;
+  eatOutsPerWeek: number;
+  mealKitsPerWeek: number;
+}
+
+/**
+ * PUT /api/family/preferences body; the response is the saved FamilyPreferences. A dinner time that's null
+ * or "" clears it. Eat-outs and meal kits are whole numbers from 0 to 7 and together at most 7.
+ */
+export type SetFamilyPreferencesRequest = FamilyPreferences;
 
 /** The five-digit ZIP code in a ZIP or ZIP+4 ("20500-0003" → "20500"), or null if it isn't one. */
 export function normaliseZip(value: string): string | null {

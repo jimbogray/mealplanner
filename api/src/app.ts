@@ -14,7 +14,7 @@ import {
   type AddressSearchResponse,
   type Aisle,
   AISLES,
-  type DinnerTimes,
+  type FamilyPreferences,
   ingredientKey,
   shoppingItems,
   groceryAisle,
@@ -106,6 +106,8 @@ interface FamilyRow {
   /** Postgres TIME, e.g. "18:30:00". */
   dinner_weekday: string | null;
   dinner_weekend: string | null;
+  eat_outs_per_week: number;
+  meal_kits_per_week: number;
   created_at: Date;
 }
 
@@ -122,8 +124,14 @@ function toAddress(r: FamilyRow): Address | null {
   };
 }
 
-function toDinnerTimes(r: Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">): DinnerTimes {
-  return { weekday: r.dinner_weekday?.slice(0, 5) ?? null, weekend: r.dinner_weekend?.slice(0, 5) ?? null };
+type PreferenceColumns = "dinner_weekday" | "dinner_weekend" | "eat_outs_per_week" | "meal_kits_per_week";
+
+function toPreferences(r: Pick<FamilyRow, PreferenceColumns>): FamilyPreferences {
+  return {
+    dinnerTimes: { weekday: r.dinner_weekday?.slice(0, 5) ?? null, weekend: r.dinner_weekend?.slice(0, 5) ?? null },
+    eatOutsPerWeek: r.eat_outs_per_week,
+    mealKitsPerWeek: r.meal_kits_per_week,
+  };
 }
 
 async function loadMe(db: Queryable, userId: string, email: string, addressSearch: boolean, req?: Request): Promise<Me> {
@@ -139,7 +147,7 @@ async function loadMe(db: Queryable, userId: string, email: string, addressSearc
       [self.family_id],
     )
   ).rows.map(toMember);
-  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), dinnerTimes: toDinnerTimes(fam), createdAt: fam.created_at.toISOString() };
+  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), ...toPreferences(fam), createdAt: fam.created_at.toISOString() };
   return {
     user,
     family,
@@ -1039,18 +1047,23 @@ export function buildRouter(
     return { status: 204 };
   });
 
-  router.add("PUT", "/api/family/dinner-times", async (req) => {
+  router.add("PUT", "/api/family/preferences", async (req) => {
     const { member } = await requireAdmin(db, req);
     const b = v.object(req.body);
-    const weekday = v.optionalPmHalfHour(b.weekday, "Mid-week dinner time");
-    const weekend = v.optionalPmHalfHour(b.weekend, "Weekend dinner time");
+    const times = v.object(b.dinnerTimes);
+    const weekday = v.optionalPmHalfHour(times.weekday, "Mid-week dinner time");
+    const weekend = v.optionalPmHalfHour(times.weekend, "Weekend dinner time");
+    const eatOuts = v.perWeek(b.eatOutsPerWeek, "Eat-outs per week");
+    const mealKits = v.perWeek(b.mealKitsPerWeek, "Meal kits per week");
+    if (eatOuts + mealKits > 7) throw new HttpError(400, "Eat-outs and meal kits together can't be more than 7 a week");
     const row = (
-      await db.query<Pick<FamilyRow, "dinner_weekday" | "dinner_weekend">>(
-        "UPDATE family SET dinner_weekday = $1, dinner_weekend = $2 WHERE id = $3 RETURNING dinner_weekday, dinner_weekend",
-        [weekday, weekend, member.family_id],
+      await db.query<Pick<FamilyRow, PreferenceColumns>>(
+        `UPDATE family SET dinner_weekday = $1, dinner_weekend = $2, eat_outs_per_week = $3, meal_kits_per_week = $4
+          WHERE id = $5 RETURNING dinner_weekday, dinner_weekend, eat_outs_per_week, meal_kits_per_week`,
+        [weekday, weekend, eatOuts, mealKits, member.family_id],
       )
     ).rows[0];
-    return { body: toDinnerTimes(row) };
+    return { body: toPreferences(row) };
   });
 
   // Google is called from the API, not the browser, so its key stays on the server and the
