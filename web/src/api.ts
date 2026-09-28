@@ -26,6 +26,9 @@ import type {
   SetAddressRequest,
   DinnerTimes,
   SetDinnerTimesRequest,
+  SetBoughtRequest,
+  SetHaveRequest,
+  ShoppingList,
   SignupRequest,
   UpdateDayRequest,
 } from "@mealplanner/shared";
@@ -153,6 +156,10 @@ export const api = {
     request<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${date}`, body),
   removeDay: (startsOn: string, date: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}/days/${date}`),
   removeWeek: (startsOn: string) => request<void>("DELETE", `/api/family/weeks/${startsOn}`),
+  shopping: (startsOn: string) => request<ShoppingList>("GET", `/api/family/weeks/${startsOn}/shopping`),
+  setHave: (startsOn: string, date: string, body: SetHaveRequest) =>
+    request<void>("PUT", `/api/family/weeks/${startsOn}/days/${date}/have`, body),
+  setBought: (startsOn: string, body: SetBoughtRequest) => request<void>("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, body),
   events: () => request<ScheduleEvent[]>("GET", "/api/family/events"),
   addEvent: (body: EventRequest) => request<ScheduleEvent>("POST", "/api/family/events", body),
   updateEvent: (id: string, body: Partial<EventRequest>) => request<ScheduleEvent>("PATCH", `/api/family/events/${id}`, body),
