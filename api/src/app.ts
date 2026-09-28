@@ -4,6 +4,7 @@ import {
   canSignIn,
   daysToPlan,
   isIsoDate,
+  isoWeekday,
   isTimeOfDay,
   MAX_EVENT_TITLE,
   MAX_MEAL_NAME,
@@ -57,11 +58,12 @@ interface MemberRow {
   diet: FamilyMember["diet"];
   allergies: FamilyMember["allergies"];
   role: FamilyMember["role"];
+  wfh_days: number[];
   email: string | null;
   created_at: Date;
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.familiar_name, m.life_stage, m.diet, m.allergies, m.role, u.email, m.created_at
+const MEMBER_SELECT = `SELECT m.id, m.family_id, m.user_id, m.name, m.familiar_name, m.life_stage, m.diet, m.allergies, m.role, m.wfh_days, u.email, m.created_at
   FROM family_member m LEFT JOIN app_user u ON u.id = m.user_id`;
 
 function toMember(r: MemberRow): FamilyMember {
@@ -73,6 +75,7 @@ function toMember(r: MemberRow): FamilyMember {
     diet: r.diet,
     allergies: r.allergies,
     role: r.role,
+    workFromHomeDays: r.wfh_days,
     hasAccount: r.user_id !== null,
     email: r.email,
     createdAt: r.created_at.toISOString(),
@@ -558,6 +561,7 @@ interface ScheduleRow {
   guests: number;
   eat_out: boolean;
   member_ids: string[];
+  wfh_ids: string[];
   meal_name: string | null;
   meal_recipe_id: string | null;
   meal_restaurant_id: string | null;
@@ -570,6 +574,7 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
   const { rows } = await db.query<ScheduleRow>(
     `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests, d.eat_out,
             coalesce(array_agg(s.member_id::text ORDER BY s.member_id) FILTER (WHERE s.member_id IS NOT NULL), '{}') AS member_ids,
+            ARRAY(SELECT h.member_id::text FROM schedule_wfh h WHERE h.week_id = w.id AND h.day = d.day ORDER BY h.member_id) AS wfh_ids,
             -- A linked recipe or restaurant shows its current name.
             coalesce(fr.name, rs.name, d.meal_name) AS meal_name, d.meal_recipe_id, d.meal_restaurant_id, d.meal_kit,
             coalesce(fr.url, rs.url) AS meal_url
@@ -590,7 +595,7 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
       r.meal_name || r.meal_kit
         ? { name: r.meal_name ?? "", mealKit: r.meal_kit, recipeId: r.meal_recipe_id, restaurantId: r.meal_restaurant_id, url: r.meal_url }
       : null;
-    weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, memberIds: r.member_ids, guests: r.guests, meal });
+    weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, memberIds: r.member_ids, guests: r.guests, meal, workingFromHomeIds: r.wfh_ids });
   }
   return weeks;
 }
@@ -655,13 +660,22 @@ async function saveEventMembers(tx: Tx, eventId: string, memberIds: string[]): P
   await tx.query("INSERT INTO schedule_event_member (event_id, member_id) SELECT $1, unnest($2::uuid[])", [eventId, memberIds]);
 }
 
+/** Who's working from home in a day's request (adults in the family only); undefined when it's left out. */
+async function workingFromHome(db: Queryable, b: Record<string, unknown>, familyId: string): Promise<string[] | undefined> {
+  if (b.workingFromHomeIds === undefined) return undefined;
+  const ids = v.ids(b.workingFromHomeIds, "Working from home");
+  const { rows } = await db.query<{ id: string }>("SELECT id FROM family_member WHERE family_id = $1 AND life_stage = 'adult'", [familyId]);
+  if (ids.some((id) => !rows.some((r) => r.id === id))) throw new HttpError(400, "Only adults in your family can be working from home");
+  return ids;
+}
+
 async function familyMemberIds(db: Queryable, familyId: string): Promise<string[]> {
   const { rows } = await db.query<{ id: string }>("SELECT id FROM family_member WHERE family_id = $1 ORDER BY created_at", [familyId]);
   return rows.map((r) => r.id);
 }
 
 /** A day as sent in: who's joining and guests, plus the meal (undefined = leave it as it is). */
-type DayInput = Omit<ScheduleDay, "meal"> & { meal?: MealRow | null };
+type DayInput = Omit<ScheduleDay, "meal" | "workingFromHomeIds"> & { meal?: MealRow | null; workingFromHomeIds?: string[] };
 
 /** A chosen meal as stored. */
 interface MealRow {
@@ -673,7 +687,7 @@ interface MealRow {
 }
 
 /** Who's joining and how many guests, checked against the family's members. Eating out clears both. */
-function dinner(b: Record<string, unknown>, familyIds: string[]): Omit<ScheduleDay, "date" | "meal"> {
+function dinner(b: Record<string, unknown>, familyIds: string[]): Omit<ScheduleDay, "date" | "meal" | "workingFromHomeIds"> {
   if (b.eatOut !== undefined && typeof b.eatOut !== "boolean") throw new HttpError(400, "Eat out must be true or false");
   if (b.eatOut) return { eatOut: true, memberIds: [], guests: 0 };
   const memberIds = v.ids(b.memberIds, "Who's joining");
@@ -740,6 +754,14 @@ async function saveDay(tx: Tx, weekId: string, day: DayInput): Promise<void> {
     "INSERT INTO schedule_diner (week_id, day, member_id) SELECT $1, $2, unnest($3::uuid[])",
     [weekId, day.date, day.memberIds],
   );
+  if (day.workingFromHomeIds !== undefined) {
+    await tx.query("DELETE FROM schedule_wfh WHERE week_id = $1 AND day = $2", [weekId, day.date]);
+    await tx.query("INSERT INTO schedule_wfh (week_id, day, member_id) SELECT $1, $2, unnest($3::uuid[])", [
+      weekId,
+      day.date,
+      day.workingFromHomeIds,
+    ]);
+  }
 }
 
 /** A Monday from the path, or 404. */
@@ -1013,6 +1035,10 @@ export function buildRouter(
     const lifeStage = b.lifeStage === undefined ? target.life_stage : v.lifeStage(b.lifeStage);
     const diet = b.diet === undefined ? target.diet : v.diet(b.diet);
     const allergies = b.allergies === undefined ? target.allergies : v.allergies(b.allergies);
+    const wfhDays = b.workFromHomeDays === undefined ? target.wfh_days : v.weekdays(b.workFromHomeDays);
+    if (lifeStage !== "adult" && wfhDays.length && b.workFromHomeDays !== undefined) {
+      throw new HttpError(400, "Only adults can have work-from-home days");
+    }
     let role = target.role;
     if (b.role !== undefined) {
       const newRole = v.role(b.role);
@@ -1026,8 +1052,8 @@ export function buildRouter(
       role = newRole;
     }
     await db.query(
-      "UPDATE family_member SET name = $1, familiar_name = $2, life_stage = $3, diet = $4, allergies = $5, role = $6 WHERE id = $7",
-      [name, familiarName, lifeStage, diet, allergies, role, target.id],
+      "UPDATE family_member SET name = $1, familiar_name = $2, life_stage = $3, diet = $4, allergies = $5, role = $6, wfh_days = $7 WHERE id = $8",
+      [name, familiarName, lifeStage, diet, allergies, role, lifeStage === "adult" ? wfhDays : [], target.id],
     );
     return { body: toMember(await familyMember(db, self.family_id, target.id)) };
   });
@@ -1437,7 +1463,21 @@ export function buildRouter(
 
     const familyIds = await familyMemberIds(db, member.family_id);
     // This week starts from today: days already gone aren't planned.
-    const days = daysToPlan(startsOn, today).map((date): DayInput => ({ date, eatOut: false, memberIds: familyIds, guests: 0 }));
+    // Adults' usual work-from-home days carry into each new week.
+    const usual = (
+      await db.query<{ id: string; wfh_days: number[] }>("SELECT id, wfh_days FROM family_member WHERE family_id = $1 AND life_stage = 'adult'", [
+        member.family_id,
+      ])
+    ).rows;
+    const days = daysToPlan(startsOn, today).map(
+      (date): DayInput => ({
+        date,
+        eatOut: false,
+        memberIds: familyIds,
+        guests: 0,
+        workingFromHomeIds: usual.filter((m) => m.wfh_days.includes(isoWeekday(date))).map((m) => m.id),
+      }),
+    );
     // When days are listed, only those days are planned (the rest are left out of the schedule).
     if (b.days !== undefined) {
       if (!Array.isArray(b.days)) throw new HttpError(400, "Days must be a list");
@@ -1451,7 +1491,12 @@ export function buildRouter(
         }
         if (planned.has(date)) throw new HttpError(400, `${date} is listed twice`);
         const who = dinner(d, familyIds);
-        planned.set(date, { date, ...who, meal: await mealFrom(db, d, member, who.eatOut) });
+        planned.set(date, {
+          date,
+          ...who,
+          meal: await mealFrom(db, d, member, who.eatOut),
+          workingFromHomeIds: await workingFromHome(db, d, member.family_id),
+        });
       }
       days.splice(0, days.length, ...days.filter((d) => planned.has(d.date)).map((d) => planned.get(d.date)!));
     }
@@ -1487,7 +1532,12 @@ export function buildRouter(
     if (!weekDays(startsOn).includes(date)) throw new HttpError(404, "That day isn't in this week");
     const b = v.object(req.body);
     const who = dinner(b, await familyMemberIds(db, member.family_id));
-    const day: DayInput = { date, ...who, meal: await mealFrom(db, b, member, who.eatOut) };
+    const day: DayInput = {
+      date,
+      ...who,
+      meal: await mealFrom(db, b, member, who.eatOut),
+      workingFromHomeIds: await workingFromHome(db, b, member.family_id),
+    };
     await withTransaction(db, async (tx) => {
       const week = (
         await tx.query<{ id: string }>("SELECT id FROM schedule_week WHERE family_id = $1 AND starts_on = $2", [member.family_id, startsOn])

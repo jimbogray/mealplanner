@@ -54,7 +54,7 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `POST /api/family` | signed in, no family | `{familyName, name, lifeStage}` starts a family |
 | `PATCH /api/family` | admin | `{name}` renames the family |
 | `POST /api/family/members` | admin | `{name, lifeStage, diet?, allergies?}` adds a member without a login |
-| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, diet?, allergies?, role?}` (role: admins only) |
+| `PATCH /api/family/members/:id` | admin, or yourself | `{name?, lifeStage?, diet?, allergies?, role?, workFromHomeDays?}` (role: admins only; workFromHomeDays: adults only, 1 = Monday … 5 = Friday, filled into each new schedule week) |
 | `DELETE /api/family/members/:id` | admin, or yourself | removes a member / leaves |
 | `GET /api/family/invites` | admin | open invites |
 | `POST /api/family/invites` | admin | creates an invite → `{code, expiresAt, …}`; `{memberId}` makes it an invite for that existing member to sign in as themselves |
@@ -63,7 +63,7 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `POST /api/invites/:code/accept` | signed in, no family | `{name, lifeStage}` joins the family |
 | `GET /api/family/weeks` | family member | the weekly schedule: weeks (Monday to Sunday), each day with who's joining for dinner and guests |
 | `POST /api/family/weeks` | family member | `{startsOn, today, days?}` adds this week (if missing, from today) or the week after the last one; without `days`, every day is planned with everyone joining, no guests; with `days`, only those days |
-| `PATCH /api/family/weeks/:startsOn/days/:date` | family member | `{memberIds, guests}` changes one day, or `{eatOut: true}` marks it as eating out (no one joining, no guests); Family Managers can also send `meal`: `{recipeId}` (eating in), `{restaurantId}` (eating out), `{mealKit: true, name?}` (eating in; name optional), `{name}`, or `null` |
+| `PATCH /api/family/weeks/:startsOn/days/:date` | family member | `{memberIds, guests}` changes one day, or `{eatOut: true}` marks it as eating out (no one joining, no guests); Family Managers can also send `meal`: `{recipeId}` (eating in), `{restaurantId}` (eating out), `{mealKit: true, name?}` (eating in; name optional), `{name}`, or `null`; `workingFromHomeIds` lists adults working from home that day (left out, it stays as it is) |
 | `DELETE /api/family/weeks/:startsOn/days/:date` | family member | takes a day out of the schedule (a week keeps at least one); `PATCH` adds it back |
 | `DELETE /api/family/weeks/:startsOn` | family member | removes a week |
 | `GET /api/family/events` | family member | the family's events (a match, a work do); a `weekly` one also happens every 7 days after `date`, up to `until` |
