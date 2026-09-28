@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "../components/Field";
-import { capitalise, withHave } from "../components/Ingredients";
+import { AddToList, capitalise, withHave } from "../components/Ingredients";
 import { useSession } from "../session";
 
 /** A week's shopping list, from the ingredients of the recipes on the schedule, grouped as a store lays them out. */
@@ -28,9 +28,10 @@ function weekday(date: string): string {
   return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
 }
 
-/** "2 for Chicken curry (Mon) · 1 for Tacos (Tue)" */
+/** "2 for Chicken curry (Mon) · 1 for Tacos (Tue) · Added"; just "Added" for something added by hand. */
 function usesLabel(item: ShoppingItem): string {
-  return item.uses.map((u) => `${u.quantity ? `${u.quantity} for ` : ""}${u.meal} (${weekday(u.date)})`).join(" · ");
+  const uses = item.uses.map((u) => `${u.quantity ? `${u.quantity} for ` : ""}${u.meal} (${weekday(u.date)})`);
+  return [...uses, ...(item.extraId ? ["Added"] : [])].join(" · ");
 }
 
 function Shopping() {
@@ -114,7 +115,7 @@ function Shopping() {
           )}
         </div>
         <p className="note">
-          Everything the week's recipes need, grouped by aisle. Untick what's already in the house on the{" "}
+          Everything the week's recipes need, plus anything added, grouped by aisle. Untick what's already in the house on the{" "}
           <Link to="/schedule">Schedule</Link>, and tick things off here as they go in the basket.
         </p>
         {shown && shown.items.length > 0 && (
@@ -131,7 +132,13 @@ function Shopping() {
         </p>
       )}
       {loading && !shown && <p className="note center">Reading the recipes' ingredients…</p>}
-      {shown && shown.meals.length === 0 && (
+      {shown && (
+        <section className="card">
+          <h2>Anything else?</h2>
+          <AddToList list={shown} onChange={setList} />
+        </section>
+      )}
+      {shown && shown.meals.length === 0 && shown.extras.length === 0 && (
         <p className="note center">
           No recipes picked for this week yet. Pick meals from your recipes on the <Link to="/schedule">Schedule</Link> and their
           ingredients show up here.

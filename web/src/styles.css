@@ -323,3 +323,13 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .in-house summary { cursor: pointer; color: var(--muted); }
 .in-house ul { list-style: none; margin: 0.5rem 0 0; padding: 0; }
 .in-house li { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0; }
+
+/* Adding anything else to a week's shopping list. */
+.week-extras { border-top: 1px solid var(--border); padding-top: 0.6rem; }
+.week-extras h3 { font-size: 0.95rem; margin: 0 0 0.4rem; }
+.add-extra { display: flex; flex-direction: column; gap: 0.5rem; }
+.add-extra-form { display: flex; gap: 0.5rem; }
+.add-extra-form input { flex: 1 1 auto; min-width: 0; }
+.add-extra-form button { flex: none; }
+.chip.extra { cursor: default; gap: 0.2rem; padding-right: 0.3rem; }
+.chip.extra button { padding: 0 0.25rem; font-size: 1rem; line-height: 1; color: var(--muted); }

@@ -1226,11 +1226,30 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       after = (await call<ShoppingList>("GET", path, { token: parentToken })).body;
       assert.deepEqual(after.items.filter((i) => i.bought).map((i) => i.key), ["tortillas"]);
 
+      // Anything else can be added by hand, its aisle known for everyday groceries; adding it again is refused.
+      const extras = `/api/family/weeks/${startsOn}/shopping/extras`;
+      const milk = await call<ShoppingList>("POST", extras, { token: teenToken, body: { name: " Milk " } });
+      assert.equal(milk.status, 201);
+      assert.equal((await call("POST", extras, { token: teenToken, body: { name: "milk" } })).status, 409);
+      assert.equal((await call("POST", extras, { token: teenToken, body: { name: "" } })).status, 400);
+      const added = (await call<ShoppingList>("POST", extras, { token: parentToken, body: { name: "Tortillas" } })).body;
+      assert.deepEqual(added.extras.map((e) => [e.name, e.aisle]), [["Milk", "dairy"], ["Tortillas", "other"]]);
+      const milkItem = added.items.find((i) => i.key === "milk")!;
+      assert.deepEqual([milkItem.aisle, milkItem.uses, milkItem.bought], ["dairy", [], false]);
+      // Tortillas were ticked off, but adding them by hand means they're needed again; still one line with the recipe's.
+      const tortillas = added.items.filter((i) => i.key === "tortillas");
+      assert.deepEqual(tortillas.map((i) => [i.aisle, i.uses.length, i.bought, i.extraId !== null]), [["bakery", 1, false, true]]);
+      const removed = await call<ShoppingList>("DELETE", `${extras}/${milkItem.extraId}`, { token: teenToken });
+      assert.equal(removed.status, 200);
+      assert.deepEqual(removed.body.extras.map((e) => e.name), ["Tortillas"]);
+      assert.equal((await call("DELETE", `${extras}/${milkItem.extraId}`, { token: teenToken })).status, 404);
+
       // Other families can't see it.
       const other = await call<AuthResponse>("POST", "/api/auth/signup", {
         body: { email: "shopping-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
       });
       assert.equal((await call("GET", path, { token: other.body.token })).status, 404);
+      assert.equal((await call("POST", extras, { token: other.body.token, body: { name: "Milk" } })).status, 404);
       assert.equal((await call("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, { token: other.body.token, body: { key: "x", bought: true } })).status, 404);
 
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);

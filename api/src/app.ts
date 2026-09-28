@@ -17,6 +17,9 @@ import {
   type DinnerTimes,
   ingredientKey,
   shoppingItems,
+  groceryAisle,
+  MAX_EXTRA_NAME,
+  type ShoppingExtra,
   type ShoppingList,
   type ShoppingMeal,
   weekDays,
@@ -1578,7 +1581,10 @@ export function buildRouter(
       meals = await loadShoppingMeals(db, id);
     }
     const bought = (await db.query<{ item: string }>("SELECT item FROM shopping_bought WHERE week_id = $1", [id])).rows.map((r) => r.item);
-    return { startsOn, meals, items: shoppingItems(meals, bought) };
+    const extras = (
+      await db.query<ShoppingExtra>("SELECT id, name, aisle FROM shopping_extra WHERE week_id = $1 ORDER BY created_at, id", [id])
+    ).rows;
+    return { startsOn, meals, extras, items: shoppingItems(meals, bought, extras) };
   };
 
   // --- weekly schedule ----------------------------------------------------
@@ -1819,6 +1825,30 @@ export function buildRouter(
       ]);
     }
     return { status: 204 };
+  });
+
+  // Anything else for the week (milk, loo roll…), added by hand.
+  router.add("POST", "/api/family/weeks/:startsOn/shopping/extras", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const name = v.text(v.object(req.body).name, "Item", MAX_EXTRA_NAME).replace(/\s+/g, " ");
+    const { rowCount } = await db.query(
+      `INSERT INTO shopping_extra (week_id, name, aisle, added_by) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (week_id, lower(name)) DO NOTHING`,
+      [id, name, groceryAisle(name), member.id],
+    );
+    if (!rowCount) throw new HttpError(409, `${name} is already on this week's list`);
+    // Added again after being ticked off: it's needed again.
+    await db.query("DELETE FROM shopping_bought WHERE week_id = $1 AND item = $2", [id, ingredientKey(name)]);
+    return { status: 201, body: await shoppingList(member.family_id, req.params.startsOn) };
+  });
+
+  router.add("DELETE", "/api/family/weeks/:startsOn/shopping/extras/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const { rowCount } = await db.query("DELETE FROM shopping_extra WHERE id = $1 AND week_id = $2", [v.uuid(req.params.id), id]);
+    if (!rowCount) throw new HttpError(404, "That isn't on this week's list");
+    return { body: await shoppingList(member.family_id, req.params.startsOn) };
   });
 
   router.add("PUT", "/api/family/weeks/:startsOn/shopping/bought", async (req) => {

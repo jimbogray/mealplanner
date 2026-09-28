@@ -572,7 +572,7 @@ export interface ShoppingMeal {
   ingredients: (Ingredient & { have: boolean })[] | null;
 }
 
-/** One line of the week's shopping list: the same ingredient across the week's recipes. */
+/** One line of the week's shopping list: the same ingredient across the week's recipes, and/or added by hand. */
 export interface ShoppingItem {
   /** The ingredient's name in lower case; what ticking it off refers to. */
   key: string;
@@ -580,13 +580,31 @@ export interface ShoppingItem {
   aisle: Aisle;
   /** Each recipe that needs it, with how much. */
   uses: { date: IsoDate; meal: string; quantity: string | null }[];
+  /** Set when someone added it to the list by hand (see ShoppingExtra). */
+  extraId: Uuid | null;
   bought: boolean;
 }
+
+/** Something added to a week's shopping list by hand, not from a recipe. */
+export interface ShoppingExtra {
+  id: Uuid;
+  name: string;
+  aisle: Aisle;
+}
+
+/** Add something to a week's shopping list. Its aisle comes from COMMON_GROCERIES when it's one of them, else Other. */
+export interface AddExtraRequest {
+  name: string;
+}
+
+export const MAX_EXTRA_NAME = 60;
 
 /** A week's shopping list, compiled from the recipes on the schedule that week. */
 export interface ShoppingList {
   startsOn: IsoDate;
   meals: ShoppingMeal[];
+  /** Added by hand, oldest first. */
+  extras: ShoppingExtra[];
   /** Grouped by aisle (in AISLES order), then A to Z. */
   items: ShoppingItem[];
 }
@@ -612,21 +630,82 @@ export function ingredientKey(name: string): string {
  * The shopping list for a week's meals: every ingredient not already in the house, the same ingredient across
  * recipes on one line, grouped by aisle (in AISLES order) then A to Z. `bought` holds the keys ticked off.
  */
-export function shoppingItems(meals: ShoppingMeal[], bought: string[]): ShoppingItem[] {
+export function shoppingItems(meals: ShoppingMeal[], bought: string[], extras: ShoppingExtra[] = []): ShoppingItem[] {
   const items = new Map<string, ShoppingItem>();
+  const item = (name: string, aisle: Aisle): ShoppingItem => {
+    const key = ingredientKey(name);
+    let found = items.get(key);
+    if (!found) {
+      found = { key, name, aisle, uses: [], extraId: null, bought: bought.includes(key) };
+      items.set(key, found);
+    }
+    return found;
+  };
   for (const meal of meals) {
     for (const ingredient of meal.ingredients ?? []) {
       if (ingredient.have) continue;
-      const key = ingredientKey(ingredient.name);
-      let item = items.get(key);
-      if (!item) {
-        item = { key, name: ingredient.name, aisle: ingredient.aisle, uses: [], bought: bought.includes(key) };
-        items.set(key, item);
-      }
-      item.uses.push({ date: meal.date, meal: meal.name, quantity: ingredient.quantity });
+      item(ingredient.name, ingredient.aisle).uses.push({ date: meal.date, meal: meal.name, quantity: ingredient.quantity });
     }
   }
+  for (const extra of extras) item(extra.name, extra.aisle).extraId = extra.id;
   return [...items.values()].sort(
     (a, b) => AISLES.indexOf(a.aisle) - AISLES.indexOf(b.aisle) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
+}
+
+/** Everyday groceries, suggested when adding something to the shopping list by hand, with where they're found. */
+export const COMMON_GROCERIES: readonly { name: string; aisle: Aisle }[] = [
+  ...(
+    [
+      "Apples", "Avocados", "Bananas", "Blueberries", "Broccoli", "Butternut squash", "Cabbage", "Carrots", "Cauliflower",
+      "Celery", "Cherry tomatoes", "Courgettes", "Cucumber", "Garlic", "Ginger", "Grapes", "Green beans", "Kiwi fruit",
+      "Leeks", "Lemons", "Lettuce", "Limes", "Mangoes", "Mushrooms", "Onions", "Oranges", "Parsnips", "Peaches", "Pears",
+      "Peppers", "Pineapple", "Potatoes", "Raspberries", "Red onions", "Salad leaves", "Spinach", "Spring onions",
+      "Strawberries", "Sweet potatoes", "Sweetcorn", "Tomatoes", "Fresh basil", "Fresh coriander", "Fresh parsley",
+    ] as const
+  ).map((name) => ({ name, aisle: "produce" as const })),
+  ...(["Bagels", "Bread", "Brown bread", "Crumpets", "Croissants", "Muffins", "Pitta bread", "Rolls", "Tortilla wraps", "Naan bread"] as const).map(
+    (name) => ({ name, aisle: "bakery" as const }),
+  ),
+  ...(
+    [
+      "Bacon", "Beef mince", "Chicken breasts", "Chicken thighs", "Ham", "Lamb mince", "Pork chops", "Sausages",
+      "Steak", "Turkey mince", "Whole chicken", "Chorizo",
+    ] as const
+  ).map((name) => ({ name, aisle: "meat" as const })),
+  ...(["Cod", "Prawns", "Salmon fillets", "Smoked salmon", "Tuna steaks", "Fish fingers"] as const).map((name) => ({
+    name,
+    aisle: name === "Fish fingers" ? ("frozen" as const) : ("fish" as const),
+  })),
+  ...(
+    [
+      "Butter", "Cheddar", "Cream cheese", "Double cream", "Eggs", "Feta", "Greek yoghurt", "Halloumi", "Milk",
+      "Mozzarella", "Parmesan", "Single cream", "Soured cream", "Yoghurt", "Oat milk",
+    ] as const
+  ).map((name) => ({ name, aisle: "dairy" as const })),
+  ...(["Frozen peas", "Frozen berries", "Ice cream", "Oven chips", "Frozen pizza", "Frozen sweetcorn", "Ice"] as const).map((name) => ({
+    name,
+    aisle: "frozen" as const,
+  })),
+  ...(
+    [
+      "Baked beans", "Basmati rice", "Biscuits", "Breakfast cereal", "Chickpeas", "Chopped tomatoes", "Coconut milk",
+      "Coffee", "Crackers", "Crisps", "Flour", "Honey", "Jam", "Ketchup", "Lentils", "Mayonnaise", "Noodles", "Oats",
+      "Olive oil", "Pasta", "Pasta sauce", "Peanut butter", "Rice", "Soy sauce", "Spaghetti", "Stock cubes", "Sugar",
+      "Tea bags", "Tinned tuna", "Vegetable oil", "Vinegar", "Kidney beans", "Tomato puree",
+    ] as const
+  ).map((name) => ({ name, aisle: "pantry" as const })),
+  ...(["Orange juice", "Apple juice", "Sparkling water", "Squash", "Wine", "Beer"] as const).map((name) => ({ name, aisle: "drinks" as const })),
+  ...(
+    [
+      "Toilet roll", "Kitchen roll", "Washing-up liquid", "Dishwasher tablets", "Laundry detergent", "Bin bags",
+      "Foil", "Cling film", "Nappies", "Baby wipes", "Toothpaste", "Shampoo", "Soap",
+    ] as const
+  ).map((name) => ({ name, aisle: "other" as const })),
+];
+
+/** Where a grocery is found: its aisle in COMMON_GROCERIES, or Other. */
+export function groceryAisle(name: string): Aisle {
+  const key = ingredientKey(name);
+  return COMMON_GROCERIES.find((g) => ingredientKey(g.name) === key)?.aisle ?? "other";
 }
