@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
   addDays,
@@ -27,6 +28,10 @@ import {
   type ShoppingMeal,
   weekDays,
   type AuthResponse,
+  type Errand,
+  type ErrandAction,
+  type ErrandTurnResponse,
+  MAX_ERRAND_NAME,
   type Family,
   type FamilyMember,
   type FavouriteRecipe,
@@ -47,7 +52,7 @@ import { AddressSearchError, type AddressSearch, type FoundPlace } from "./place
 import { createSession, hashPassword, hashToken, bearerToken, newInviteCode, requireUser, verifyPassword } from "./auth.js";
 import { withTransaction, type Db, type Tx } from "./db.js";
 import { GoogleTokenError, verifyGoogleIdToken, type GoogleIdentity, type KeySource } from "./google.js";
-import { HttpError, listener, Router, type Request } from "./http.js";
+import { HttpError, listener, Router, type Request, type Result } from "./http.js";
 import { fetchPage, pageImages, pageLinks, pageText, parseRecipeMeta, type PageFetcher } from "./recipe-meta.js";
 import type { IngredientReader, RecipeIngredients } from "./ingredient-reader.js";
 import type { Maps } from "./maps.js";
@@ -891,6 +896,166 @@ async function loadShoppingMeals(db: Queryable, weekId: string): Promise<Shoppin
           }))
       : null,
   }));
+}
+
+// --- errands ---------------------------------------------------------------
+
+interface ErrandRow {
+  id: string;
+  name: string;
+  link_token: string;
+  turn_member_id: string | null;
+  member_ids: string[];
+  created_at: Date;
+}
+
+interface ErrandHistoryRow {
+  id: string;
+  errand_id: string;
+  at: Date;
+  action: ErrandAction;
+  turn_name: string | null;
+  next_name: string | null;
+  by_name: string | null;
+  via_link: boolean;
+}
+
+/** How many history entries each errand comes with. */
+const ERRAND_HISTORY = 100;
+
+const ERRAND_SELECT = `SELECT e.id, e.name, e.link_token, e.turn_member_id, e.created_at,
+    COALESCE(array_agg(p.member_id ORDER BY p.position) FILTER (WHERE p.member_id IS NOT NULL), '{}') AS member_ids
+  FROM errand e LEFT JOIN errand_participant p ON p.errand_id = e.id`;
+
+/** Whose turn it is and whose is next: the stored turn while they still take part, otherwise the first participant's. */
+function errandTurn(r: Pick<ErrandRow, "member_ids" | "turn_member_id">): { turn: string | null; next: string | null } {
+  const ids = r.member_ids;
+  if (!ids.length) return { turn: null, next: null };
+  const i = Math.max(0, r.turn_member_id ? ids.indexOf(r.turn_member_id) : 0);
+  return { turn: ids[i], next: ids[(i + 1) % ids.length] };
+}
+
+/** The family's errands (or just one), with their latest history. */
+async function loadErrands(db: Queryable, familyId: string, id?: string): Promise<Errand[]> {
+  const { rows } = await db.query<ErrandRow>(
+    `${ERRAND_SELECT} WHERE e.family_id = $1 AND ($2::uuid IS NULL OR e.id = $2)
+     GROUP BY e.id ORDER BY lower(e.name), e.created_at`,
+    [familyId, id ?? null],
+  );
+  const history = (
+    await db.query<ErrandHistoryRow>(
+      `SELECT h.* FROM errand e CROSS JOIN LATERAL (
+         SELECT * FROM errand_history WHERE errand_id = e.id ORDER BY seq DESC LIMIT ${ERRAND_HISTORY}
+       ) h WHERE e.family_id = $1 AND ($2::uuid IS NULL OR e.id = $2) ORDER BY h.seq DESC`,
+      [familyId, id ?? null],
+    )
+  ).rows;
+  return rows.map((r) => {
+    const { turn, next } = errandTurn(r);
+    return {
+      id: r.id,
+      name: r.name,
+      memberIds: r.member_ids,
+      turnMemberId: turn,
+      nextMemberId: next,
+      linkToken: r.link_token,
+      history: history
+        .filter((h) => h.errand_id === r.id)
+        .map((h) => ({
+          id: h.id,
+          at: h.at.toISOString(),
+          action: h.action,
+          turnName: h.turn_name,
+          nextName: h.next_name,
+          byName: h.by_name,
+          viaLink: h.via_link,
+        })),
+      createdAt: r.created_at.toISOString(),
+    };
+  });
+}
+
+/** Locks an errand of the family for a change, or 404. */
+async function lockErrand(tx: Tx, familyId: string, id: string): Promise<ErrandRow> {
+  await tx.query("SELECT 1 FROM errand WHERE id = $1 AND family_id = $2 FOR UPDATE", [v.uuid(id), familyId]);
+  const row = (await tx.query<ErrandRow>(`${ERRAND_SELECT} WHERE e.id = $1 AND e.family_id = $2 GROUP BY e.id`, [id, familyId])).rows[0];
+  if (!row) throw new HttpError(404, "That errand doesn't exist");
+  return row;
+}
+
+/** Family members' familiar names by id. */
+async function memberNames(db: Queryable, familyId: string): Promise<Map<string, string>> {
+  const { rows } = await db.query<MemberRow>(`${MEMBER_SELECT} WHERE m.family_id = $1`, [familyId]);
+  return new Map(rows.map((r) => [r.id, displayName(toMember(r))]));
+}
+
+function newLinkToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+function errandFrom(b: Record<string, unknown>, familyIds: string[]): { name: string; memberIds: string[] } {
+  const name = v.text(b.name, "Errand", MAX_ERRAND_NAME).replace(/\s+/g, " ");
+  const memberIds = v.ids(b.memberIds, "Who takes turns");
+  if (!memberIds.length) throw new HttpError(400, "Choose who takes turns");
+  if (memberIds.some((id) => !familyIds.includes(id))) throw new HttpError(400, "Only members of your family can take turns");
+  return { name, memberIds };
+}
+
+async function saveParticipants(tx: Tx, errandId: string, memberIds: string[]): Promise<void> {
+  await tx.query("DELETE FROM errand_participant WHERE errand_id = $1", [errandId]);
+  await tx.query(
+    "INSERT INTO errand_participant (errand_id, member_id, position) SELECT $1, id, n FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, n)",
+    [errandId, memberIds],
+  );
+}
+
+async function logErrand(
+  tx: Queryable,
+  errandId: string,
+  action: ErrandAction,
+  e: { turn: string | null; next: string | null; by: string | null; viaLink?: boolean },
+): Promise<void> {
+  await tx.query(
+    "INSERT INTO errand_history (errand_id, action, turn_name, next_name, by_name, via_link) VALUES ($1, $2, $3, $4, $5, $6)",
+    [errandId, action, e.turn, e.next, e.by, e.viaLink ?? false],
+  );
+}
+
+/**
+ * Marks the errand done by whoever's turn it was and moves it on to the next person. `expected` is whose turn
+ * the caller thought it was: if it's moved on since, nothing happens (so a double press only counts once).
+ */
+async function advanceErrand(tx: Tx, familyId: string, errand: ErrandRow, by: string | null, expected?: string | null): Promise<void> {
+  const { turn, next } = errandTurn(errand);
+  if (!turn || !next) throw new HttpError(409, "Nobody takes turns at this errand yet");
+  const names = await memberNames(tx, familyId);
+  if (expected !== undefined && expected !== turn) {
+    throw new HttpError(409, `It's already ${names.get(turn)}'s turn`);
+  }
+  await tx.query("UPDATE errand SET turn_member_id = $2 WHERE id = $1", [errand.id, next]);
+  await logErrand(tx, errand.id, "done", { turn: names.get(turn)!, next: names.get(next)!, by, viaLink: by === null });
+}
+
+/** The errand a public link is for, or 404. The token is the only thing that lets someone in. */
+async function errandByLink(db: Queryable, token: string): Promise<{ id: string; family_id: string }> {
+  const row = /^[A-Za-z0-9_-]{20,100}$/.test(token)
+    ? (await db.query<{ id: string; family_id: string }>("SELECT id, family_id FROM errand WHERE link_token = $1", [token])).rows[0]
+    : undefined;
+  if (!row) throw new HttpError(404, "That errand link isn't valid");
+  return row;
+}
+
+/** A public link's answer: just the name whose turn it is, or JSON with ?format=json (or Accept: application/json). */
+async function errandTurnResult(db: Queryable, req: Request, errand: { id: string; family_id: string }): Promise<Result> {
+  const [e] = await loadErrands(db, errand.family_id, errand.id);
+  const names = await memberNames(db, errand.family_id);
+  const body: ErrandTurnResponse = {
+    errand: e.name,
+    turn: e.turnMemberId ? names.get(e.turnMemberId)! : null,
+    next: e.nextMemberId ? names.get(e.nextMemberId)! : null,
+  };
+  const json = req.query.get("format") === "json" || /application\/json/.test(String(req.headers.accept ?? ""));
+  return json ? { body, anyOrigin: true } : { text: body.turn ?? "Nobody", anyOrigin: true };
 }
 
 export function buildRouter(
@@ -2055,6 +2220,114 @@ export function buildRouter(
     }
     return { status: 204 };
   });
+
+  // --- errands ------------------------------------------------------------
+  // Anyone in the family can set errands up, change them and mark them done.
+
+  router.add("GET", "/api/family/errands", async (req) => {
+    const { member } = await requireMember(db, req);
+    return { body: await loadErrands(db, member.family_id) };
+  });
+
+  router.add("POST", "/api/family/errands", async (req) => {
+    const { member } = await requireMember(db, req);
+    const e = errandFrom(v.object(req.body), await familyMemberIds(db, member.family_id));
+    const names = await memberNames(db, member.family_id);
+    const id = await withTransaction(db, async (tx) => {
+      const { rows } = await tx.query<{ id: string }>(
+        "INSERT INTO errand (family_id, name, link_token, turn_member_id, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        [member.family_id, e.name, newLinkToken(), e.memberIds[0], member.id],
+      );
+      await saveParticipants(tx, rows[0].id, e.memberIds);
+      await logErrand(tx, rows[0].id, "created", { turn: null, next: names.get(e.memberIds[0])!, by: displayName(toMember(member)) });
+      return rows[0].id;
+    });
+    return { status: 201, body: (await loadErrands(db, member.family_id, id))[0] };
+  });
+
+  // A new name or who takes part. Whoever's turn it was keeps it while they still take part.
+  router.add("PUT", "/api/family/errands/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const e = errandFrom(v.object(req.body), await familyMemberIds(db, member.family_id));
+    const names = await memberNames(db, member.family_id);
+    await withTransaction(db, async (tx) => {
+      const before = await lockErrand(tx, member.family_id, req.params.id);
+      const { turn } = errandTurn(before);
+      const after = errandTurn({ member_ids: e.memberIds, turn_member_id: turn });
+      await tx.query("UPDATE errand SET name = $2, turn_member_id = $3 WHERE id = $1", [before.id, e.name, after.turn]);
+      await saveParticipants(tx, before.id, e.memberIds);
+      await logErrand(tx, before.id, "changed", {
+        turn: turn ? names.get(turn)! : null,
+        next: names.get(after.turn!)!,
+        by: displayName(toMember(member)),
+      });
+    });
+    return { body: (await loadErrands(db, member.family_id, req.params.id))[0] };
+  });
+
+  router.add("DELETE", "/api/family/errands/:id", async (req) => {
+    const { member } = await requireMember(db, req);
+    const { rowCount } = await db.query("DELETE FROM errand WHERE id = $1 AND family_id = $2", [v.uuid(req.params.id), member.family_id]);
+    if (!rowCount) throw new HttpError(404, "That errand doesn't exist");
+    return { status: 204 };
+  });
+
+  // It's been done: on to the next person.
+  router.add("POST", "/api/family/errands/:id/done", async (req) => {
+    const { member } = await requireMember(db, req);
+    const b = req.body === undefined ? {} : v.object(req.body);
+    const expected = b.turnMemberId === undefined ? undefined : b.turnMemberId === null ? null : v.uuid(String(b.turnMemberId));
+    await withTransaction(db, async (tx) => {
+      const errand = await lockErrand(tx, member.family_id, req.params.id);
+      await advanceErrand(tx, member.family_id, errand, displayName(toMember(member)), expected);
+    });
+    return { body: (await loadErrands(db, member.family_id, req.params.id))[0] };
+  });
+
+  // Puts it on someone's turn (to fix a mistake, or swap).
+  router.add("PUT", "/api/family/errands/:id/turn", async (req) => {
+    const { member } = await requireMember(db, req);
+    const to = v.uuid(String(v.object(req.body).memberId ?? ""));
+    const names = await memberNames(db, member.family_id);
+    await withTransaction(db, async (tx) => {
+      const errand = await lockErrand(tx, member.family_id, req.params.id);
+      if (!errand.member_ids.includes(to)) throw new HttpError(400, "They don't take turns at this errand");
+      const { turn } = errandTurn(errand);
+      if (turn === to) return;
+      await tx.query("UPDATE errand SET turn_member_id = $2 WHERE id = $1", [errand.id, to]);
+      await logErrand(tx, errand.id, "turn", { turn: turn ? names.get(turn)! : null, next: names.get(to)!, by: displayName(toMember(member)) });
+    });
+    return { body: (await loadErrands(db, member.family_id, req.params.id))[0] };
+  });
+
+  // A new secret for the public links; the old links stop working.
+  router.add("POST", "/api/family/errands/:id/link", async (req) => {
+    const { member } = await requireMember(db, req);
+    await withTransaction(db, async (tx) => {
+      const errand = await lockErrand(tx, member.family_id, req.params.id);
+      await tx.query("UPDATE errand SET link_token = $2 WHERE id = $1", [errand.id, newLinkToken()]);
+      await logErrand(tx, errand.id, "link", { turn: null, next: null, by: displayName(toMember(member)) });
+    });
+    return { body: (await loadErrands(db, member.family_id, req.params.id))[0] };
+  });
+
+  // --- public errand links ----------------------------------------------------
+  // No sign-in: the long random token in the link is what lets other apps (and people) in.
+
+  router.add("GET", "/api/errands/:token/turn", async (req) => {
+    return errandTurnResult(db, req, await errandByLink(db, req.params.token));
+  });
+
+  // Moves it on to the next person, as if Done was pressed in the app. GET works too, for apps that can only open a link.
+  const nextTurn = async (req: Request): Promise<Result> => {
+    const errand = await errandByLink(db, req.params.token);
+    await withTransaction(db, async (tx) => {
+      await advanceErrand(tx, errand.family_id, await lockErrand(tx, errand.family_id, errand.id), null);
+    });
+    return errandTurnResult(db, req, errand);
+  };
+  router.add("POST", "/api/errands/:token/next", nextTurn);
+  router.add("GET", "/api/errands/:token/next", nextTurn);
 
   return router;
 }

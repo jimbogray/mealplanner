@@ -11,6 +11,7 @@ import {
   mondayOf,
   type AddressSearchResponse,
   type AuthResponse,
+  type Errand,
   type FamilyMember,
   type FavouriteRecipe,
   type Invite,
@@ -1574,6 +1575,123 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     test("if the map service is down the restaurant is still saved", async () => {
       const r = await add({ name: "Broken", address: "broken street" });
       assert.deepEqual([r.address, r.driveMinutes], ["broken street", null]);
+    });
+  });
+
+  describe("errands", () => {
+    let dog: Errand;
+    const raw = async (method: string, path: string, headers: Record<string, string> = {}) => {
+      const res = await fetch(base + path, { method, headers });
+      return { status: res.status, type: res.headers.get("content-type"), cors: res.headers.get("access-control-allow-origin"), text: await res.text() };
+    };
+
+    test("anyone in the family can set up an errand with who takes turns", async () => {
+      const res = await call<Errand>("POST", "/api/family/errands", {
+        token: teenToken,
+        body: { name: "  Walk   the dog ", memberIds: [teenMemberId, babyId] },
+      });
+      assert.equal(res.status, 201);
+      dog = res.body;
+      assert.equal(dog.name, "Walk the dog");
+      assert.deepEqual(dog.memberIds, [teenMemberId, babyId]);
+      assert.deepEqual([dog.turnMemberId, dog.nextMemberId], [teenMemberId, babyId]);
+      assert.ok(dog.linkToken.length >= 32);
+      assert.equal(dog.history.length, 1);
+      assert.equal(dog.history[0].action, "created");
+      assert.equal(dog.history[0].nextName, "Sam");
+
+      const list = await call<Errand[]>("GET", "/api/family/errands", { token: parentToken });
+      assert.deepEqual(list.body.map((e) => e.id), [dog.id]);
+    });
+
+    test("errands need a name and people from the family", async () => {
+      const bad = [
+        { name: " ", memberIds: [babyId] },
+        { name: "Bins", memberIds: [] },
+        { name: "Bins", memberIds: ["00000000-0000-4000-8000-000000000000"] },
+        { name: "x".repeat(61), memberIds: [babyId] },
+      ];
+      for (const body of bad) assert.equal((await call("POST", "/api/family/errands", { token: parentToken, body })).status, 400, JSON.stringify(body));
+      assert.equal((await call("GET", "/api/family/errands")).status, 401);
+    });
+
+    test("Done moves it on to the next person, once, and records who did it", async () => {
+      const done = await call<Errand>("POST", `/api/family/errands/${dog.id}/done`, { token: parentToken, body: { turnMemberId: teenMemberId } });
+      assert.equal(done.status, 200);
+      assert.deepEqual([done.body.turnMemberId, done.body.nextMemberId], [babyId, teenMemberId]);
+      const entry = done.body.history[0];
+      assert.deepEqual([entry.action, entry.turnName, entry.nextName, entry.byName, entry.viaLink], ["done", "Sam", "Bea", "Alex", false]);
+      // Pressed twice: the second one finds it's already moved on.
+      const again = await call("POST", `/api/family/errands/${dog.id}/done`, { token: parentToken, body: { turnMemberId: teenMemberId } });
+      assert.equal(again.status, 409);
+      // Round it goes.
+      const wrapped = await call<Errand>("POST", `/api/family/errands/${dog.id}/done`, { token: teenToken });
+      assert.equal(wrapped.body.turnMemberId, teenMemberId);
+    });
+
+    test("the public link says whose turn it is, as text or JSON, with no sign-in", async () => {
+      const turn = await raw("GET", `/api/errands/${dog.linkToken}/turn`);
+      assert.deepEqual([turn.status, turn.text, turn.cors], [200, "Sam", "*"]);
+      assert.match(turn.type ?? "", /^text\/plain/);
+      const json = await call("GET", `/api/errands/${dog.linkToken}/turn?format=json`);
+      assert.deepEqual(json.body, { errand: "Walk the dog", turn: "Sam", next: "Bea" });
+      const accept = await raw("GET", `/api/errands/${dog.linkToken}/turn`, { accept: "application/json" });
+      assert.deepEqual(JSON.parse(accept.text), { errand: "Walk the dog", turn: "Sam", next: "Bea" });
+    });
+
+    test("the public next link moves it on and is recorded as via the link", async () => {
+      const post = await raw("POST", `/api/errands/${dog.linkToken}/next`);
+      assert.deepEqual([post.status, post.text], [200, "Bea"]);
+      const get = await call("GET", `/api/errands/${dog.linkToken}/next?format=json`);
+      assert.deepEqual(get.body, { errand: "Walk the dog", turn: "Sam", next: "Bea" });
+      const [e] = (await call<Errand[]>("GET", "/api/family/errands", { token: parentToken })).body;
+      assert.deepEqual([e.history[0].viaLink, e.history[0].byName, e.history[0].turnName, e.history[0].nextName], [true, null, "Bea", "Sam"]);
+    });
+
+    test("a wrong or old link gets nothing, and a new link replaces the old one", async () => {
+      assert.equal((await raw("GET", "/api/errands/not-the-right-token-at-all-xx/turn")).status, 404);
+      assert.equal((await raw("GET", "/api/errands/short/next")).status, 404);
+      const fresh = await call<Errand>("POST", `/api/family/errands/${dog.id}/link`, { token: teenToken });
+      assert.notEqual(fresh.body.linkToken, dog.linkToken);
+      assert.equal(fresh.body.history[0].action, "link");
+      assert.equal((await raw("GET", `/api/errands/${dog.linkToken}/turn`)).status, 404);
+      assert.equal((await raw("GET", `/api/errands/${fresh.body.linkToken}/turn`)).text, "Sam");
+      dog = fresh.body;
+    });
+
+    test("whose turn it is can be set, and changing who takes part keeps it when it can", async () => {
+      const set = await call<Errand>("PUT", `/api/family/errands/${dog.id}/turn`, { token: teenToken, body: { memberId: babyId } });
+      assert.equal(set.body.turnMemberId, babyId);
+      assert.equal(set.body.history[0].action, "turn");
+      const notIn = await call("PUT", `/api/family/errands/${dog.id}/turn`, { token: teenToken, body: { memberId: parentMe.member!.id } });
+      assert.equal(notIn.status, 400);
+
+      const adultId = parentMe.member!.id;
+      const kept = await call<Errand>("PUT", `/api/family/errands/${dog.id}`, {
+        token: teenToken,
+        body: { name: "Dog walk", memberIds: [adultId, babyId, teenMemberId] },
+      });
+      assert.equal(kept.body.name, "Dog walk");
+      assert.deepEqual([kept.body.turnMemberId, kept.body.nextMemberId], [babyId, teenMemberId]);
+      // Taking out whoever's turn it is hands it to the first person.
+      const moved = await call<Errand>("PUT", `/api/family/errands/${dog.id}`, { token: teenToken, body: { name: "Dog walk", memberIds: [teenMemberId, adultId] } });
+      assert.equal(moved.body.turnMemberId, teenMemberId);
+      assert.deepEqual([moved.body.history[0].action, moved.body.history[0].turnName, moved.body.history[0].nextName], ["changed", "Bea", "Sam"]);
+    });
+
+    test("another family can't see or change the errand", async () => {
+      const other = await call<AuthResponse>("POST", "/api/auth/login", { body: { email: "jones@example.com", password: "password123" } });
+      const token = other.body.token;
+      assert.deepEqual((await call<Errand[]>("GET", "/api/family/errands", { token })).body, []);
+      assert.equal((await call("POST", `/api/family/errands/${dog.id}/done`, { token })).status, 404);
+      assert.equal((await call("PUT", `/api/family/errands/${dog.id}`, { token, body: { name: "X", memberIds: [other.body.me.member!.id] } })).status, 404);
+      assert.equal((await call("DELETE", `/api/family/errands/${dog.id}`, { token })).status, 404);
+    });
+
+    test("an errand can be removed, and its links stop working", async () => {
+      assert.equal((await call("DELETE", `/api/family/errands/${dog.id}`, { token: teenToken })).status, 204);
+      assert.equal((await raw("GET", `/api/errands/${dog.linkToken}/turn`)).status, 404);
+      assert.deepEqual((await call<Errand[]>("GET", "/api/family/errands", { token: parentToken })).body, []);
     });
   });
 
