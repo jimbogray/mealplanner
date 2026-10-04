@@ -343,7 +343,7 @@ function Week({
           <li key={d.date} className={d.eatOut ? "eat-out" : undefined}>
             <span className="day-name">{dayLabel(d.date)}</span>
             <span className="day-details">
-              <span className="diners">{dinersSummary(d, members)}</span>
+              {d.eatOut ? <span className="out-tag">Eating out</span> : <span className="diners">{dinersSummary(d, members)}</span>}
               {d.meal && (
                 <span className="meal">
                   {d.meal.mealKit ? (
@@ -574,10 +574,18 @@ function WeekForm({
             );
           }
           return (
-            <li key={d.date}>
+            <li key={d.date} className={d.eatOut ? "eating-out" : undefined}>
               <fieldset>
                 <div className="day-legend">
                   <legend>{dayLabel(d.date, "long")}</legend>
+                  <div className="dinner-where" role="radiogroup" aria-label={`Dinner on ${dayLabel(d.date, "long")}`}>
+                    <button type="button" role="radio" aria-checked={!d.eatOut} onClick={() => d.eatOut && setEatOut(d.date, false)}>
+                      At home
+                    </button>
+                    <button type="button" role="radio" aria-checked={d.eatOut} onClick={() => !d.eatOut && setEatOut(d.date, true)}>
+                      Eating out
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className="link danger small"
@@ -587,21 +595,16 @@ function WeekForm({
                     Remove
                   </button>
                 </div>
-                <div className="day-fields">
-                  <div className="chips">
-                    {!d.eatOut &&
-                      members.map((m) => (
+                {!d.eatOut && (
+                  <div className="day-fields">
+                    <div className="chips" role="group" aria-label={`Joining for dinner on ${dayLabel(d.date, "long")}`}>
+                      {members.map((m) => (
                         <label key={m.id} className="chip toggle">
                           <input type="checkbox" checked={d.memberIds.includes(m.id)} onChange={(e) => toggle(d, m.id, e.target.checked)} />
                           {displayName(m)}
                         </label>
                       ))}
-                    <label className="chip toggle eat-out">
-                      <input type="checkbox" checked={d.eatOut} onChange={(e) => setEatOut(d.date, e.target.checked)} />
-                      Eat out
-                    </label>
-                  </div>
-                  {!d.eatOut && (
+                    </div>
                     <label className="guests">
                       Guests
                       <input
@@ -613,8 +616,8 @@ function WeekForm({
                         onChange={(e) => update(d.date, { guests: Math.min(MAX_GUESTS, Math.max(0, Math.floor(Number(e.target.value) || 0))) })}
                       />
                     </label>
-                  )}
-                </div>
+                  </div>
+                )}
                 {adults.length > 0 && (
                   <div className="wfh-field" role="group" aria-label={`Working from home on ${dayLabel(d.date, "long")}`}>
                     <span>Working from home</span>

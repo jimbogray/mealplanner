@@ -234,13 +234,12 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .chip.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .chip.toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chip.toggle:not(:has(input:checked)) { color: var(--muted); }
-.day-legend { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.day-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.75rem; }
+.day-legend legend { white-space: nowrap; }
+.day-legend > button:last-child { margin-left: auto; }
 .day-legend legend { float: left; margin-bottom: 0.35rem; }
 .day-legend + * { clear: both; }
 .day-form li.day-removed { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; color: var(--muted); }
-.chip.toggle.eat-out { border-style: dashed; }
-.chip.toggle.eat-out:has(input:checked) { border-style: solid; border-color: #c98a1b; background: #fdf3dd; color: #7a5510; }
-.days li.eat-out .diners { color: #7a5510; font-style: italic; }
 
 .restaurants { list-style: none; margin: 0; padding: 0; }
 .restaurants li { border-top: 1px solid var(--border); padding: 0.75rem 0; }
@@ -342,6 +341,14 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .add-extra-form button { flex: none; }
 .chip.extra { cursor: default; gap: 0.2rem; padding-right: 0.3rem; }
 .chip.extra button { padding: 0 0.25rem; font-size: 1rem; line-height: 1; color: var(--muted); }
+
+/* Where dinner is: a two-way switch beside the day's name, apart from who's joining. */
+.dinner-where { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; background: #fff; }
+.dinner-where button { border: none; background: none; color: var(--muted); padding: 0.2rem 0.75rem; border-radius: 999px; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.dinner-where button[aria-checked="true"] { background: #e1f5ee; color: var(--accent); font-weight: 600; }
+.dinner-where button:last-child[aria-checked="true"] { background: #fdf3dd; color: #7a5510; }
+.day-form li.eating-out fieldset { border-left: 3px solid #e3b75a; padding-left: 0.75rem; }
+.out-tag { align-self: flex-start; padding: 0.05rem 0.55rem; border-radius: 999px; background: #fdf3dd; color: #7a5510; font-size: 0.85rem; font-weight: 600; }
 
 /* Errands */
 .errand-turn { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; }
