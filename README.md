@@ -70,6 +70,15 @@ All JSON. Signed-in calls send `Authorization: Bearer <token>`.
 | `POST /api/family/events` | family member | `{title, date, startTime, endTime, memberIds, weekly}` (times "HH:MM"; at least one person going) |
 | `PATCH /api/family/events/:id` | family member | any of those fields; `until` stops a weekly event after that day |
 | `DELETE /api/family/events/:id` | family member | removes it (every week, if weekly) |
+| `GET /api/family/errands` | family member | errands the family takes turns at: who takes part (in turn order), whose turn it is and whose is next, the link token, and the latest 100 history entries |
+| `POST /api/family/errands` | family member | `{name, memberIds}` adds one; the first person in `memberIds` goes first |
+| `PUT /api/family/errands/:id` | family member | `{name, memberIds}` changes it; whoever's turn it was keeps it while they still take part |
+| `DELETE /api/family/errands/:id` | family member | removes it, its history and its links |
+| `POST /api/family/errands/:id/done` | family member | it's been done: moves on to the next person; `{turnMemberId}` (whose turn the page showed) makes a double press count once (409) |
+| `PUT /api/family/errands/:id/turn` | family member | `{memberId}` makes it that person's turn |
+| `POST /api/family/errands/:id/link` | family member | new link token; the old public links stop working |
+| `GET /api/errands/:token/turn` | anyone with the link | whose turn it is, as plain text (just the name, or `Nobody`); `?format=json` or `Accept: application/json` gives `{errand, turn, next}` |
+| `POST` or `GET /api/errands/:token/next` | anyone with the link | moves it on to the next person (recorded in the history as via the link) and answers like `/turn` |
 | `GET /api/health` | anyone | checks the database connection |
 
 ## Local development

@@ -6,6 +6,10 @@ import type {
   AddWeekRequest,
   AuthResponse,
   CreateFamilyRequest,
+  Errand,
+  ErrandDoneRequest,
+  ErrandRequest,
+  ErrandTurnRequest,
   EventRequest,
   FamilyMember,
   FavouriteRecipe,
@@ -171,6 +175,13 @@ export const api = {
   addEvent: (body: EventRequest) => request<ScheduleEvent>("POST", "/api/family/events", body),
   updateEvent: (id: string, body: Partial<EventRequest>) => request<ScheduleEvent>("PATCH", `/api/family/events/${id}`, body),
   removeEvent: (id: string) => request<void>("DELETE", `/api/family/events/${id}`),
+  errands: () => request<Errand[]>("GET", "/api/family/errands"),
+  addErrand: (body: ErrandRequest) => request<Errand>("POST", "/api/family/errands", body),
+  updateErrand: (id: string, body: ErrandRequest) => request<Errand>("PUT", `/api/family/errands/${id}`, body),
+  removeErrand: (id: string) => request<void>("DELETE", `/api/family/errands/${id}`),
+  errandDone: (id: string, body: ErrandDoneRequest) => request<Errand>("POST", `/api/family/errands/${id}/done`, body),
+  setErrandTurn: (id: string, body: ErrandTurnRequest) => request<Errand>("PUT", `/api/family/errands/${id}/turn`, body),
+  newErrandLinks: (id: string) => request<Errand>("POST", `/api/family/errands/${id}/link`),
 };
 
 export function inviteUrl(code: string): string {

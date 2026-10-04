@@ -342,3 +342,25 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .add-extra-form button { flex: none; }
 .chip.extra { cursor: default; gap: 0.2rem; padding-right: 0.3rem; }
 .chip.extra button { padding: 0 0.25rem; font-size: 1rem; line-height: 1; color: var(--muted); }
+
+/* Errands */
+.errand-turn { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; }
+.turn-now { margin: 0; font-size: 1.25rem; font-weight: 600; }
+.turn-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.turn-order {
+  display: inline-grid; place-items: center; min-width: 1.2rem; height: 1.2rem; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 600;
+}
+.errand-links summary, .errand-history h3 { font-weight: 500; font-size: 0.95rem; }
+.errand-links summary { cursor: pointer; }
+.errand-links-body { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.5rem; }
+.errand-links-body > button { align-self: flex-start; }
+.errand-link { display: flex; flex-direction: column; gap: 0.2rem; }
+.errand-link input { flex: 1; font-size: 0.85rem; font-family: ui-monospace, monospace; }
+.errand-history h3 { margin: 0 0 0.35rem; }
+.table-scroll { overflow-x: auto; }
+.errand-history table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.errand-history th { text-align: left; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0.3rem 0.5rem 0.3rem 0; }
+.errand-history td { border-bottom: 1px solid var(--border); padding: 0.35rem 0.5rem 0.35rem 0; vertical-align: top; }
+.errand-history td:first-child { white-space: nowrap; }
+.via-link { font-size: 0.75rem; padding: 0.05rem 0.5rem; border-radius: 999px; background: #e6f1fb; color: #1d4f7c; }
