@@ -2163,6 +2163,27 @@ export function buildRouter(
   });
 
   // Anything else for the week (milk, bread…), added by hand.
+  // Clears the week's list: everything the recipes need counts as in the house, and anything added, changed
+  // or ticked off goes. A recipe picked afterwards brings its ingredients back.
+  router.add("DELETE", "/api/family/weeks/:startsOn/shopping", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = await weekId(db, member.family_id, req.params.startsOn);
+    await withTransaction(db, async (tx) => {
+      await tx.query(
+        `INSERT INTO schedule_have (week_id, day, recipe_id, item)
+         SELECT DISTINCT d.week_id, d.day, d.meal_recipe_id, lower(regexp_replace(trim(i.name), '\\s+', ' ', 'g'))
+           FROM schedule_day d JOIN recipe_ingredient i ON i.recipe_id = d.meal_recipe_id
+          WHERE d.week_id = $1 AND NOT d.eat_out
+         ON CONFLICT DO NOTHING`,
+        [id],
+      );
+      for (const table of ["shopping_extra", "shopping_bought", "shopping_quantity"]) {
+        await tx.query(`DELETE FROM ${table} WHERE week_id = $1`, [id]);
+      }
+    });
+    return { body: await shoppingList(member.family_id, req.params.startsOn) };
+  });
+
   router.add("POST", "/api/family/weeks/:startsOn/shopping/extras", async (req) => {
     const { member } = await requireMember(db, req);
     const id = await weekId(db, member.family_id, req.params.startsOn);

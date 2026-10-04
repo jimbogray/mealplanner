@@ -371,3 +371,5 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .errand-history td { border-bottom: 1px solid var(--border); padding: 0.35rem 0.5rem 0.35rem 0; vertical-align: top; }
 .errand-history td:first-child { white-space: nowrap; }
 .via-link { font-size: 0.75rem; padding: 0.05rem 0.5rem; border-radius: 999px; background: #e6f1fb; color: #1d4f7c; }
+.shopping-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin-top: 0.5rem; }
+.shopping-summary .shopping-count { margin: 0; }
