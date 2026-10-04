@@ -851,3 +851,65 @@ export function stepQuantity(q: Quantity, direction: 1 | -1): Quantity {
   const min = q.unit === "g" || q.unit === "ml" ? 25 : q.amount < 1 ? 0.25 : 1;
   return { amount: roundAmount(Math.max(min, next)), unit: q.unit };
 }
+
+// --- errands -----------------------------------------------------------------
+
+/** Something the family takes turns at, e.g. walking the dog. */
+export interface Errand {
+  id: Uuid;
+  name: string;
+  /** Who takes part, in turn order. */
+  memberIds: Uuid[];
+  /** Whose turn it is; null when nobody takes part. */
+  turnMemberId: Uuid | null;
+  /** Whose turn is after that. */
+  nextMemberId: Uuid | null;
+  /** The secret in the public links (see errandLinks). */
+  linkToken: string;
+  /** Newest first. */
+  history: ErrandHistoryEntry[];
+  createdAt: string;
+}
+
+export type ErrandAction = "created" | "done" | "turn" | "changed" | "link";
+
+export interface ErrandHistoryEntry {
+  id: Uuid;
+  at: string;
+  action: ErrandAction;
+  /** Whose turn it was. */
+  turnName: string | null;
+  /** Whose turn it is after this. */
+  nextName: string | null;
+  /** Who did it in the app; null when it came through the public link. */
+  byName: string | null;
+  viaLink: boolean;
+}
+
+export interface ErrandRequest {
+  name: string;
+  memberIds: Uuid[];
+}
+
+export interface ErrandDoneRequest {
+  /** Whose turn the page showed, so two people pressing Done at once only move it on once. */
+  turnMemberId?: Uuid | null;
+}
+
+export interface ErrandTurnRequest {
+  memberId: Uuid;
+}
+
+/** What the public "whose turn" link answers with ?format=json. */
+export interface ErrandTurnResponse {
+  errand: string;
+  turn: string | null;
+  next: string | null;
+}
+
+export const MAX_ERRAND_NAME = 60;
+
+/** API paths of an errand's public links: whose turn it is (GET), and move to the next person (POST or GET). */
+export function errandLinks(linkToken: string): { turn: string; next: string } {
+  return { turn: `/api/errands/${linkToken}/turn`, next: `/api/errands/${linkToken}/next` };
+}

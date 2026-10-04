@@ -15,6 +15,7 @@ export interface Request {
   path: string;
   params: Record<string, string>;
   headers: IncomingMessage["headers"];
+  query: URLSearchParams;
   body: unknown;
 }
 
@@ -23,6 +24,10 @@ export interface Result {
   body?: unknown;
   /** Sends a 303 to this URL instead of a JSON body. */
   redirect?: string;
+  /** Sends this as plain text instead of a JSON body. */
+  text?: string;
+  /** Lets any web page read the response (for public links other apps call). */
+  anyOrigin?: boolean;
 }
 
 export type Handler = (req: Request) => Promise<Result>;
@@ -111,16 +116,25 @@ export function listener(router: Router, allowedOrigins: string[]) {
       return;
     }
 
-    const path = new URL(req.url ?? "/", "http://localhost").pathname.replace(/\/+$/, "") || "/";
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const path = url.pathname.replace(/\/+$/, "") || "/";
     const found = router.match(method, path);
     if (found === null) return send(res, 404, { error: "Not found" });
     if (found === "method") return send(res, 405, { error: "Method not allowed" });
 
     try {
       const body = method === "GET" ? undefined : await readBody(req);
-      const result = await found.handler({ method, path, params: found.params, headers: req.headers, body });
+      const result = await found.handler({ method, path, params: found.params, headers: req.headers, query: url.searchParams, body });
+      if (result.anyOrigin) {
+        res.setHeader("access-control-allow-origin", "*");
+        res.removeHeader("vary");
+      }
       if (result.redirect) res.writeHead(303, { location: result.redirect, "cache-control": "no-store" }).end();
-      else send(res, result.status ?? 200, result.body);
+      else if (result.text !== undefined) {
+        res
+          .writeHead(result.status ?? 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" })
+          .end(result.text);
+      } else send(res, result.status ?? 200, result.body);
     } catch (err) {
       if (err instanceof HttpError) {
         send(res, err.status, { error: err.message });

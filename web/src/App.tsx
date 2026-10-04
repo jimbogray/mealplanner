@@ -1,6 +1,7 @@
 import { displayName, type Me } from "@mealplanner/shared";
 import type { ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { ErrandsPage } from "./pages/Errands";
 import { FamilyPage } from "./pages/Family";
 import { GoogleReturnPage } from "./pages/GoogleReturn";
 import { JoinPage } from "./pages/Join";
@@ -28,6 +29,7 @@ export function App() {
             <NavLink to="/shopping">Shopping List</NavLink>
             <NavLink to="/library">Recipes</NavLink>
             <NavLink to="/restaurants">Restaurants</NavLink>
+            <NavLink to="/errands">Errands</NavLink>
             <NavLink to="/family">Family</NavLink>
           </nav>
         )}
@@ -98,6 +100,14 @@ export function App() {
               element={
                 <RequireSignIn>
                   <RestaurantsPage />
+                </RequireSignIn>
+              }
+            />
+            <Route
+              path="/errands"
+              element={
+                <RequireSignIn>
+                  <ErrandsPage />
                 </RequireSignIn>
               }
             />
