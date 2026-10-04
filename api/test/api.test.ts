@@ -1268,12 +1268,20 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const chicken = (await call<ShoppingList>("GET", path, { token: parentToken })).body.items.find((i) => i.key === "chicken thighs")!;
       assert.equal(chicken.quantity, "1 kg");
 
+      // Clearing the list empties it (recipes' ingredients count as in the house; added items, changes and ticks go).
+      await call("POST", extras, { token: teenToken, body: { name: "Bread" } });
+      const cleared = await call<ShoppingList>("DELETE", path, { token: teenToken });
+      assert.equal(cleared.status, 200);
+      assert.deepEqual([cleared.body.items, cleared.body.extras, cleared.body.adjusted], [[], [], {}]);
+      assert.ok(cleared.body.meals.every((m) => (m.ingredients ?? []).every((i) => i.have)));
+
       // Other families can't see it.
       const other = await call<AuthResponse>("POST", "/api/auth/signup", {
         body: { email: "shopping-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
       });
       assert.equal((await call("GET", path, { token: other.body.token })).status, 404);
       assert.equal((await call("POST", extras, { token: other.body.token, body: { name: "Milk" } })).status, 404);
+      assert.equal((await call("DELETE", path, { token: other.body.token })).status, 404);
       assert.equal((await call("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, { token: other.body.token, body: { key: "x", bought: true } })).status, 404);
 
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
