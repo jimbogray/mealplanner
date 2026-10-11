@@ -11,6 +11,8 @@ export interface SuggestBrief {
     eatOutsPerWeek: number;
     mealKitsPerWeek: number;
   };
+  /** How many more meal kits and eat-outs the week can have, after the days already set. A hard limit. */
+  left: { mealKits: number; eatOuts: number };
   family: { name: string; lifeStage: string; diet: string; allergies: string[] }[];
   days: {
     date: string;
@@ -82,7 +84,7 @@ const SYSTEM = `You plan a family's dinners for a week. You're given each day's 
 How to choose:
 - Work out how much time an adult has to cook before dinner. An adult working from home has plenty. An adult at an event that ends close to dinner, or who has to collect or drop off a child at an event around dinner, has little. Children and teenagers at events usually need an adult to take or collect them.
 - When time is short, prefer a meal kit or a quick recipe (30 minutes or less). When no adult is home to cook, or the only adult free has to be out collecting children, eating out is a good choice, especially at a restaurant with a short drive.
-- Aim for the family's eatOutsPerWeek eat-outs and mealKitsPerWeek meal kits over the whole week, counting days already chosen. Put them on the busiest days. Go over only when a day really needs it.
+- The family wants at most eatOutsPerWeek eat-outs and mealKitsPerWeek meal kits a week. Days already set count towards these, and "left" says how many more the week can have: never suggest more meal kits than left.mealKits, or more restaurant / otherOut dinners (on days not already eating out or taking out) than left.eatOuts. When none are left, use a quick recipe instead, even on a busy day. Use the ones left on the busiest days.
 - Days with eatingOut true are already set to eating out: pick a restaurant (or otherOut).
 - Days with takingOut true are already set to take-out eaten at home: pick a restaurant that suits take-out (or otherOut, e.g. "Pizza"). Driving time matters less, as it can be delivered or collected.
 - Longer recipes suit days when an adult is working from home, and weekends.

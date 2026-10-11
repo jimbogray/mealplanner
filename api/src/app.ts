@@ -1971,7 +1971,16 @@ export function buildRouter(
         const date = v.isoDate(d.date, "Day");
         const who = dinner(d, familyIds);
         const wfh = d.workingFromHomeIds === undefined || isoWeekday(date) > 5 ? [] : v.ids(d.workingFromHomeIds, "Working from home");
-        return { date, ...who, workingFromHomeIds: wfh.filter((id) => familyIds.includes(id)), chosen: chosenMeal(d.meal) };
+        const chosen = chosenMeal(d.meal);
+        const meal = chosen === null ? null : v.object(d.meal);
+        return {
+          date,
+          ...who,
+          workingFromHomeIds: wfh.filter((id) => familyIds.includes(id)),
+          chosen,
+          mealKit: meal?.mealKit === true,
+          recipeId: typeof meal?.recipeId === "string" ? meal.recipeId : null,
+        };
       })
       .sort((a, c) => a.date.localeCompare(c.date));
     if (days.some((d) => mondayOf(d.date) !== mondayOf(days[0].date))) throw new HttpError(400, "The days must all be in one week");
@@ -2000,8 +2009,16 @@ export function buildRouter(
     ).rows.map(toRestaurant);
     const last = (dates: string[]) => (dates.length ? dates.reduce((a, c) => (a > c ? a : c)) : null);
 
+    // The week's meal kits and eat-outs can't go over the family's weekly numbers, and days already set count
+    // towards them: a meal kit already picked, or a day already marked as eating out.
+    const left = {
+      mealKits: Math.max(0, prefs.mealKitsPerWeek - days.filter((d) => d.mealKit).length),
+      eatOuts: Math.max(0, prefs.eatOutsPerWeek - days.filter((d) => d.eatOut).length),
+    };
+
     const brief: SuggestBrief = {
       preferences: { eatOutsPerWeek: prefs.eatOutsPerWeek, mealKitsPerWeek: prefs.mealKitsPerWeek },
+      left: { ...left },
       family: members.map((m) => ({ name: displayName(m), lifeStage: m.lifeStage, diet: m.diet, allergies: m.allergies })),
       days: days.map((d) => ({
         date: d.date,
@@ -2047,13 +2064,26 @@ export function buildRouter(
       throw new HttpError(502, "Couldn't come up with suggestions just now, try again in a moment");
     }
 
-    // Only what fits: one suggestion per day that needs one, from the family's own recipes and restaurants.
+    // Only what fits: one suggestion per day that needs one, from the family's own recipes and restaurants, and no
+    // more meal kits or eat-outs than the week has left.
     const suggestions: MealSuggestion[] = [];
     const typed = (name: string | null) => name?.trim().slice(0, MAX_MEAL_NAME) || null;
+    const recipeUsed = (id: string) => days.some((d) => d.recipeId === id) || suggestions.some((x) => x.meal.recipeId === id);
     for (const s of found.days) {
       const day = days.find((d) => d.date === s.date);
       if (!day || !needsSuggestion(day) || suggestions.some((x) => x.date === s.date)) continue;
-      const reason = s.reason.trim().slice(0, 200);
+      let reason = s.reason.trim().slice(0, 200);
+      // A meal kit, or eating out on a day that isn't already, over the week's number: a quick recipe instead.
+      const newEatOut = (s.choice === "restaurant" || s.choice === "otherOut") && !day.eatOut && !day.takeOut;
+      if ((s.choice === "mealKit" && left.mealKits === 0) || (newEatOut && left.eatOuts === 0)) {
+        const quick = recipes
+          .filter((r) => !recipeUsed(r.id))
+          .sort((a, c) => (a.cookingMinutes ?? 60) - (c.cookingMinutes ?? 60) || (c.averageRating ?? 0) - (a.averageRating ?? 0))[0];
+        if (!quick) continue;
+        const what = s.choice === "mealKit" ? "meal kits" : "eat-outs";
+        Object.assign(s, { choice: "recipe", recipeId: quick.id, restaurantId: null, name: null });
+        reason = `A quick recipe, as this week's ${what} are used up`;
+      }
       const meal = (m: Partial<ScheduleMeal>): ScheduleMeal => ({ name: "", mealKit: false, recipeId: null, restaurantId: null, url: null, ...m });
       let suggestion: Omit<MealSuggestion, "date" | "reason"> | null = null;
       // A restaurant on a take-out day is take-out from it; on any other day, eating out there.
@@ -2076,7 +2106,10 @@ export function buildRouter(
         const name = typed(s.name);
         if (name) suggestion = { ...home, meal: meal({ name }) };
       }
-      if (suggestion) suggestions.push({ date: s.date, ...suggestion, reason });
+      if (!suggestion) continue;
+      suggestions.push({ date: s.date, ...suggestion, reason });
+      if (suggestion.meal.mealKit) left.mealKits--;
+      if (suggestion.eatOut && !day.eatOut) left.eatOuts--;
     }
     return { body: { suggestions: suggestions.sort((a, c) => a.date.localeCompare(c.date)) } };
   });
