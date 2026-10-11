@@ -3,6 +3,7 @@ import {
   ALLERGENS,
   daysToPlan,
   displayName,
+  isoWeekday,
   MAX_GUESTS,
   MAX_MEAL_NAME,
   mondayOf,
@@ -184,6 +185,7 @@ function everyone(date: string, members: FamilyMember[]): ScheduleDay {
   return {
     date,
     eatOut: false,
+    takeOut: false,
     memberIds: members.map((m) => m.id),
     guests: 0,
     meal: null,
@@ -196,6 +198,7 @@ function everyone(date: string, members: FamilyMember[]): ScheduleDay {
 function dayRequest(d: ScheduleDay, isManager: boolean): UpdateDayRequest {
   return {
     eatOut: d.eatOut,
+    takeOut: d.takeOut,
     memberIds: d.memberIds,
     guests: d.guests,
     workingFromHomeIds: d.workingFromHomeIds,
@@ -218,9 +221,14 @@ function allergiesFor(day: ScheduleDay, members: FamilyMember[]): Allergen[] {
 }
 
 /** "Working from home: James, Anna"; nothing when nobody is. */
+/** Working from home is a weekday thing: Saturday and Sunday don't ask. */
+function isWeekend(date: string): boolean {
+  return isoWeekday(date) > 5;
+}
+
 function WorkingFromHome({ day, members }: { day: ScheduleDay; members: FamilyMember[] }) {
   const names = members.filter((m) => day.workingFromHomeIds.includes(m.id)).map(displayName);
-  if (!names.length) return null;
+  if (!names.length || isWeekend(day.date)) return null;
   return <span className="wfh-note">Working from home: {names.join(", ")}</span>;
 }
 
@@ -343,7 +351,14 @@ function Week({
           <li key={d.date} className={d.eatOut ? "eat-out" : undefined}>
             <span className="day-name">{dayLabel(d.date)}</span>
             <span className="day-details">
-              {d.eatOut ? <span className="out-tag">Eating out</span> : <span className="diners">{dinersSummary(d, members)}</span>}
+              {d.eatOut ? (
+                <span className="out-tag">Eating out</span>
+              ) : (
+                <span className="diners">
+                  {d.takeOut && <span className="out-tag take-out">Take out</span>}
+                  {dinersSummary(d, members)}
+                </span>
+              )}
               {d.meal && (
                 <span className="meal">
                   {d.meal.mealKit ? (
@@ -379,9 +394,23 @@ function Week({
   );
 }
 
+/** Where a day's dinner comes from: cooked at home, eating out, or take out eaten at home. */
+type Where = "home" | "out" | "takeOut";
+
+const WHERE: [Where, string][] = [
+  ["home", "At home"],
+  ["out", "Eating out"],
+  ["takeOut", "Take out"],
+];
+
+function whereOf(d: ScheduleDay): Where {
+  return d.eatOut ? "out" : d.takeOut ? "takeOut" : "home";
+}
+
 function sameDay(a: ScheduleDay, b: ScheduleDay): boolean {
   return (
     a.eatOut === b.eatOut &&
+    a.takeOut === b.takeOut &&
     a.guests === b.guests &&
     a.memberIds.length === b.memberIds.length &&
     a.memberIds.every((id) => b.memberIds.includes(id)) &&
@@ -463,9 +492,9 @@ function WeekForm({
     }
   }
 
-  /** A day with a suggestion applied. Eating out takes everyone and any guests off it, as the Eat out pill does. */
+  /** A day with a suggestion applied. Eating out takes everyone and any guests off it, as the Eating out switch does. */
   function suggested(d: ScheduleDay, s: MealSuggestion): ScheduleDay {
-    if (s.eatOut && !d.eatOut) return { ...d, eatOut: true, memberIds: [], guests: 0, meal: s.meal };
+    if (s.eatOut && !d.eatOut) return { ...d, eatOut: true, takeOut: false, memberIds: [], guests: 0, meal: s.meal };
     return { ...d, meal: s.meal };
   }
 
@@ -473,23 +502,33 @@ function WeekForm({
     update(day.date, { memberIds: joining ? [...day.memberIds, memberId] : day.memberIds.filter((id) => id !== memberId) });
   }
 
-  /** Eating out takes everyone and any guests off that day; eating in again starts from the whole family. */
-  function setEatOut(date: string, eatOut: boolean) {
-    update(date, eatOut ? { eatOut, memberIds: [], guests: 0, meal: null } : { eatOut, memberIds: members.map((m) => m.id), guests: 0, meal: null });
+  /**
+   * Where dinner comes from. Eating out takes everyone and any guests off that day; coming back from eating out
+   * starts from the whole family. A restaurant stays when swapping between eating out and take out; a recipe or
+   * meal kit doesn't fit a restaurant day, and the other way round.
+   */
+  function setWhere(day: ScheduleDay, where: Where) {
+    const eatOut = where === "out";
+    const takeOut = where === "takeOut";
+    const meal = (eatOut || takeOut) === (day.eatOut || day.takeOut) ? day.meal : null;
+    if (eatOut) update(day.date, { eatOut, takeOut, memberIds: [], guests: 0, meal });
+    else if (day.eatOut) update(day.date, { eatOut, takeOut, memberIds: members.map((m) => m.id), guests: 0, meal });
+    else update(day.date, { eatOut, takeOut, meal });
   }
 
-  /** Typing a saved recipe's (or, eating out, restaurant's) name links it; anything else is kept as typed. */
+  /** Typing a saved recipe's (or, eating out or take out, restaurant's) name links it; anything else is kept as typed. */
   function setMeal(day: ScheduleDay, text: string) {
     if (day.meal?.mealKit) {
       update(day.date, { meal: { name: text, mealKit: true, recipeId: null, restaurantId: null, url: null } });
       return;
     }
-    const options = day.eatOut ? choices?.restaurants : choices?.recipes;
+    const restaurant = day.eatOut || day.takeOut;
+    const options = restaurant ? choices?.restaurants : choices?.recipes;
     const match = options?.find((o) => o.name.toLowerCase() === text.trim().toLowerCase());
     const meal: ScheduleMeal | null = !text
       ? null
       : match
-        ? { name: text, mealKit: false, recipeId: day.eatOut ? null : match.id, restaurantId: day.eatOut ? match.id : null, url: match.url }
+        ? { name: text, mealKit: false, recipeId: restaurant ? null : match.id, restaurantId: restaurant ? match.id : null, url: match.url }
         : { name: text, mealKit: false, recipeId: null, restaurantId: null, url: null };
     update(day.date, { meal });
   }
@@ -573,18 +612,26 @@ function WeekForm({
               </li>
             );
           }
+          const where = whereOf(d);
+          const restaurant = where !== "home";
           return (
-            <li key={d.date} className={d.eatOut ? "eating-out" : undefined}>
+            <li key={d.date} className={where === "out" ? "eating-out" : where === "takeOut" ? "taking-out" : undefined}>
               <fieldset>
                 <div className="day-legend">
                   <legend>{dayLabel(d.date, "long")}</legend>
                   <div className="dinner-where" role="radiogroup" aria-label={`Dinner on ${dayLabel(d.date, "long")}`}>
-                    <button type="button" role="radio" aria-checked={!d.eatOut} onClick={() => d.eatOut && setEatOut(d.date, false)}>
-                      At home
-                    </button>
-                    <button type="button" role="radio" aria-checked={d.eatOut} onClick={() => !d.eatOut && setEatOut(d.date, true)}>
-                      Eating out
-                    </button>
+                    {WHERE.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="radio"
+                        className={value}
+                        aria-checked={where === value}
+                        onClick={() => where !== value && setWhere(d, value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                   <button
                     type="button"
@@ -618,7 +665,7 @@ function WeekForm({
                     </label>
                   </div>
                 )}
-                {adults.length > 0 && (
+                {adults.length > 0 && !isWeekend(d.date) && (
                   <div className="wfh-field" role="group" aria-label={`Working from home on ${dayLabel(d.date, "long")}`}>
                     <span>Working from home</span>
                     <div className="chips">
@@ -643,19 +690,19 @@ function WeekForm({
                 )}
                 {choices && (
                   <div className="meal-field">
-                    <label htmlFor={`${listId}-${d.date}-meal`}>{d.eatOut ? "Restaurant" : d.meal?.mealKit ? "Meal kit" : "Meal"}</label>
+                    <label htmlFor={`${listId}-${d.date}-meal`}>{restaurant ? "Restaurant" : d.meal?.mealKit ? "Meal kit" : "Meal"}</label>
                     <div className="meal-input">
                       <input
                         id={`${listId}-${d.date}-meal`}
-                        list={d.meal?.mealKit ? undefined : `${listId}-${d.eatOut ? "restaurants" : "recipes"}`}
+                        list={d.meal?.mealKit ? undefined : `${listId}-${restaurant ? "restaurants" : "recipes"}`}
                         maxLength={MAX_MEAL_NAME}
                         placeholder={
-                          d.eatOut ? "Pick a restaurant or type one" : d.meal?.mealKit ? "Which kit? (optional)" : "Pick a recipe or type a meal"
+                          restaurant ? "Pick a restaurant or type one" : d.meal?.mealKit ? "Which kit? (optional)" : "Pick a recipe or type a meal"
                         }
                         value={d.meal?.name ?? ""}
                         onChange={(e) => setMeal(d, e.target.value)}
                       />
-                      {!d.eatOut && (
+                      {!restaurant && (
                         <label className="chip toggle meal-kit">
                           <input type="checkbox" checked={!!d.meal?.mealKit} onChange={(e) => setMealKit(d, e.target.checked)} />
                           Meal kit

@@ -19,6 +19,8 @@ export interface SuggestBrief {
     dinnerTime: string;
     /** Already decided; the suggestion for this day must be a restaurant (or somewhere typed in). */
     eatingOut: boolean;
+    /** Already decided; dinner is take-out at home from a restaurant (or somewhere typed in). */
+    takingOut: boolean;
     /** What's already chosen, e.g. "Meal kit" or "Recipe: Fish pie"; null when the day needs a suggestion. */
     alreadyChosen: string | null;
     /** False for days that already have a meal or have passed: context only. */
@@ -82,6 +84,7 @@ How to choose:
 - When time is short, prefer a meal kit or a quick recipe (30 minutes or less). When no adult is home to cook, or the only adult free has to be out collecting children, eating out is a good choice, especially at a restaurant with a short drive.
 - Aim for the family's eatOutsPerWeek eat-outs and mealKitsPerWeek meal kits over the whole week, counting days already chosen. Put them on the busiest days. Go over only when a day really needs it.
 - Days with eatingOut true are already set to eating out: pick a restaurant (or otherOut).
+- Days with takingOut true are already set to take-out eaten at home: pick a restaurant that suits take-out (or otherOut, e.g. "Pizza"). Driving time matters less, as it can be delivered or collected.
 - Longer recipes suit days when an adult is working from home, and weekends.
 - Favour recipes and restaurants the family rates highly, but mix it up: don't repeat a recipe or restaurant within the week (including days already chosen), vary the main protein, and avoid ones chosen in the last week or so. Try a recipe the family hasn't cooked yet now and then, on a day with time to spare.
 - Respect the diets and allergies of those joining.

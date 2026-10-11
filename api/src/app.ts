@@ -598,6 +598,7 @@ interface ScheduleRow {
   day: string;
   guests: number;
   eat_out: boolean;
+  take_out: boolean;
   member_ids: string[];
   wfh_ids: string[];
   meal_name: string | null;
@@ -610,7 +611,7 @@ interface ScheduleRow {
 /** The family's weeks (or just the one starting on `startsOn`), oldest first, each with its seven days. */
 async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Promise<ScheduleWeek[]> {
   const { rows } = await db.query<ScheduleRow>(
-    `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests, d.eat_out,
+    `SELECT w.id, to_char(w.starts_on, 'YYYY-MM-DD') AS starts_on, to_char(d.day, 'YYYY-MM-DD') AS day, d.guests, d.eat_out, d.take_out,
             coalesce(array_agg(s.member_id::text ORDER BY s.member_id) FILTER (WHERE s.member_id IS NOT NULL), '{}') AS member_ids,
             ARRAY(SELECT h.member_id::text FROM schedule_wfh h WHERE h.week_id = w.id AND h.day = d.day ORDER BY h.member_id) AS wfh_ids,
             -- A linked recipe or restaurant shows its current name.
@@ -622,7 +623,7 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
        LEFT JOIN favourite_recipe fr ON fr.id = d.meal_recipe_id
        LEFT JOIN restaurant rs ON rs.id = d.meal_restaurant_id
       WHERE w.family_id = $1 AND ($2::date IS NULL OR w.starts_on = $2::date)
-      GROUP BY w.id, w.starts_on, d.day, d.guests, d.eat_out, d.meal_name, d.meal_recipe_id, d.meal_restaurant_id, d.meal_kit, fr.name, fr.url, rs.name, rs.url
+      GROUP BY w.id, w.starts_on, d.day, d.guests, d.eat_out, d.take_out, d.meal_name, d.meal_recipe_id, d.meal_restaurant_id, d.meal_kit, fr.name, fr.url, rs.name, rs.url
       ORDER BY w.starts_on, d.day`,
     [familyId, startsOn ?? null],
   );
@@ -633,7 +634,7 @@ async function loadWeeks(db: Queryable, familyId: string, startsOn?: string): Pr
       r.meal_name || r.meal_kit
         ? { name: r.meal_name ?? "", mealKit: r.meal_kit, recipeId: r.meal_recipe_id, restaurantId: r.meal_restaurant_id, url: r.meal_url }
       : null;
-    weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, memberIds: r.member_ids, guests: r.guests, meal, workingFromHomeIds: r.wfh_ids });
+    weeks.at(-1)!.days.push({ date: r.day, eatOut: r.eat_out, takeOut: r.take_out, memberIds: r.member_ids, guests: r.guests, meal, workingFromHomeIds: r.wfh_ids });
   }
   return weeks;
 }
@@ -699,8 +700,10 @@ async function saveEventMembers(tx: Tx, eventId: string, memberIds: string[]): P
 }
 
 /** Who's working from home in a day's request (adults in the family only); undefined when it's left out. */
-async function workingFromHome(db: Queryable, b: Record<string, unknown>, familyId: string): Promise<string[] | undefined> {
+async function workingFromHome(db: Queryable, b: Record<string, unknown>, familyId: string, date: string): Promise<string[] | undefined> {
   if (b.workingFromHomeIds === undefined) return undefined;
+  // Working from home is a weekday thing: Saturday and Sunday never have anyone.
+  if (isoWeekday(date) > 5) return [];
   const ids = v.ids(b.workingFromHomeIds, "Working from home");
   const { rows } = await db.query<{ id: string }>("SELECT id FROM family_member WHERE family_id = $1 AND life_stage = 'adult'", [familyId]);
   if (ids.some((id) => !rows.some((r) => r.id === id))) throw new HttpError(400, "Only adults in your family can be working from home");
@@ -724,26 +727,38 @@ interface MealRow {
   restaurantId: string | null;
 }
 
-/** Who's joining and how many guests, checked against the family's members. Eating out clears both. */
+/**
+ * Who's joining and how many guests, checked against the family's members. Eating out clears both; take-out
+ * keeps them, as dinner is still at home.
+ */
 function dinner(b: Record<string, unknown>, familyIds: string[]): Omit<ScheduleDay, "date" | "meal" | "workingFromHomeIds"> {
   if (b.eatOut !== undefined && typeof b.eatOut !== "boolean") throw new HttpError(400, "Eat out must be true or false");
-  if (b.eatOut) return { eatOut: true, memberIds: [], guests: 0 };
+  if (b.takeOut !== undefined && typeof b.takeOut !== "boolean") throw new HttpError(400, "Take out must be true or false");
+  if (b.eatOut && b.takeOut) throw new HttpError(400, "A day can't be both eating out and take-out");
+  if (b.eatOut) return { eatOut: true, takeOut: false, memberIds: [], guests: 0 };
   const memberIds = v.ids(b.memberIds, "Who's joining");
   if (memberIds.some((id) => !familyIds.includes(id))) throw new HttpError(400, "Only members of your family can join for dinner");
-  return { eatOut: false, memberIds, guests: v.guests(b.guests) };
+  return { eatOut: false, takeOut: b.takeOut === true, memberIds, guests: v.guests(b.guests) };
 }
 
 /**
  * The meal in a day's request (Family Managers only), checked against the family's recipes and restaurants.
  * undefined when the request leaves the meal out.
  */
-async function mealFrom(db: Queryable, b: Record<string, unknown>, member: MemberRow, eatOut: boolean): Promise<MealRow | null | undefined> {
+async function mealFrom(
+  db: Queryable,
+  b: Record<string, unknown>,
+  member: MemberRow,
+  where: { eatOut: boolean; takeOut: boolean },
+): Promise<MealRow | null | undefined> {
+  // Eating out and take-out are both from a restaurant.
+  const restaurantDay = where.eatOut || where.takeOut;
   if (b.meal === undefined) return undefined;
   if (member.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose meals");
   if (b.meal === null) return null;
   const m = v.object(b.meal);
   if (m.recipeId !== undefined) {
-    if (eatOut) throw new HttpError(400, "A recipe is for eating in; pick a restaurant for eating out");
+    if (restaurantDay) throw new HttpError(400, "A recipe is for cooking at home; pick a restaurant for eating out or take-out");
     const r = (
       await db.query<{ id: string; name: string }>("SELECT id, name FROM favourite_recipe WHERE id = $1 AND family_id = $2", [
         v.uuid(String(m.recipeId)),
@@ -754,7 +769,7 @@ async function mealFrom(db: Queryable, b: Record<string, unknown>, member: Membe
     return { name: r.name, mealKit: false, recipeId: r.id, restaurantId: null };
   }
   if (m.restaurantId !== undefined) {
-    if (!eatOut) throw new HttpError(400, "A restaurant is for eating out; mark the day as eating out first");
+    if (!restaurantDay) throw new HttpError(400, "A restaurant is for eating out or take-out; mark the day as one of those first");
     const r = (
       await db.query<{ id: string; name: string }>("SELECT id, name FROM restaurant WHERE id = $1 AND family_id = $2", [
         v.uuid(String(m.restaurantId)),
@@ -766,7 +781,7 @@ async function mealFrom(db: Queryable, b: Record<string, unknown>, member: Membe
   }
   if (m.mealKit !== undefined && typeof m.mealKit !== "boolean") throw new HttpError(400, "Meal kit must be true or false");
   if (m.mealKit) {
-    if (eatOut) throw new HttpError(400, "A meal kit is for eating in");
+    if (restaurantDay) throw new HttpError(400, "A meal kit is for cooking at home");
     const name = m.name === undefined || m.name === null || (typeof m.name === "string" && !m.name.trim()) ? null : v.text(m.name, "Meal kit", MAX_MEAL_NAME);
     return { name, mealKit: true, recipeId: null, restaurantId: null };
   }
@@ -790,17 +805,19 @@ function chosenMeal(value: unknown): string | null {
 
 async function saveDay(tx: Tx, weekId: string, day: DayInput): Promise<void> {
   const meal = day.meal ?? null;
-  // Without a meal in the request, the day keeps its meal, unless eating in or out changed (a recipe or
-  // restaurant no longer fits).
+  // Without a meal in the request, the day keeps its meal, unless it switched between cooking at home and a
+  // restaurant (eating out or take-out), when a recipe or restaurant no longer fits. Eating out and take-out swap
+  // and keep the restaurant.
+  const switched = "(schedule_day.eat_out OR schedule_day.take_out) <> (EXCLUDED.eat_out OR EXCLUDED.take_out)";
   await tx.query(
-    `INSERT INTO schedule_day (week_id, day, guests, eat_out, meal_name, meal_recipe_id, meal_restaurant_id, meal_kit)
-     VALUES ($1, $2, $3, $4, $6, $7, $8, $9)
-     ON CONFLICT (week_id, day) DO UPDATE SET guests = EXCLUDED.guests, eat_out = EXCLUDED.eat_out,
-       meal_name = CASE WHEN $5 THEN EXCLUDED.meal_name WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_name END,
-       meal_recipe_id = CASE WHEN $5 THEN EXCLUDED.meal_recipe_id WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_recipe_id END,
-       meal_restaurant_id = CASE WHEN $5 THEN EXCLUDED.meal_restaurant_id WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN NULL ELSE schedule_day.meal_restaurant_id END,
-       meal_kit = CASE WHEN $5 THEN EXCLUDED.meal_kit WHEN schedule_day.eat_out <> EXCLUDED.eat_out THEN false ELSE schedule_day.meal_kit END`,
-    [weekId, day.date, day.guests, day.eatOut, day.meal !== undefined, meal?.name ?? null, meal?.recipeId ?? null, meal?.restaurantId ?? null, meal?.mealKit ?? false],
+    `INSERT INTO schedule_day (week_id, day, guests, eat_out, take_out, meal_name, meal_recipe_id, meal_restaurant_id, meal_kit)
+     VALUES ($1, $2, $3, $4, $10, $6, $7, $8, $9)
+     ON CONFLICT (week_id, day) DO UPDATE SET guests = EXCLUDED.guests, eat_out = EXCLUDED.eat_out, take_out = EXCLUDED.take_out,
+       meal_name = CASE WHEN $5 THEN EXCLUDED.meal_name WHEN ${switched} THEN NULL ELSE schedule_day.meal_name END,
+       meal_recipe_id = CASE WHEN $5 THEN EXCLUDED.meal_recipe_id WHEN ${switched} THEN NULL ELSE schedule_day.meal_recipe_id END,
+       meal_restaurant_id = CASE WHEN $5 THEN EXCLUDED.meal_restaurant_id WHEN ${switched} THEN NULL ELSE schedule_day.meal_restaurant_id END,
+       meal_kit = CASE WHEN $5 THEN EXCLUDED.meal_kit WHEN ${switched} THEN false ELSE schedule_day.meal_kit END`,
+    [weekId, day.date, day.guests, day.eatOut, day.meal !== undefined, meal?.name ?? null, meal?.recipeId ?? null, meal?.restaurantId ?? null, meal?.mealKit ?? false, day.takeOut],
   );
   await tx.query("DELETE FROM schedule_diner WHERE week_id = $1 AND day = $2", [weekId, day.date]);
   await tx.query(
@@ -863,7 +880,7 @@ async function loadShoppingMeals(db: Queryable, weekId: string): Promise<Shoppin
     await db.query<ShoppingDayRow>(
       `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, r.id AS recipe_id, r.name, r.url, r.ingredients_read_at IS NOT NULL AS read
          FROM schedule_day d JOIN favourite_recipe r ON r.id = d.meal_recipe_id
-        WHERE d.week_id = $1 AND NOT d.eat_out
+        WHERE d.week_id = $1 AND NOT d.eat_out AND NOT d.take_out
         ORDER BY d.day`,
       [weekId],
     )
@@ -1835,6 +1852,7 @@ export function buildRouter(
       (date): DayInput => ({
         date,
         eatOut: false,
+        takeOut: false,
         memberIds: familyIds,
         guests: 0,
         workingFromHomeIds: usual.filter((m) => m.wfh_days.includes(isoWeekday(date))).map((m) => m.id),
@@ -1856,8 +1874,8 @@ export function buildRouter(
         planned.set(date, {
           date,
           ...who,
-          meal: await mealFrom(db, d, member, who.eatOut),
-          workingFromHomeIds: await workingFromHome(db, d, member.family_id),
+          meal: await mealFrom(db, d, member, who),
+          workingFromHomeIds: await workingFromHome(db, d, member.family_id, date),
         });
       }
       days.splice(0, days.length, ...days.filter((d) => planned.has(d.date)).map((d) => planned.get(d.date)!));
@@ -1898,8 +1916,8 @@ export function buildRouter(
     const day: DayInput = {
       date,
       ...who,
-      meal: await mealFrom(db, b, member, who.eatOut),
-      workingFromHomeIds: await workingFromHome(db, b, member.family_id),
+      meal: await mealFrom(db, b, member, who),
+      workingFromHomeIds: await workingFromHome(db, b, member.family_id, date),
     };
     await withTransaction(db, async (tx) => {
       const week = (
@@ -1952,7 +1970,7 @@ export function buildRouter(
         const d = v.object(raw);
         const date = v.isoDate(d.date, "Day");
         const who = dinner(d, familyIds);
-        const wfh = d.workingFromHomeIds === undefined ? [] : v.ids(d.workingFromHomeIds, "Working from home");
+        const wfh = d.workingFromHomeIds === undefined || isoWeekday(date) > 5 ? [] : v.ids(d.workingFromHomeIds, "Working from home");
         return { date, ...who, workingFromHomeIds: wfh.filter((id) => familyIds.includes(id)), chosen: chosenMeal(d.meal) };
       })
       .sort((a, c) => a.date.localeCompare(c.date));
@@ -1990,6 +2008,7 @@ export function buildRouter(
         weekday: new Date(`${d.date}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
         dinnerTime: (isoWeekday(d.date) <= 5 ? prefs.dinnerTimes.weekday : prefs.dinnerTimes.weekend) ?? DEFAULT_DINNER_TIME,
         eatingOut: d.eatOut,
+        takingOut: d.takeOut,
         alreadyChosen: d.chosen,
         needsSuggestion: needsSuggestion(d),
         joiningForDinner: d.memberIds.map(nameOf),
@@ -2037,22 +2056,25 @@ export function buildRouter(
       const reason = s.reason.trim().slice(0, 200);
       const meal = (m: Partial<ScheduleMeal>): ScheduleMeal => ({ name: "", mealKit: false, recipeId: null, restaurantId: null, url: null, ...m });
       let suggestion: Omit<MealSuggestion, "date" | "reason"> | null = null;
+      // A restaurant on a take-out day is take-out from it; on any other day, eating out there.
+      const out = { eatOut: !day.takeOut, takeOut: day.takeOut };
+      const home = { eatOut: false, takeOut: false };
       if (s.choice === "restaurant") {
         const r = restaurants.find((x) => x.id === s.restaurantId);
-        if (r) suggestion = { eatOut: true, meal: meal({ name: r.name, restaurantId: r.id, url: r.url }) };
+        if (r) suggestion = { ...out, meal: meal({ name: r.name, restaurantId: r.id, url: r.url }) };
       } else if (s.choice === "otherOut") {
         const name = typed(s.name);
-        if (name) suggestion = { eatOut: true, meal: meal({ name }) };
-      } else if (day.eatOut) {
-        continue; // Already eating out: only somewhere to eat out will do.
+        if (name) suggestion = { ...out, meal: meal({ name }) };
+      } else if (day.eatOut || day.takeOut) {
+        continue; // Already eating out or getting take-out: only a restaurant will do.
       } else if (s.choice === "recipe") {
         const r = recipes.find((x) => x.id === s.recipeId);
-        if (r) suggestion = { eatOut: false, meal: meal({ name: r.name, recipeId: r.id, url: r.url }) };
+        if (r) suggestion = { ...home, meal: meal({ name: r.name, recipeId: r.id, url: r.url }) };
       } else if (s.choice === "mealKit") {
-        suggestion = { eatOut: false, meal: meal({ mealKit: true }) };
+        suggestion = { ...home, meal: meal({ mealKit: true }) };
       } else {
         const name = typed(s.name);
-        if (name) suggestion = { eatOut: false, meal: meal({ name }) };
+        if (name) suggestion = { ...home, meal: meal({ name }) };
       }
       if (suggestion) suggestions.push({ date: s.date, ...suggestion, reason });
     }
