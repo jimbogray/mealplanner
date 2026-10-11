@@ -1207,7 +1207,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual((await set(parent.id, [])).body.workFromHomeDays, []);
     });
 
-    test("a week's recipes make a shopping list: ingredients read once, what's in the house left off, items ticked off", async () => {
+    test("recipes from today on make one shopping list: ingredients read once, what's in the house left off, items ticked off", async () => {
       const recipe = async (name: string) =>
         (await call<FavouriteRecipe>("POST", "/api/family/recipes", { token: parentToken, body: { url: `https://www.example.com/${name}`, name } })).body.id;
       const curry = await recipe("curry");
@@ -1222,7 +1222,12 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         { date: thu, memberIds: everyone, guests: 0, meal: { recipeId: broken } },
       ];
       assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days } })).status, 201);
-      const path = `/api/family/weeks/${startsOn}/shopping`;
+      // The list isn't for one week: the week after's recipes are on it too.
+      const later = addDays(startsOn, 7);
+      const laterDays = [{ date: later, memberIds: everyone, guests: 0, meal: { recipeId: tacos } }];
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn: later, today, days: laterDays } })).status, 201);
+      const path = `/api/family/shopping?today=${today}`;
+      assert.equal((await call("GET", `/api/family/shopping?today=${addDays(today, 3)}`, { token: teenToken })).status, 400);
 
       const list = await call<ShoppingList>("GET", path, { token: teenToken });
       assert.equal(list.status, 200);
@@ -1233,16 +1238,17 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
           [tue, "tacos", 3],
           [wed, "curry", 3],
           [thu, "broken", null],
+          [later, "tacos", 3],
         ],
       );
       // Grouped by aisle, the same ingredient on one line.
       assert.deepEqual(
         list.body.items.map((i) => [i.aisle, i.name, i.uses.map((u) => u.quantity).join(", ")]),
         [
-          ["produce", "onion", "2, 1, 2"],
-          ["bakery", "Tortillas", "8"],
+          ["produce", "onion", "2, 1, 2, 1"],
+          ["bakery", "Tortillas", "8, 8"],
           ["meat", "Chicken thighs", "500 g, 500 g"],
-          ["dairy", "Soured cream", ""],
+          ["dairy", "Soured cream", ", "],
           ["pantry", "Coconut milk", "1 tin, 1 tin"],
         ],
       );
@@ -1261,10 +1267,10 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await have(thu, "onion", true)).status, 400);
       let after = (await call<ShoppingList>("GET", path, { token: parentToken })).body;
       assert.deepEqual(after.meals[0].ingredients!.map((i) => i.have), [false, true, false]);
-      assert.deepEqual(after.items.find((i) => i.key === "onion")!.uses.map((u) => u.date), [tue, wed]);
+      assert.deepEqual(after.items.find((i) => i.key === "onion")!.uses.map((u) => u.date), [tue, wed, later]);
 
       const bought = (key: string, value: boolean) =>
-        call("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, { token: teenToken, body: { key, bought: value } });
+        call("PUT", "/api/family/shopping/bought", { token: teenToken, body: { key, bought: value } });
       assert.equal((await bought("Tortillas", true)).status, 204);
       assert.equal((await bought("onion", true)).status, 204);
       assert.equal((await bought("onion", false)).status, 204);
@@ -1272,7 +1278,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual(after.items.filter((i) => i.bought).map((i) => i.key), ["tortillas"]);
 
       // Anything else can be added by hand, its aisle known for everyday groceries; adding it again is refused.
-      const extras = `/api/family/weeks/${startsOn}/shopping/extras`;
+      const extras = "/api/family/shopping/extras";
       const milk = await call<ShoppingList>("POST", extras, { token: teenToken, body: { name: " Milk " } });
       assert.equal(milk.status, 201);
       assert.equal((await call("POST", extras, { token: teenToken, body: { name: "milk" } })).status, 409);
@@ -1283,23 +1289,24 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual([milkItem.aisle, milkItem.uses, milkItem.bought], ["dairy", [], false]);
       // Tortillas were ticked off, but adding them by hand means they're needed again; still one line with the recipe's.
       const tortillas = added.items.filter((i) => i.key === "tortillas");
-      assert.deepEqual(tortillas.map((i) => [i.aisle, i.uses.length, i.bought, i.extraId !== null]), [["bakery", 1, false, true]]);
+      assert.deepEqual(tortillas.map((i) => [i.aisle, i.uses.length, i.bought, i.extraId !== null]), [["bakery", 2, false, true]]);
       const removed = await call<ShoppingList>("DELETE", `${extras}/${milkItem.extraId}`, { token: teenToken });
       assert.equal(removed.status, 200);
       assert.deepEqual(removed.body.extras.map((e) => e.name), ["Tortillas"]);
       assert.equal((await call("DELETE", `${extras}/${milkItem.extraId}`, { token: teenToken })).status, 404);
 
-      // Each item's quantities add up (onions: 2 + 1 for Tuesday's tacos + 2 for Wednesday's curry, Monday's are in the house),
+      // Each item's quantities add up (onions: 2 + 1 for Tuesday's tacos + 2 for Wednesday's curry + 1 for the next week's tacos,
+      // Monday's are in the house),
       // and anyone can change them.
       const onion = () => call<ShoppingList>("GET", path, { token: parentToken }).then((r) => r.body.items.find((i) => i.key === "onion")!);
-      assert.deepEqual(await onion().then((i) => [i.quantity, i.amount, i.adjusted]), ["3", { amount: 3, unit: null }, false]);
+      assert.deepEqual(await onion().then((i) => [i.quantity, i.amount, i.adjusted]), ["4", { amount: 4, unit: null }, false]);
       const quantity = (key: string, q: unknown) =>
-        call("PUT", `/api/family/weeks/${startsOn}/shopping/quantity`, { token: teenToken, body: { key, quantity: q } });
-      assert.equal((await quantity("Onion", { amount: 4, unit: null })).status, 204);
-      assert.deepEqual(await onion().then((i) => [i.quantity, i.adjusted]), ["4", true]);
+        call("PUT", "/api/family/shopping/quantity", { token: teenToken, body: { key, quantity: q } });
+      assert.equal((await quantity("Onion", { amount: 5, unit: null })).status, 204);
+      assert.deepEqual(await onion().then((i) => [i.quantity, i.adjusted]), ["5", true]);
       assert.equal((await quantity("onion", { amount: 0, unit: null })).status, 400);
       assert.equal((await quantity("onion", null)).status, 204);
-      assert.deepEqual(await onion().then((i) => [i.quantity, i.adjusted]), ["3", false]);
+      assert.deepEqual(await onion().then((i) => [i.quantity, i.adjusted]), ["4", false]);
       const chicken = (await call<ShoppingList>("GET", path, { token: parentToken })).body.items.find((i) => i.key === "chicken thighs")!;
       assert.equal(chicken.quantity, "1 kg");
 
@@ -1310,16 +1317,21 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.deepEqual([cleared.body.items, cleared.body.extras, cleared.body.adjusted], [[], [], {}]);
       assert.ok(cleared.body.meals.every((m) => (m.ingredients ?? []).every((i) => i.have)));
 
-      // Other families can't see it.
+      // Other families have their own list.
+      const bread = (await call<ShoppingList>("POST", extras, { token: teenToken, body: { name: "Bread" } })).body.extras[0];
       const other = await call<AuthResponse>("POST", "/api/auth/signup", {
         body: { email: "shopping-other@example.com", password: "password123", name: "Ola", lifeStage: "adult", familyName: "Others" },
       });
-      assert.equal((await call("GET", path, { token: other.body.token })).status, 404);
-      assert.equal((await call("POST", extras, { token: other.body.token, body: { name: "Milk" } })).status, 404);
-      assert.equal((await call("DELETE", path, { token: other.body.token })).status, 404);
-      assert.equal((await call("PUT", `/api/family/weeks/${startsOn}/shopping/bought`, { token: other.body.token, body: { key: "x", bought: true } })).status, 404);
+      const theirs = await call<ShoppingList>("GET", path, { token: other.body.token });
+      assert.deepEqual([theirs.status, theirs.body.meals, theirs.body.extras], [200, [], []]);
+      assert.equal((await call("DELETE", `${extras}/${bread.id}`, { token: other.body.token })).status, 404);
+      assert.equal((await call("POST", extras, { token: other.body.token, body: { name: "Bread" } })).status, 201);
+      assert.equal((await call("DELETE", path, { token: other.body.token })).status, 200);
+      assert.deepEqual((await call<ShoppingList>("GET", path, { token: parentToken })).body.extras.map((e) => e.name), ["Bread"]);
 
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/weeks/${later}`, { token: parentToken })).status, 204);
+      await call("DELETE", path, { token: parentToken });
       for (const id of [curry, tacos, broken]) await call("DELETE", `/api/family/recipes/${id}`, { token: parentToken });
     });
   });

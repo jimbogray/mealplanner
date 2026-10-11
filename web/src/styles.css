@@ -333,8 +333,6 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .in-house li { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0; }
 
 /* Adding anything else to a week's shopping list. */
-.week-extras { border-top: 1px solid var(--border); padding-top: 0.6rem; }
-.week-extras h3 { font-size: 0.95rem; margin: 0 0 0.4rem; }
 .add-extra { display: flex; flex-direction: column; gap: 0.5rem; }
 .add-extra-form { display: flex; gap: 0.5rem; }
 .add-extra-form input { flex: 1 1 auto; min-width: 0; }
