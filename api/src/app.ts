@@ -700,8 +700,10 @@ async function saveEventMembers(tx: Tx, eventId: string, memberIds: string[]): P
 }
 
 /** Who's working from home in a day's request (adults in the family only); undefined when it's left out. */
-async function workingFromHome(db: Queryable, b: Record<string, unknown>, familyId: string): Promise<string[] | undefined> {
+async function workingFromHome(db: Queryable, b: Record<string, unknown>, familyId: string, date: string): Promise<string[] | undefined> {
   if (b.workingFromHomeIds === undefined) return undefined;
+  // Working from home is a weekday thing: Saturday and Sunday never have anyone.
+  if (isoWeekday(date) > 5) return [];
   const ids = v.ids(b.workingFromHomeIds, "Working from home");
   const { rows } = await db.query<{ id: string }>("SELECT id FROM family_member WHERE family_id = $1 AND life_stage = 'adult'", [familyId]);
   if (ids.some((id) => !rows.some((r) => r.id === id))) throw new HttpError(400, "Only adults in your family can be working from home");
@@ -1873,7 +1875,7 @@ export function buildRouter(
           date,
           ...who,
           meal: await mealFrom(db, d, member, who),
-          workingFromHomeIds: await workingFromHome(db, d, member.family_id),
+          workingFromHomeIds: await workingFromHome(db, d, member.family_id, date),
         });
       }
       days.splice(0, days.length, ...days.filter((d) => planned.has(d.date)).map((d) => planned.get(d.date)!));
@@ -1915,7 +1917,7 @@ export function buildRouter(
       date,
       ...who,
       meal: await mealFrom(db, b, member, who),
-      workingFromHomeIds: await workingFromHome(db, b, member.family_id),
+      workingFromHomeIds: await workingFromHome(db, b, member.family_id, date),
     };
     await withTransaction(db, async (tx) => {
       const week = (
@@ -1968,7 +1970,7 @@ export function buildRouter(
         const d = v.object(raw);
         const date = v.isoDate(d.date, "Day");
         const who = dinner(d, familyIds);
-        const wfh = d.workingFromHomeIds === undefined ? [] : v.ids(d.workingFromHomeIds, "Working from home");
+        const wfh = d.workingFromHomeIds === undefined || isoWeekday(date) > 5 ? [] : v.ids(d.workingFromHomeIds, "Working from home");
         return { date, ...who, workingFromHomeIds: wfh.filter((id) => familyIds.includes(id)), chosen: chosenMeal(d.meal) };
       })
       .sort((a, c) => a.date.localeCompare(c.date));

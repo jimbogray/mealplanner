@@ -3,6 +3,7 @@ import {
   ALLERGENS,
   daysToPlan,
   displayName,
+  isoWeekday,
   MAX_GUESTS,
   MAX_MEAL_NAME,
   mondayOf,
@@ -220,9 +221,14 @@ function allergiesFor(day: ScheduleDay, members: FamilyMember[]): Allergen[] {
 }
 
 /** "Working from home: James, Anna"; nothing when nobody is. */
+/** Working from home is a weekday thing: Saturday and Sunday don't ask. */
+function isWeekend(date: string): boolean {
+  return isoWeekday(date) > 5;
+}
+
 function WorkingFromHome({ day, members }: { day: ScheduleDay; members: FamilyMember[] }) {
   const names = members.filter((m) => day.workingFromHomeIds.includes(m.id)).map(displayName);
-  if (!names.length) return null;
+  if (!names.length || isWeekend(day.date)) return null;
   return <span className="wfh-note">Working from home: {names.join(", ")}</span>;
 }
 
@@ -659,7 +665,7 @@ function WeekForm({
                     </label>
                   </div>
                 )}
-                {adults.length > 0 && (
+                {adults.length > 0 && !isWeekend(d.date) && (
                   <div className="wfh-field" role="group" aria-label={`Working from home on ${dayLabel(d.date, "long")}`}>
                     <span>Working from home</span>
                     <div className="chips">

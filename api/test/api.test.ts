@@ -1112,6 +1112,12 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Left out, it stays; an empty list clears it.
       assert.deepEqual((await patch({ memberIds: [everyone[0]], guests: 1 })).body.workingFromHomeIds, [adults[0]]);
       assert.deepEqual((await patch({ memberIds: everyone, guests: 0, workingFromHomeIds: [] })).body.workingFromHomeIds, []);
+      // Not on Saturday or Sunday.
+      const saturday = await call<ScheduleDay>("PATCH", `/api/family/weeks/${startsOn}/days/${addDays(startsOn, 5)}`, {
+        token: teenToken,
+        body: { memberIds: everyone, guests: 0, workingFromHomeIds: [adults[0]] },
+      });
+      assert.deepEqual(saturday.body.workingFromHomeIds, []);
     });
 
     test("anyone in the family adds events, one-off or weekly, with who's going and when", async () => {
@@ -1469,7 +1475,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       );
       assert.equal(brief.days[1].events[0].title, "Swimming");
       assert.match(brief.days[1].events[0].going[0], /\(adult\)$/);
-      assert.equal(brief.days[2].adultsWorkingFromHome.length, 1);
+      // Saturday: working from home is weekdays only.
+      assert.equal(brief.days[2].adultsWorkingFromHome.length, 0);
       assert.ok(brief.recipes.some((r) => r.id === stewId && r.cookingMinutes === 180));
       assert.ok(brief.restaurants.some((r) => r.id === dinerId));
     });
