@@ -167,6 +167,7 @@ export const api = {
   shopping: (startsOn: string) => request<ShoppingList>("GET", `/api/family/weeks/${startsOn}/shopping`),
   setHave: (startsOn: string, date: string, body: SetHaveRequest) =>
     request<void>("PUT", `/api/family/weeks/${startsOn}/days/${date}/have`, body),
+  clearShopping: (startsOn: string) => request<ShoppingList>("DELETE", `/api/family/weeks/${startsOn}/shopping`),
   addExtra: (startsOn: string, name: string) => request<ShoppingList>("POST", `/api/family/weeks/${startsOn}/shopping/extras`, { name }),
   removeExtra: (startsOn: string, id: string) => request<ShoppingList>("DELETE", `/api/family/weeks/${startsOn}/shopping/extras/${id}`),
   setQuantity: (startsOn: string, body: SetQuantityRequest) => request<void>("PUT", `/api/family/weeks/${startsOn}/shopping/quantity`, body),

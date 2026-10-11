@@ -108,6 +108,17 @@ function Shopping() {
     }
   }
 
+  /** Empties the week's list, after checking. */
+  async function clearList() {
+    if (!list || !window.confirm("Clear this week's shopping list? Everything on it, including anything added or ticked off, will be removed.")) return;
+    setError(null);
+    try {
+      setList(await api.clearShopping(list.startsOn));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function needAfterAll(date: string, name: string) {
     if (!list) return;
     const before = list;
@@ -145,10 +156,15 @@ function Shopping() {
           <Link to="/schedule">Schedule</Link>, and tick things off here as they go in the basket. Use − and + to change how much.
         </p>
         {shown && shown.items.length > 0 && (
-          <p className="shopping-count">
-            {toBuy === 0 ? "All bought" : `${toBuy} to buy`}
-            {toBuy > 0 && toBuy < shown.items.length && `, ${shown.items.length - toBuy} bought`}
-          </p>
+          <div className="shopping-summary">
+            <p className="shopping-count">
+              {toBuy === 0 ? "All bought" : `${toBuy} to buy`}
+              {toBuy > 0 && toBuy < shown.items.length && `, ${shown.items.length - toBuy} bought`}
+            </p>
+            <button type="button" className="link danger" onClick={() => void clearList()}>
+              Clear list
+            </button>
+          </div>
         )}
       </section>
       <ErrorNote error={error} />
@@ -163,6 +179,9 @@ function Shopping() {
           <h2>Anything else?</h2>
           <AddToList list={shown} onChange={setList} />
         </section>
+      )}
+      {shown && shown.items.length === 0 && shown.meals.some((m) => m.ingredients?.length) && (
+        <p className="note center">Nothing to buy. Add anything above, or put things back from Already in the house below.</p>
       )}
       {shown && shown.meals.length === 0 && shown.extras.length === 0 && (
         <p className="note center">
