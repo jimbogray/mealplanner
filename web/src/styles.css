@@ -346,9 +346,12 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .dinner-where { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; background: #fff; }
 .dinner-where button { border: none; background: none; color: var(--muted); padding: 0.2rem 0.75rem; border-radius: 999px; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
 .dinner-where button[aria-checked="true"] { background: #e1f5ee; color: var(--accent); font-weight: 600; }
-.dinner-where button:last-child[aria-checked="true"] { background: #fdf3dd; color: #7a5510; }
+.dinner-where button.out[aria-checked="true"] { background: #fdf3dd; color: #7a5510; }
+.dinner-where button.takeOut[aria-checked="true"] { background: #e8eefb; color: #2f4f8a; }
 .day-form li.eating-out fieldset { border-left: 3px solid #e3b75a; padding-left: 0.75rem; }
+.day-form li.taking-out fieldset { border-left: 3px solid #8fa8dc; padding-left: 0.75rem; }
 .out-tag { align-self: flex-start; padding: 0.05rem 0.55rem; border-radius: 999px; background: #fdf3dd; color: #7a5510; font-size: 0.85rem; font-weight: 600; }
+.out-tag.take-out { background: #e8eefb; color: #2f4f8a; margin-right: 0.4rem; }
 
 /* Errands */
 .errand-turn { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; }

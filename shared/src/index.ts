@@ -386,6 +386,8 @@ export interface ScheduleDay {
   date: IsoDate;
   /** The family is eating out: memberIds is empty and guests is 0. */
   eatOut: boolean;
+  /** Take-out at home: who's joining and guests as usual, with food from a restaurant. Never with eatOut. */
+  takeOut: boolean;
   memberIds: Uuid[];
   guests: number;
   meal: ScheduleMeal | null;
@@ -394,7 +396,7 @@ export interface ScheduleDay {
 }
 
 /**
- * What's for dinner: one of the family's recipes (eating in), one of its restaurants (eating out), a meal kit
+ * What's for dinner: one of the family's recipes (eating in), one of its restaurants (eating out or take-out), a meal kit
  * (eating in), or typed in. The name stays if the recipe or restaurant is later removed from the family's lists.
  */
 export interface ScheduleMeal {
@@ -407,7 +409,7 @@ export interface ScheduleMeal {
   url: string | null;
 }
 
-/** Choose a meal: a recipe (eating in), a restaurant (eating out), a meal kit (eating in, name optional), or a typed-in name. */
+/** Choose a meal: a recipe (eating in), a restaurant (eating out or take-out), a meal kit (eating in, name optional), or a typed-in name. */
 export type MealInput = { recipeId: Uuid } | { restaurantId: Uuid } | { mealKit: true; name?: string } | { name: string };
 
 export const MAX_MEAL_NAME = 120;
@@ -432,14 +434,18 @@ export interface AddWeekRequest {
   days?: ({ date: IsoDate } & UpdateDayRequest)[];
 }
 
-/** Who's joining and how many guests; or eatOut, which leaves out everyone (memberIds and guests aren't needed). */
+/**
+ * Who's joining and how many guests; or eatOut, which leaves out everyone (memberIds and guests aren't needed).
+ * takeOut keeps who's joining, with a restaurant's food at home.
+ */
 export interface UpdateDayRequest {
   eatOut?: boolean;
+  takeOut?: boolean;
   memberIds?: Uuid[];
   guests?: number;
   /**
-   * Family Managers only. null clears it; left out keeps the day's meal (unless eating in or out changes,
-   * which clears it, since a recipe goes with eating in and a restaurant with eating out).
+   * Family Managers only. null clears it; left out keeps the day's meal (unless switching between cooking at
+   * home and a restaurant, eating out or take-out, which clears it, since a recipe doesn't fit a restaurant day).
    */
   meal?: MealInput | null;
   /** Adults only; left out keeps who's working from home that day. */
@@ -473,10 +479,14 @@ export interface SuggestMealsRequest {
   days: ScheduleDay[];
 }
 
-/** A suggested dinner for a day: eating out at one of the family's restaurants, or eating in (recipe, meal kit or typed). */
+/**
+ * A suggested dinner for a day: eating out at one of the family's restaurants, take-out from one (only on days
+ * already set to take-out), or eating in (recipe, meal kit or typed).
+ */
 export interface MealSuggestion {
   date: IsoDate;
   eatOut: boolean;
+  takeOut: boolean;
   meal: ScheduleMeal;
   /** Why, in a few words, e.g. "Nobody's home before 6:30 and Sam needs picking up". */
   reason: string;
