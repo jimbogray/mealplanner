@@ -1,5 +1,5 @@
 // Events on the schedule (a match, a work do): who's going and when, one-off or every week.
-import { addDays, displayName, eventOn, MAX_EVENT_TITLE, type FamilyMember, type ScheduleEvent } from "@mealplanner/shared";
+import { addDays, displayName, eventOn, MAX_EVENT_TITLE, repeatsOn, type FamilyMember, type ScheduleEvent } from "@mealplanner/shared";
 import { createContext, useContext, useState } from "react";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "./Field";
@@ -17,12 +17,35 @@ function clock(time: string): string {
   return new Date(`2000-01-01T${time}:00`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-/** Every 10 minutes of the day, "00:00" to "23:50". */
-const TIMES = Array.from({ length: 144 }, (_, i) => `${String(Math.floor(i / 6)).padStart(2, "0")}:${String((i % 6) * 10).padStart(2, "0")}`);
+/** Every 15 minutes of the day, "00:00" to "23:45". */
+const TIMES = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`);
 
-/** A time of day in 10-minute steps (plus `value` itself, if an older event isn't on a step). */
-function TimeSelect({ value, onChange, label }: { value: string; onChange: (time: string) => void; label: string }) {
-  const times = TIMES.includes(value) ? TIMES : [...TIMES, value].sort();
+/** An hour after `start`, or the last time of the day if that's sooner. */
+function anHourAfter(start: string): string {
+  const [h, m] = start.split(":").map(Number);
+  const later = `${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return TIMES.find((t) => t >= later) ?? TIMES.at(-1)!;
+}
+
+/**
+ * A time of day in 15-minute steps (plus `value` itself, if an older event isn't on a step). `after` leaves out
+ * that time and everything before it, and `before` everything from that time on.
+ */
+function TimeSelect({
+  value,
+  onChange,
+  label,
+  after,
+  before,
+}: {
+  value: string;
+  onChange: (time: string) => void;
+  label: string;
+  after?: string;
+  before?: string;
+}) {
+  const steps = TIMES.filter((t) => (!after || t > after) && (!before || t < before));
+  const times = steps.includes(value) ? steps : [...steps, value].sort();
   return (
     <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
       {times.map((t) => (
@@ -55,7 +78,10 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
   const { events, setEvents } = useContext(EventsContext);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const today = events.filter((e) => eventOn(e, date)).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  // While editing, a weekly event skipped this week still shows, so it can be brought back.
+  const today = events
+    .filter((e) => (editable ? repeatsOn(e, date) : eventOn(e, date)))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   if (!editable) {
     if (!today.length) return null;
@@ -87,10 +113,32 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
     }
   }
 
+  /** Skips a weekly event for just this week, or brings it back. */
+  async function skip(event: ScheduleEvent, skipped: boolean) {
+    setError(null);
+    try {
+      const updated = skipped ? await api.skipEvent(event.id, date) : await api.unskipEvent(event.id, date);
+      setEvents((list) => list.map((e) => (e.id === event.id ? updated : e)));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <div className="day-events editable">
       {today.map((e) =>
-        editing === e.id ? (
+        e.skipped.includes(date) ? (
+          <div key={e.id} className="event-row skipped">
+            <span className="event-line">
+              <s>{e.title}</s> skipped this week
+            </span>
+            <span className="event-actions">
+              <button type="button" className="link small" onClick={() => void skip(e, false)}>
+                Bring back
+              </button>
+            </span>
+          </div>
+        ) : editing === e.id ? (
           <EventForm key={e.id} date={date} event={e} onDone={() => setEditing(null)} />
         ) : (
           <div key={e.id} className="event-row">
@@ -99,6 +147,11 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
               <button type="button" className="link small" onClick={() => setEditing(e.id)}>
                 Edit
               </button>
+              {e.weekly && (
+                <button type="button" className="link small" onClick={() => void skip(e, true)}>
+                  Skip this week
+                </button>
+              )}
               <button type="button" className="link danger small" onClick={() => void remove(e)}>
                 Remove
               </button>
@@ -129,6 +182,11 @@ function EventForm({ date, event, onDone }: { date: string; event?: ScheduleEven
   const [startTime, setStartTime] = useState(event?.startTime ?? "17:00");
   const [endTime, setEndTime] = useState(event?.endTime ?? "18:00");
   const [weekly, setWeekly] = useState(event?.weekly ?? false);
+  /** A new start leaves the end alone while it's still later; otherwise the end moves to an hour after. */
+  function changeStart(time: string) {
+    setStartTime(time);
+    if (endTime <= time) setEndTime(anHourAfter(time));
+  }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -184,10 +242,10 @@ function EventForm({ date, event, onDone }: { date: string; event?: ScheduleEven
       </div>
       <div className="event-times">
         <label>
-          From <TimeSelect label="Start time" value={startTime} onChange={setStartTime} />
+          From <TimeSelect label="Start time" value={startTime} onChange={changeStart} before={TIMES.at(-1)} />
         </label>
         <label>
-          to <TimeSelect label="End time" value={endTime} onChange={setEndTime} />
+          to <TimeSelect label="End time" value={endTime} onChange={setEndTime} after={startTime} />
         </label>
         <label className="chip toggle weekly">
           <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} />

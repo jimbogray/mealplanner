@@ -1125,7 +1125,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const body = { title: "Football", date, startTime: "17:00", endTime: "18:30", memberIds: [everyone[0]], weekly: true };
       const added = await call<ScheduleEvent>("POST", "/api/family/events", { token: teenToken, body: { ...body, title: " Football " } });
       assert.equal(added.status, 201);
-      assert.deepEqual({ ...added.body, id: undefined }, { ...body, id: undefined, until: null });
+      assert.deepEqual({ ...added.body, id: undefined }, { ...body, id: undefined, until: null, skipped: [] });
 
       for (const bad of [
         { ...body, title: " " },
@@ -1169,6 +1169,20 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         (await call("PATCH", `/api/family/events/${added.body.id}`, { token: parentToken, body: { until: addDays(date, -1) } })).status,
         400,
       );
+
+      // A weekly event can be skipped for one week only, and brought back.
+      const skips = `/api/family/events/${added.body.id}/skips`;
+      const skipped = await call<ScheduleEvent>("PUT", `${skips}/${addDays(date, 7)}`, { token: teenToken });
+      assert.equal(skipped.status, 200);
+      assert.deepEqual(skipped.body.skipped, [addDays(date, 7)]);
+      assert.ok(!eventOn(skipped.body, addDays(date, 7)));
+      assert.ok(eventOn(skipped.body, date));
+      assert.equal((await call("PUT", `${skips}/${addDays(date, 7)}`, { token: teenToken })).status, 200);
+      assert.equal((await call("PUT", `${skips}/${addDays(date, 8)}`, { token: teenToken })).status, 400);
+      assert.equal((await call("PUT", `/api/family/events/${oneOff.body.id}/skips/${date}`, { token: teenToken })).status, 400);
+      assert.equal((await call("PUT", `${skips}/${date}`, { token: other.body.token })).status, 404);
+      const back = await call<ScheduleEvent>("DELETE", `${skips}/${addDays(date, 7)}`, { token: teenToken });
+      assert.deepEqual(back.body.skipped, []);
 
       assert.equal((await call("DELETE", `/api/family/events/${added.body.id}`, { token: teenToken })).status, 204);
       assert.equal((await call("DELETE", `/api/family/events/${oneOff.body.id}`, { token: teenToken })).status, 204);
