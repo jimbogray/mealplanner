@@ -47,10 +47,10 @@ export function DayIngredients({ meal, onHave }: { meal: ShoppingMeal | undefine
 }
 
 /**
- * A box to add anything else to the week's shopping list (milk, bread…), suggesting everyday groceries as you
- * type, with what's been added so far (each can be taken off again).
+ * A box to add anything else to the shopping list (milk, bread…), suggesting everyday groceries as you type, with
+ * what's been added so far (each can be taken off again). `today` is the person's own date.
  */
-export function AddToList({ list, onChange }: { list: ShoppingList; onChange: (list: ShoppingList) => void }) {
+export function AddToList({ list, today, onChange }: { list: ShoppingList; today: string; onChange: (list: ShoppingList) => void }) {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export function AddToList({ list, onChange }: { list: ShoppingList; onChange: (l
     setSaving(true);
     setError(null);
     try {
-      onChange(await api.addExtra(list.startsOn, name.trim()));
+      onChange(await api.addExtra(today, name.trim()));
       setName("");
     } catch (err) {
       setError(errorMessage(err));
@@ -75,7 +75,7 @@ export function AddToList({ list, onChange }: { list: ShoppingList; onChange: (l
   async function remove(extraId: string) {
     setError(null);
     try {
-      onChange(await api.removeExtra(list.startsOn, extraId));
+      onChange(await api.removeExtra(today, extraId));
     } catch (err) {
       setError(errorMessage(err));
     }

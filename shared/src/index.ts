@@ -619,7 +619,7 @@ export interface ShoppingMeal {
   ingredients: (Ingredient & { have: boolean })[] | null;
 }
 
-/** One line of the week's shopping list: the same ingredient across the week's recipes, and/or added by hand. */
+/** One line of the shopping list: the same ingredient across the recipes, and/or added by hand. */
 export interface ShoppingItem {
   /** The ingredient's name in lower case; what ticking it off refers to. */
   key: string;
@@ -651,23 +651,26 @@ export interface SetQuantityRequest {
   quantity: Quantity | null;
 }
 
-/** Something added to a week's shopping list by hand, not from a recipe. */
+/** Something added to the shopping list by hand, not from a recipe. */
 export interface ShoppingExtra {
   id: Uuid;
   name: string;
   aisle: Aisle;
 }
 
-/** Add something to a week's shopping list. Its aisle comes from COMMON_GROCERIES when it's one of them, else Other. */
+/** Add something to the shopping list. Its aisle comes from COMMON_GROCERIES when it's one of them, else Other. */
 export interface AddExtraRequest {
   name: string;
 }
 
 export const MAX_EXTRA_NAME = 60;
 
-/** A week's shopping list, compiled from the recipes on the schedule that week. */
+/**
+ * The family's shopping list: one ongoing list, compiled from the recipes on the schedule from today on, plus
+ * anything added by hand.
+ */
 export interface ShoppingList {
-  startsOn: IsoDate;
+  /** The recipe days from today on, earliest first. */
   meals: ShoppingMeal[];
   /** Added by hand, oldest first. */
   extras: ShoppingExtra[];

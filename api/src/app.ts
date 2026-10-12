@@ -849,6 +849,21 @@ async function weekId(db: Queryable, familyId: string, startsOn: string): Promis
   return week.id;
 }
 
+/**
+ * The person's own date ("?today=YYYY-MM-DD"), within a day of ours (time zones); ours when it isn't given.
+ * The shopping list covers the recipes from this day on.
+ */
+function todayOf(req: Request): string {
+  const serverToday = new Date().toISOString().slice(0, 10);
+  const asked = req.query.get("today");
+  if (asked === null) return serverToday;
+  const today = v.isoDate(asked, "Today");
+  if (today < addDays(serverToday, -1) || today > addDays(serverToday, 1)) {
+    throw new HttpError(400, "Your device's date looks wrong; check it and try again");
+  }
+  return today;
+}
+
 const MAX_INGREDIENTS = 60;
 
 /** What Claude read, tidied: names and amounts trimmed and capped, each ingredient once. */
@@ -874,15 +889,18 @@ interface ShoppingDayRow {
   read: boolean;
 }
 
-/** A week's recipes (eating in) with their ingredients and which are in the house. Recipes not read yet have null ingredients. */
-async function loadShoppingMeals(db: Queryable, weekId: string): Promise<ShoppingMeal[]> {
+/**
+ * The family's recipes (eating in) from a day on, with their ingredients and which are in the house. Recipes not
+ * read yet have null ingredients.
+ */
+async function loadShoppingMeals(db: Queryable, familyId: string, from: string): Promise<ShoppingMeal[]> {
   const days = (
     await db.query<ShoppingDayRow>(
       `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, r.id AS recipe_id, r.name, r.url, r.ingredients_read_at IS NOT NULL AS read
-         FROM schedule_day d JOIN favourite_recipe r ON r.id = d.meal_recipe_id
-        WHERE d.week_id = $1 AND NOT d.eat_out AND NOT d.take_out
+         FROM schedule_day d JOIN schedule_week w ON w.id = d.week_id JOIN favourite_recipe r ON r.id = d.meal_recipe_id
+        WHERE w.family_id = $1 AND d.day >= $2 AND NOT d.eat_out AND NOT d.take_out
         ORDER BY d.day`,
-      [weekId],
+      [familyId, from],
     )
   ).rows;
   const ingredients = (
@@ -893,8 +911,10 @@ async function loadShoppingMeals(db: Queryable, weekId: string): Promise<Shoppin
   ).rows;
   const have = (
     await db.query<{ day: string; recipe_id: string; item: string }>(
-      "SELECT to_char(day, 'YYYY-MM-DD') AS day, recipe_id, item FROM schedule_have WHERE week_id = $1",
-      [weekId],
+      `SELECT to_char(h.day, 'YYYY-MM-DD') AS day, h.recipe_id, h.item
+         FROM schedule_have h JOIN schedule_week w ON w.id = h.week_id
+        WHERE w.family_id = $1 AND h.day >= $2`,
+      [familyId, from],
     )
   ).rows;
   return days.map((d) => ({
@@ -1796,26 +1816,30 @@ export function buildRouter(
     for (const d of days) if (d.meal?.recipeId) void readIngredients(d.meal.recipeId);
   };
 
-  /** A week's shopping list, reading any of its recipes' ingredients that haven't been read yet. */
-  const shoppingList = async (familyId: string, startsOn: string): Promise<ShoppingList> => {
-    const id = await weekId(db, familyId, startsOn);
-    let meals = await loadShoppingMeals(db, id);
+  /**
+   * The family's shopping list: the recipes picked from today on, and what's been added, ticked off or changed.
+   * Reads any of the recipes' ingredients that haven't been read yet.
+   */
+  const shoppingList = async (familyId: string, today: string): Promise<ShoppingList> => {
+    let meals = await loadShoppingMeals(db, familyId, today);
     const unread = [...new Set(meals.filter((m) => !m.ingredients).map((m) => m.recipeId))];
     if (unread.length && options.readIngredients) {
       await Promise.all(unread.map(readIngredients));
-      meals = await loadShoppingMeals(db, id);
+      meals = await loadShoppingMeals(db, familyId, today);
     }
-    const bought = (await db.query<{ item: string }>("SELECT item FROM shopping_bought WHERE week_id = $1", [id])).rows.map((r) => r.item);
+    const bought = (await db.query<{ item: string }>("SELECT item FROM shopping_bought WHERE family_id = $1", [familyId])).rows.map(
+      (r) => r.item,
+    );
     const extras = (
-      await db.query<ShoppingExtra>("SELECT id, name, aisle FROM shopping_extra WHERE week_id = $1 ORDER BY created_at, id", [id])
+      await db.query<ShoppingExtra>("SELECT id, name, aisle FROM shopping_extra WHERE family_id = $1 ORDER BY created_at, id", [familyId])
     ).rows;
     const adjusted: Record<string, Quantity> = {};
     const quantities = await db.query<{ item: string; amount: string; unit: string | null }>(
-      "SELECT item, amount, unit FROM shopping_quantity WHERE week_id = $1",
-      [id],
+      "SELECT item, amount, unit FROM shopping_quantity WHERE family_id = $1",
+      [familyId],
     );
     for (const r of quantities.rows) adjusted[r.item] = { amount: Number(r.amount), unit: r.unit };
-    return { startsOn, meals, extras, adjusted, items: shoppingItems(meals, bought, extras, adjusted) };
+    return { meals, extras, adjusted, items: shoppingItems(meals, bought, extras, adjusted) };
   };
 
   // --- weekly schedule ----------------------------------------------------
@@ -2144,9 +2168,9 @@ export function buildRouter(
   // --- shopping list ------------------------------------------------------
   // Anyone in the family can mark what's already in the house and tick items off.
 
-  router.add("GET", "/api/family/weeks/:startsOn/shopping", async (req) => {
+  router.add("GET", "/api/family/shopping", async (req) => {
     const { member } = await requireMember(db, req);
-    return { body: await shoppingList(member.family_id, req.params.startsOn) };
+    return { body: await shoppingList(member.family_id, todayOf(req)) };
   });
 
   // An ingredient of a day's recipe is already in the house (or isn't after all).
@@ -2184,82 +2208,81 @@ export function buildRouter(
     return { status: 204 };
   });
 
-  // Anything else for the week (milk, bread…), added by hand.
-  // Clears the week's list: everything the recipes need counts as in the house, and anything added, changed
-  // or ticked off goes. A recipe picked afterwards brings its ingredients back.
-  router.add("DELETE", "/api/family/weeks/:startsOn/shopping", async (req) => {
+  // Clears the list: everything the recipes from today on need counts as in the house, and anything added,
+  // changed or ticked off goes. A recipe picked afterwards brings its ingredients back.
+  router.add("DELETE", "/api/family/shopping", async (req) => {
     const { member } = await requireMember(db, req);
-    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const today = todayOf(req);
     await withTransaction(db, async (tx) => {
       await tx.query(
         `INSERT INTO schedule_have (week_id, day, recipe_id, item)
          SELECT DISTINCT d.week_id, d.day, d.meal_recipe_id, lower(regexp_replace(trim(i.name), '\\s+', ' ', 'g'))
-           FROM schedule_day d JOIN recipe_ingredient i ON i.recipe_id = d.meal_recipe_id
-          WHERE d.week_id = $1 AND NOT d.eat_out
+           FROM schedule_day d JOIN schedule_week w ON w.id = d.week_id JOIN recipe_ingredient i ON i.recipe_id = d.meal_recipe_id
+          WHERE w.family_id = $1 AND d.day >= $2 AND NOT d.eat_out
          ON CONFLICT DO NOTHING`,
-        [id],
+        [member.family_id, today],
       );
       for (const table of ["shopping_extra", "shopping_bought", "shopping_quantity"]) {
-        await tx.query(`DELETE FROM ${table} WHERE week_id = $1`, [id]);
+        await tx.query(`DELETE FROM ${table} WHERE family_id = $1`, [member.family_id]);
       }
     });
-    return { body: await shoppingList(member.family_id, req.params.startsOn) };
+    return { body: await shoppingList(member.family_id, today) };
   });
 
-  router.add("POST", "/api/family/weeks/:startsOn/shopping/extras", async (req) => {
+  // Anything else (milk, bread…), added by hand.
+
+  router.add("POST", "/api/family/shopping/extras", async (req) => {
     const { member } = await requireMember(db, req);
-    const id = await weekId(db, member.family_id, req.params.startsOn);
     const name = v.text(v.object(req.body).name, "Item", MAX_EXTRA_NAME).replace(/\s+/g, " ");
     const { rowCount } = await db.query(
-      `INSERT INTO shopping_extra (week_id, name, aisle, added_by) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (week_id, lower(name)) DO NOTHING`,
-      [id, name, groceryAisle(name), member.id],
+      `INSERT INTO shopping_extra (family_id, name, aisle, added_by) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (family_id, lower(name)) DO NOTHING`,
+      [member.family_id, name, groceryAisle(name), member.id],
     );
-    if (!rowCount) throw new HttpError(409, `${name} is already on this week's list`);
+    if (!rowCount) throw new HttpError(409, `${name} is already on the list`);
     // Added again after being ticked off: it's needed again.
-    await db.query("DELETE FROM shopping_bought WHERE week_id = $1 AND item = $2", [id, ingredientKey(name)]);
-    return { status: 201, body: await shoppingList(member.family_id, req.params.startsOn) };
+    await db.query("DELETE FROM shopping_bought WHERE family_id = $1 AND item = $2", [member.family_id, ingredientKey(name)]);
+    return { status: 201, body: await shoppingList(member.family_id, todayOf(req)) };
   });
 
-  router.add("DELETE", "/api/family/weeks/:startsOn/shopping/extras/:id", async (req) => {
+  router.add("DELETE", "/api/family/shopping/extras/:id", async (req) => {
     const { member } = await requireMember(db, req);
-    const id = await weekId(db, member.family_id, req.params.startsOn);
-    const { rowCount } = await db.query("DELETE FROM shopping_extra WHERE id = $1 AND week_id = $2", [v.uuid(req.params.id), id]);
-    if (!rowCount) throw new HttpError(404, "That isn't on this week's list");
-    return { body: await shoppingList(member.family_id, req.params.startsOn) };
+    const { rowCount } = await db.query("DELETE FROM shopping_extra WHERE id = $1 AND family_id = $2", [v.uuid(req.params.id), member.family_id]);
+    if (!rowCount) throw new HttpError(404, "That isn't on the list");
+    return { body: await shoppingList(member.family_id, todayOf(req)) };
   });
 
   // How much of an item to buy (the − and + buttons); null goes back to what the recipes add up to.
-  router.add("PUT", "/api/family/weeks/:startsOn/shopping/quantity", async (req) => {
+  router.add("PUT", "/api/family/shopping/quantity", async (req) => {
     const { member } = await requireMember(db, req);
-    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const id = member.family_id;
     const b = v.object(req.body);
     const item = ingredientKey(v.text(b.key, "Item", 80));
     if (b.quantity === null) {
-      await db.query("DELETE FROM shopping_quantity WHERE week_id = $1 AND item = $2", [id, item]);
+      await db.query("DELETE FROM shopping_quantity WHERE family_id = $1 AND item = $2", [id, item]);
       return { status: 204 };
     }
     const q = v.object(b.quantity);
     if (typeof q.amount !== "number" || !(q.amount > 0) || q.amount > 100_000) throw new HttpError(400, "Amount must be a number above 0");
     const unit = q.unit === null || q.unit === undefined ? null : v.text(q.unit, "Unit", 30);
     await db.query(
-      `INSERT INTO shopping_quantity (week_id, item, amount, unit) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (week_id, item) DO UPDATE SET amount = EXCLUDED.amount, unit = EXCLUDED.unit`,
+      `INSERT INTO shopping_quantity (family_id, item, amount, unit) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (family_id, item) DO UPDATE SET amount = EXCLUDED.amount, unit = EXCLUDED.unit`,
       [id, item, q.amount, unit],
     );
     return { status: 204 };
   });
 
-  router.add("PUT", "/api/family/weeks/:startsOn/shopping/bought", async (req) => {
+  router.add("PUT", "/api/family/shopping/bought", async (req) => {
     const { member } = await requireMember(db, req);
-    const id = await weekId(db, member.family_id, req.params.startsOn);
+    const id = member.family_id;
     const b = v.object(req.body);
     const item = ingredientKey(v.text(b.key, "Item", 80));
     if (typeof b.bought !== "boolean") throw new HttpError(400, "Bought must be true or false");
     if (b.bought) {
-      await db.query("INSERT INTO shopping_bought (week_id, item) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, item]);
+      await db.query("INSERT INTO shopping_bought (family_id, item) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, item]);
     } else {
-      await db.query("DELETE FROM shopping_bought WHERE week_id = $1 AND item = $2", [id, item]);
+      await db.query("DELETE FROM shopping_bought WHERE family_id = $1 AND item = $2", [id, item]);
     }
     return { status: 204 };
   });
