@@ -17,12 +17,35 @@ function clock(time: string): string {
   return new Date(`2000-01-01T${time}:00`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-/** Every 10 minutes of the day, "00:00" to "23:50". */
-const TIMES = Array.from({ length: 144 }, (_, i) => `${String(Math.floor(i / 6)).padStart(2, "0")}:${String((i % 6) * 10).padStart(2, "0")}`);
+/** Every 15 minutes of the day, "00:00" to "23:45". */
+const TIMES = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`);
 
-/** A time of day in 10-minute steps (plus `value` itself, if an older event isn't on a step). */
-function TimeSelect({ value, onChange, label }: { value: string; onChange: (time: string) => void; label: string }) {
-  const times = TIMES.includes(value) ? TIMES : [...TIMES, value].sort();
+/** An hour after `start`, or the last time of the day if that's sooner. */
+function anHourAfter(start: string): string {
+  const [h, m] = start.split(":").map(Number);
+  const later = `${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return TIMES.find((t) => t >= later) ?? TIMES.at(-1)!;
+}
+
+/**
+ * A time of day in 15-minute steps (plus `value` itself, if an older event isn't on a step). `after` leaves out
+ * that time and everything before it, and `before` everything from that time on.
+ */
+function TimeSelect({
+  value,
+  onChange,
+  label,
+  after,
+  before,
+}: {
+  value: string;
+  onChange: (time: string) => void;
+  label: string;
+  after?: string;
+  before?: string;
+}) {
+  const steps = TIMES.filter((t) => (!after || t > after) && (!before || t < before));
+  const times = steps.includes(value) ? steps : [...steps, value].sort();
   return (
     <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
       {times.map((t) => (
@@ -129,6 +152,11 @@ function EventForm({ date, event, onDone }: { date: string; event?: ScheduleEven
   const [startTime, setStartTime] = useState(event?.startTime ?? "17:00");
   const [endTime, setEndTime] = useState(event?.endTime ?? "18:00");
   const [weekly, setWeekly] = useState(event?.weekly ?? false);
+  /** A new start leaves the end alone while it's still later; otherwise the end moves to an hour after. */
+  function changeStart(time: string) {
+    setStartTime(time);
+    if (endTime <= time) setEndTime(anHourAfter(time));
+  }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -184,10 +212,10 @@ function EventForm({ date, event, onDone }: { date: string; event?: ScheduleEven
       </div>
       <div className="event-times">
         <label>
-          From <TimeSelect label="Start time" value={startTime} onChange={setStartTime} />
+          From <TimeSelect label="Start time" value={startTime} onChange={changeStart} before={TIMES.at(-1)} />
         </label>
         <label>
-          to <TimeSelect label="End time" value={endTime} onChange={setEndTime} />
+          to <TimeSelect label="End time" value={endTime} onChange={setEndTime} after={startTime} />
         </label>
         <label className="chip toggle weekly">
           <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} />
