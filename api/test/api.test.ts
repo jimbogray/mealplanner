@@ -1475,7 +1475,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         .body.id;
       await call("PUT", "/api/family/preferences", {
         token: parentToken,
-        body: { dinnerTimes: { weekday: "18:30", weekend: null }, eatOutsPerWeek: 1, mealKitsPerWeek: 2 },
+        body: { dinnerTimes: { weekday: "18:30", weekend: null }, eatOutsPerWeek: 2, mealKitsPerWeek: 2 },
       });
       await call("POST", "/api/family/events", {
         token: parentToken,
@@ -1498,7 +1498,9 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const res = await suggest([day(1), day(0, { meal: kit }), day(5, { workingFromHomeIds: [members[0].id] })]);
       assert.equal(res.status, 200);
       const brief = suggestBrief!;
-      assert.deepEqual(brief.preferences, { eatOutsPerWeek: 1, mealKitsPerWeek: 2 });
+      assert.deepEqual(brief.preferences, { eatOutsPerWeek: 2, mealKitsPerWeek: 2 });
+      // The meal kit already picked counts towards the week's two.
+      assert.deepEqual(brief.left, { mealKits: 1, eatOuts: 2 });
       assert.deepEqual(
         brief.days.map((d) => [d.date, d.weekday, d.dinnerTime, d.alreadyChosen, d.needsSuggestion]),
         [
@@ -1540,6 +1542,46 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
           [date(6), false, "Leftovers", false, null, null, "Clear the fridge"],
         ],
       );
+    });
+
+    test("meal kits and eat-outs never go over the week's numbers, counting days already set", async () => {
+      const kit: ScheduleDay["meal"] = { name: "", mealKit: true, recipeId: null, restaurantId: null, url: null };
+      const answer = (choice: "mealKit" | "restaurant", i: number) => ({
+        date: date(i),
+        choice,
+        recipeId: null,
+        restaurantId: choice === "restaurant" ? dinerId : null,
+        name: null,
+        reason: "Busy night",
+      });
+      // Two meal kits and two eat-outs already set: Claude's kit and restaurant become quick recipes.
+      suggestAnswer = () => ({ days: [answer("mealKit", 4), answer("restaurant", 5)] });
+      let res = await suggest([
+        day(0, { meal: kit }),
+        day(1, { meal: kit }),
+        day(2, { eatOut: true, memberIds: [] }),
+        day(3, { eatOut: true, memberIds: [] }),
+        day(4),
+        day(5),
+      ]);
+      assert.deepEqual(suggestBrief!.left, { mealKits: 0, eatOuts: 0 });
+      assert.equal(res.body.suggestions.length, 2);
+      for (const s of res.body.suggestions) {
+        assert.equal(s.eatOut, false);
+        assert.equal(s.meal.mealKit, false);
+        assert.ok(s.meal.recipeId);
+        assert.match(s.reason, /used up/);
+      }
+      assert.notEqual(res.body.suggestions[0].meal.recipeId, res.body.suggestions[1].meal.recipeId);
+
+      // One meal kit already picked leaves one more: only Claude's first kit stays a kit.
+      suggestAnswer = () => ({ days: [answer("mealKit", 1), answer("mealKit", 2), answer("mealKit", 3)] });
+      res = await suggest([day(0, { meal: kit }), day(1), day(2), day(3)]);
+      assert.deepEqual(
+        res.body.suggestions.map((s) => s.meal.mealKit),
+        [true, false, false].slice(0, res.body.suggestions.length),
+      );
+      assert.equal(res.body.suggestions[0].date, date(1));
     });
 
     test("a take-out day gets a restaurant to order from, never a recipe", async () => {
