@@ -6,6 +6,7 @@ import {
   daysToPlan,
   displayName,
   eventOn,
+  repeatsOn,
   isIsoDate,
   isoWeekday,
   isTimeOfDay,
@@ -648,6 +649,7 @@ interface EventRow {
   weekly: boolean;
   until: string | null;
   member_ids: string[];
+  skipped: string[];
 }
 
 /** The family's events (or just one), in date then time order. */
@@ -655,7 +657,8 @@ async function loadEvents(db: Queryable, familyId: string, id?: string): Promise
   const { rows } = await db.query<EventRow>(
     `SELECT e.id, e.title, to_char(e.day, 'YYYY-MM-DD') AS day, to_char(e.starts_at, 'HH24:MI') AS starts_at,
             to_char(e.ends_at, 'HH24:MI') AS ends_at, e.weekly, to_char(e.until, 'YYYY-MM-DD') AS until,
-            ARRAY(SELECT member_id::text FROM schedule_event_member WHERE event_id = e.id ORDER BY member_id) AS member_ids
+            ARRAY(SELECT member_id::text FROM schedule_event_member WHERE event_id = e.id ORDER BY member_id) AS member_ids,
+            ARRAY(SELECT to_char(day, 'YYYY-MM-DD') FROM schedule_event_skip WHERE event_id = e.id ORDER BY day) AS skipped
        FROM schedule_event e
       WHERE e.family_id = $1 AND ($2::uuid IS NULL OR e.id = $2::uuid)
       ORDER BY e.day, e.starts_at, e.created_at`,
@@ -670,11 +673,12 @@ async function loadEvents(db: Queryable, familyId: string, id?: string): Promise
     memberIds: r.member_ids,
     weekly: r.weekly,
     until: r.until,
+    skipped: r.skipped,
   }));
 }
 
 /** An event as sent in, checked against the family's members; `base` fills in anything left out (PATCH). */
-function eventFrom(b: Record<string, unknown>, familyIds: string[], base?: ScheduleEvent): Omit<ScheduleEvent, "id"> {
+function eventFrom(b: Record<string, unknown>, familyIds: string[], base?: ScheduleEvent): Omit<ScheduleEvent, "id" | "skipped"> {
   const pick = <K extends keyof ScheduleEvent>(k: K): unknown => (b[k] === undefined && base ? base[k] : b[k]);
   const title = v.text(pick("title"), "Event", MAX_EVENT_TITLE);
   const date = v.isoDate(pick("date"), "Day");
@@ -2142,6 +2146,29 @@ export function buildRouter(
       );
       await saveEventMembers(tx, id, e.memberIds);
     });
+    return { body: (await loadEvents(db, member.family_id, id))[0] };
+  });
+
+  // A weekly event can be skipped for one week (and brought back), leaving the other weeks as they are.
+  router.add("PUT", "/api/family/events/:id/skips/:date", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = v.uuid(req.params.id);
+    const date = v.isoDate(req.params.date, "Day");
+    const [event] = await loadEvents(db, member.family_id, id);
+    if (!event) throw new HttpError(404, "That event isn't in your schedule");
+    if (!event.weekly) throw new HttpError(400, "Only a weekly event can be skipped for a week; remove a one-off event instead");
+    if (!repeatsOn(event, date)) throw new HttpError(400, `${event.title} isn't on ${date}`);
+    await db.query("INSERT INTO schedule_event_skip (event_id, day) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, date]);
+    return { body: (await loadEvents(db, member.family_id, id))[0] };
+  });
+
+  router.add("DELETE", "/api/family/events/:id/skips/:date", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = v.uuid(req.params.id);
+    const date = v.isoDate(req.params.date, "Day");
+    const [event] = await loadEvents(db, member.family_id, id);
+    if (!event) throw new HttpError(404, "That event isn't in your schedule");
+    await db.query("DELETE FROM schedule_event_skip WHERE event_id = $1 AND day = $2", [id, date]);
     return { body: (await loadEvents(db, member.family_id, id))[0] };
   });
 

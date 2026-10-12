@@ -1,5 +1,5 @@
 // Events on the schedule (a match, a work do): who's going and when, one-off or every week.
-import { addDays, displayName, eventOn, MAX_EVENT_TITLE, type FamilyMember, type ScheduleEvent } from "@mealplanner/shared";
+import { addDays, displayName, eventOn, MAX_EVENT_TITLE, repeatsOn, type FamilyMember, type ScheduleEvent } from "@mealplanner/shared";
 import { createContext, useContext, useState } from "react";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "./Field";
@@ -78,7 +78,10 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
   const { events, setEvents } = useContext(EventsContext);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const today = events.filter((e) => eventOn(e, date)).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  // While editing, a weekly event skipped this week still shows, so it can be brought back.
+  const today = events
+    .filter((e) => (editable ? repeatsOn(e, date) : eventOn(e, date)))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   if (!editable) {
     if (!today.length) return null;
@@ -110,10 +113,32 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
     }
   }
 
+  /** Skips a weekly event for just this week, or brings it back. */
+  async function skip(event: ScheduleEvent, skipped: boolean) {
+    setError(null);
+    try {
+      const updated = skipped ? await api.skipEvent(event.id, date) : await api.unskipEvent(event.id, date);
+      setEvents((list) => list.map((e) => (e.id === event.id ? updated : e)));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <div className="day-events editable">
       {today.map((e) =>
-        editing === e.id ? (
+        e.skipped.includes(date) ? (
+          <div key={e.id} className="event-row skipped">
+            <span className="event-line">
+              <s>{e.title}</s> skipped this week
+            </span>
+            <span className="event-actions">
+              <button type="button" className="link small" onClick={() => void skip(e, false)}>
+                Bring back
+              </button>
+            </span>
+          </div>
+        ) : editing === e.id ? (
           <EventForm key={e.id} date={date} event={e} onDone={() => setEditing(null)} />
         ) : (
           <div key={e.id} className="event-row">
@@ -122,6 +147,11 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
               <button type="button" className="link small" onClick={() => setEditing(e.id)}>
                 Edit
               </button>
+              {e.weekly && (
+                <button type="button" className="link small" onClick={() => void skip(e, true)}>
+                  Skip this week
+                </button>
+              )}
               <button type="button" className="link danger small" onClick={() => void remove(e)}>
                 Remove
               </button>

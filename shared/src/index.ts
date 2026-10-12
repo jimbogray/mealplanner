@@ -469,6 +469,8 @@ export interface ScheduleEvent {
   weekly: boolean;
   /** The last day a weekly event happens; null while it keeps repeating. */
   until: IsoDate | null;
+  /** Days a weekly event is skipped (just that week), in date order. */
+  skipped: IsoDate[];
 }
 
 /**
@@ -510,7 +512,12 @@ export interface EventRequest {
 export const MAX_EVENT_TITLE = 80;
 
 /** True if the event happens on `date`. */
-export function eventOn(event: Pick<ScheduleEvent, "date" | "weekly" | "until">, date: IsoDate): boolean {
+export function eventOn(event: Pick<ScheduleEvent, "date" | "weekly" | "until" | "skipped">, date: IsoDate): boolean {
+  return repeatsOn(event, date) && !event.skipped.includes(date);
+}
+
+/** True if the event falls on `date`, counting a week it's been skipped. */
+export function repeatsOn(event: Pick<ScheduleEvent, "date" | "weekly" | "until">, date: IsoDate): boolean {
   if (date < event.date || (event.until !== null && date > event.until)) return false;
   if (!event.weekly) return date === event.date;
   const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${event.date}T00:00:00Z`)) / 86_400_000);
