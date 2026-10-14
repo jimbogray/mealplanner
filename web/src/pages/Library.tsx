@@ -1,5 +1,5 @@
 import type { FavouriteRecipe } from "@mealplanner/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { AddRecipe, recipeFacts, Thumb } from "../components/AddRecipe";
@@ -20,6 +20,8 @@ function Library({ isManager }: { isManager: boolean }) {
   const [recipes, setRecipes] = useState<FavouriteRecipe[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<GroupBy | null>(null);
+  // A recipe typed in by hand has no page to open, so it opens here.
+  const [viewing, setViewing] = useState<FavouriteRecipe | null>(null);
 
   useEffect(() => {
     api.recipes().then(setRecipes, (err) => setError(errorMessage(err)));
@@ -75,14 +77,15 @@ function Library({ isManager }: { isManager: boolean }) {
   function renderTile(r: FavouriteRecipe) {
     return (
       <li key={r.id} className={r.prepared ? "tile prepared" : "tile"}>
-        <a href={r.url} target="_blank" rel="noopener noreferrer">
-          <Thumb src={r.imageUrl} />
-          <span className="tile-body">
-            <strong>{r.name}</strong>
-            {r.description && <span className="small tile-description">{r.description}</span>}
-            <span className="note small">{recipeFacts(r)}</span>
-          </span>
-        </a>
+        {r.url ? (
+          <a href={r.url} target="_blank" rel="noopener noreferrer">
+            <TileFace recipe={r} />
+          </a>
+        ) : (
+          <button type="button" className="tile-open" onClick={() => setViewing(r)}>
+            <TileFace recipe={r} />
+          </button>
+        )}
         <div className="tile-corner">
           <AverageRating average={r.averageRating} count={r.ratingCount} />
           <button
@@ -119,9 +122,10 @@ function Library({ isManager }: { isManager: boolean }) {
     <div className="stack">
       <section className="card">
         <h1>Recipes</h1>
-        <p className="note">Your family's favourite recipes. Paste a link to a recipe page to add one; anyone in the family can add, rate or remove them.</p>
+        <p className="note">Your family's favourite recipes. Paste a link to a recipe page to add one, or type in your own; anyone in the family can add, rate or remove them.</p>
         <AddRecipe onAdded={(recipe) => setRecipes((list) => [recipe, ...(list ?? [])])} />
       </section>
+      {viewing && <TypedRecipe recipe={viewing} onClose={() => setViewing(null)} />}
       <ErrorNote error={error} />
       {recipes && recipes.length === 0 && <p className="note center">No recipes yet. Add your first one above.</p>}
       {recipes && recipes.length > 0 && (
@@ -151,6 +155,53 @@ function Library({ isManager }: { isManager: boolean }) {
           </section>
         ))}
     </div>
+  );
+}
+
+function TileFace({ recipe: r }: { recipe: FavouriteRecipe }) {
+  return (
+    <>
+      <Thumb src={r.imageUrl} />
+      <span className="tile-body">
+        <strong>{r.name}</strong>
+        {r.description && <span className="small tile-description">{r.description}</span>}
+        <span className="note small">{recipeFacts(r)}</span>
+      </span>
+    </>
+  );
+}
+
+/** A recipe typed in by hand, with its ingredients and method, in a dialog. */
+function TypedRecipe({ recipe: r, onClose }: { recipe: FavouriteRecipe; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  const lines = (text: string | null) => (text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  return (
+    <dialog ref={dialog} className="recipe-dialog" aria-labelledby="typed-recipe-name" onClose={onClose}>
+      <div className="row recipe-dialog-head">
+        <h2 id="typed-recipe-name">{r.name}</h2>
+        <button type="button" className="link" aria-label="Close" onClick={() => dialog.current?.close()}>
+          ×
+        </button>
+      </div>
+      {r.imageUrl && <img className="recipe-dialog-photo" src={r.imageUrl} alt="" referrerPolicy="no-referrer" />}
+      {r.description && <p>{r.description}</p>}
+      <p className="note small">{recipeFacts(r)}</p>
+      <h3>Ingredients</h3>
+      {lines(r.ingredients).length ? (
+        <ul>
+          {lines(r.ingredients).map((l, i) => (
+            <li key={i}>{l.replace(/^[-*•]\s*/, "")}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="note">None typed in.</p>
+      )}
+      <h3>Method</h3>
+      {r.method ? <p className="recipe-method">{r.method}</p> : <p className="note">None typed in.</p>}
+    </dialog>
   );
 }
 

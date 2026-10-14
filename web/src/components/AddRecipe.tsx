@@ -1,4 +1,5 @@
-// Adding a favourite recipe (paste a link, check or fill in what was read, save) and small pieces shared with the Library page.
+// Adding a favourite recipe (paste a link, check or fill in what was read, save; or type one in by hand) and small
+// pieces shared with the Library page.
 import type { FavouriteRecipe, RecipePreview } from "@mealplanner/shared";
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
@@ -9,7 +10,7 @@ export function recipeFacts(r: FavouriteRecipe): string {
   return [
     r.cookingMinutes && formatMinutes(r.cookingMinutes),
     r.mainProtein,
-    r.siteName ?? new URL(r.url).hostname.replace(/^www\./, ""),
+    r.url ? (r.siteName ?? new URL(r.url).hostname.replace(/^www\./, "")) : "Own recipe",
     r.addedBy && `added by ${r.addedBy}`,
   ]
     .filter(Boolean)
@@ -38,9 +39,11 @@ type Step =
   | { kind: "reading"; url: string }
   // The page doesn't look like a recipe: ask before going further.
   | { kind: "confirm"; preview: RecipePreview }
-  | { kind: "details"; preview: RecipePreview };
+  | { kind: "details"; preview: RecipePreview }
+  // Typed in by hand, with no link.
+  | { kind: "typed" };
 
-/** Paste a link → the API reads the page → check (or fill in) the details → save. */
+/** Paste a link → the API reads the page → check (or fill in) the details → save. Or type a recipe in by hand. */
 export function AddRecipe({ onAdded }: { onAdded: (recipe: FavouriteRecipe) => void }) {
   const [step, setStep] = useState<Step>({ kind: "link" });
   const [url, setUrl] = useState("");
@@ -86,10 +89,10 @@ export function AddRecipe({ onAdded }: { onAdded: (recipe: FavouriteRecipe) => v
     );
   }
 
-  if (step.kind === "details") {
+  if (step.kind === "details" || step.kind === "typed") {
     return (
       <RecipeDetailsForm
-        preview={step.preview}
+        preview={step.kind === "details" ? step.preview : null}
         onCancel={reset}
         onSaved={(recipe) => {
           onAdded(recipe);
@@ -119,40 +122,60 @@ export function AddRecipe({ onAdded }: { onAdded: (recipe: FavouriteRecipe) => v
           {reading ? "Reading the recipe…" : "Add"}
         </button>
       </form>
+      <p className="note small">
+        No link?{" "}
+        <button
+          type="button"
+          className="link"
+          disabled={reading}
+          onClick={() => {
+            setError(null);
+            setStep({ kind: "typed" });
+          }}
+        >
+          Type in your own recipe
+        </button>
+      </p>
       <ErrorNote error={error} />
     </>
   );
 }
 
+/** The details of a recipe read from its link (`preview`), to check and fill in; or, with no preview, typed in by hand. */
 function RecipeDetailsForm({
   preview,
   onCancel,
   onSaved,
 }: {
-  preview: RecipePreview;
+  preview: RecipePreview | null;
   onCancel: () => void;
   onSaved: (recipe: FavouriteRecipe) => void;
 }) {
-  const [name, setName] = useState(preview.name ?? "");
-  const [description, setDescription] = useState(preview.description ?? "");
-  const [minutes, setMinutes] = useState(preview.cookingMinutes?.toString() ?? "");
-  const [protein, setProtein] = useState(preview.mainProtein ?? "");
-  const [imageUrl, setImageUrl] = useState(preview.imageUrl ?? "");
+  const [name, setName] = useState(preview?.name ?? "");
+  const [description, setDescription] = useState(preview?.description ?? "");
+  const [minutes, setMinutes] = useState(preview?.cookingMinutes?.toString() ?? "");
+  const [protein, setProtein] = useState(preview?.mainProtein ?? "");
+  const [imageUrl, setImageUrl] = useState(preview?.imageUrl ?? "");
+  const [ingredients, setIngredients] = useState("");
+  const [method, setMethod] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // What was read automatically is shown for checking; anything missing is flagged to fill in.
-  const found = preview.isRecipe === true;
-  const missing = {
-    name: !found || !preview.name,
-    description: !preview.description,
-    minutes: !preview.cookingMinutes,
-    protein: !preview.mainProtein,
-    image: !preview.imageUrl,
-  };
+  const found = preview?.isRecipe === true;
+  const missing = preview
+    ? {
+        name: !found || !preview.name,
+        description: !preview.description,
+        minutes: !preview.cookingMinutes,
+        protein: !preview.mainProtein,
+        image: !preview.imageUrl,
+      }
+    : { name: false, description: false, minutes: false, protein: false, image: false };
   const anyMissing = Object.values(missing).some(Boolean);
-  const intro =
-    preview.isRecipe === null
+  const intro = !preview
+    ? "Type in your own recipe. Only the name is needed; add the rest if you like."
+    : preview.isRecipe === null
       ? "We couldn't read that page automatically. Please fill in the details."
       : preview.isRecipe === false
         ? "Please fill in the details we couldn't find."
@@ -167,13 +190,14 @@ function RecipeDetailsForm({
     try {
       onSaved(
         await api.addRecipe({
-          url: preview.url,
+          url: preview?.url ?? null,
           name,
           description: description || null,
           cookingMinutes: minutes ? Number(minutes) : null,
           mainProtein: protein || null,
           imageUrl: imageUrl.trim() || null,
-          siteName: preview.siteName,
+          siteName: preview?.siteName ?? null,
+          ...(preview ? {} : { ingredients: ingredients || null, method: method || null }),
         }),
       );
     } catch (err) {
@@ -189,9 +213,11 @@ function RecipeDetailsForm({
         <Thumb src={/^https?:\/\//i.test(imageUrl.trim()) ? imageUrl.trim() : null} />
         <span>
           <span>{intro}</span>
-          <a className="note small" href={preview.url} target="_blank" rel="noopener noreferrer">
-            {preview.url}
-          </a>
+          {preview && (
+            <a className="note small" href={preview.url} target="_blank" rel="noopener noreferrer">
+              {preview.url}
+            </a>
+          )}
         </span>
       </div>
       <Field label="Dish name" htmlFor="recipe-name">
@@ -241,6 +267,30 @@ function RecipeDetailsForm({
           />
         </Field>
       </div>
+      {!preview && (
+        <>
+          <Field label="Ingredients" htmlFor="recipe-ingredients" hint="One a line. They go on the shopping list when the recipe's on the schedule.">
+            <textarea
+              id="recipe-ingredients"
+              rows={6}
+              maxLength={10000}
+              placeholder={"500 g chicken thighs\n2 onions\n1 tin coconut milk"}
+              value={ingredients}
+              onChange={(e) => setIngredients(e.target.value)}
+            />
+          </Field>
+          <Field label="Method" htmlFor="recipe-method">
+            <textarea
+              id="recipe-method"
+              rows={6}
+              maxLength={10000}
+              placeholder={"1. Fry the onions until soft.\n2. …"}
+              value={method}
+              onChange={(e) => setMethod(e.target.value)}
+            />
+          </Field>
+        </>
+      )}
       <Field
         label="Photo link"
         htmlFor="recipe-image"
