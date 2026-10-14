@@ -361,8 +361,15 @@ function Week({
       </div>
       <ul className="days">
         {week.days.map((d) => (
-          <li key={d.date} className={d.eatOut ? "eat-out" : undefined}>
-            <span className="day-name">{dayLabel(d.date)}</span>
+          <li
+            key={d.date}
+            className={[d.eatOut && "eat-out", d.date === today && "today"].filter(Boolean).join(" ") || undefined}
+            aria-current={d.date === today ? "date" : undefined}
+          >
+            <span className="day-name">
+              {dayLabel(d.date)}
+              {d.date === today && <span className="today-tag">Today</span>}
+            </span>
             <span className="day-details">
               {d.eatOut ? (
                 <span className="out-tag">Eating out</span>
