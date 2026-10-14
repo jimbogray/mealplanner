@@ -6,6 +6,7 @@ import { claudeIngredientReader } from "./ingredient-reader.js";
 import { azureMaps } from "./maps.js";
 import { claudeMealSuggester } from "./meal-suggester.js";
 import { googlePlacesSearch } from "./places.js";
+import { azureBlobStore, chromiumPrinter } from "./recipe-pdf.js";
 import { claudeRecipeReader } from "./recipe-reader.js";
 import { claudeRestaurantReader } from "./restaurant-reader.js";
 
@@ -18,6 +19,11 @@ if (config.migrateOnStart) {
   if (applied.length) console.log(`[migrate] applied ${applied.length} migration(s)`);
 }
 
+const pageCopies =
+  config.recipePdfStorageUrl && config.chromiumPath
+    ? { print: chromiumPrinter(config.chromiumPath), store: azureBlobStore(config.recipePdfStorageUrl, config.recipePdfContainer) }
+    : undefined;
+
 const server = createApp(db, {
   webOrigins: config.webOrigins,
   google: config.googleClientId ? { clientId: config.googleClientId, keys: googleKeySource() } : undefined,
@@ -27,9 +33,10 @@ const server = createApp(db, {
   maps: config.azureMapsKey ? azureMaps(config.azureMapsKey) : undefined,
   readRestaurant: config.anthropicApiKey ? claudeRestaurantReader(config.anthropicApiKey, config.recipeModel) : undefined,
   suggestMeals: config.anthropicApiKey ? claudeMealSuggester(config.anthropicApiKey, config.recipeModel) : undefined,
+  pageCopies,
 });
 server.listen(config.port, () => {
-  console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")}; Google sign-in ${config.googleClientId ? "on" : "off"}; recipe reading ${config.anthropicApiKey ? `on with ${config.recipeModel}` : "off"}; address search ${config.googlePlacesApiKey ? "on" : "off"}; driving times ${config.azureMapsKey ? "on" : "off"})`);
+  console.log(`API listening on http://localhost:${config.port} (web origins: ${config.webOrigins.join(", ")}; Google sign-in ${config.googleClientId ? "on" : "off"}; recipe reading ${config.anthropicApiKey ? `on with ${config.recipeModel}` : "off"}; address search ${config.googlePlacesApiKey ? "on" : "off"}; driving times ${config.azureMapsKey ? "on" : "off"}; recipe page PDFs ${pageCopies ? "on" : "off"})`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

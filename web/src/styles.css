@@ -275,6 +275,8 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 /* Times picked on the schedule, bottom right of a recipe tile or restaurant. */
 .chosen-count { margin-left: auto; font-size: 0.85rem; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
 .chosen-count.none { color: var(--muted); font-weight: 400; }
+.tile-pdf { margin-left: auto; padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+.tile-pdf + .chosen-count { margin-left: 0.6rem; }
 .restaurant { position: relative; }
 .restaurant .chosen-count { position: absolute; right: 0; bottom: 0; }
 .restaurants li:not(:last-child) .chosen-count { bottom: 0.75rem; }

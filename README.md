@@ -144,6 +144,21 @@ Set `ANTHROPIC_API_KEY` for the API (create one at
 still be added: the name and photo come from the page's metadata and the rest is typed in.
 Pages on private or loopback addresses are never fetched.
 
+### Recipe page PDFs
+
+When a recipe is added, the API prints its page to PDF with headless Chromium and keeps it in
+Azure Blob Storage (container `recipe-pages`, one blob per recipe), in case the site changes or
+goes offline. Pages are printed one at a time in the background; a page that fails is tried
+again a day later, the next time someone opens Recipes, and recipes added before this get their
+PDF the same way. A **PDF** button on the recipe's tile opens the saved copy. Removing the recipe
+removes its PDF. While printing, the page can't load anything from private or loopback addresses.
+
+The azd deploy creates the storage account (no account keys, no public access), lets the API's
+managed identity read and write it, and installs Chromium in the API image, so there's nothing
+to set up there. Running the API elsewhere, set `RECIPE_PDF_STORAGE_URL` (the account's blob
+endpoint; the API signs in as its managed identity, or with `az login` locally, and needs
+*Storage Blob Data Contributor*) and `CHROMIUM_PATH`. Without both, no PDFs are kept.
+
 ### Home address search (optional)
 
 A Family Manager adds the family's home address on the Family page by typing into one search
@@ -184,7 +199,7 @@ one saves its exact location, so the driving time needs no further map lookup.
 
 `infra/` (Bicep) and `azure.yaml` create a Container App for the API (image built from the
 root `Dockerfile` in a Basic container registry; scales to zero when idle), a Static Web App
-for the web app, a PostgreSQL 16 Flexible Server (Burstable B1ms) and an Azure Maps account, all in resource group
+for the web app, a PostgreSQL 16 Flexible Server (Burstable B1ms), an Azure Maps account and a storage account for recipe page PDFs, all in resource group
 `rg-<env>`. Needs the [Azure Developer CLI](https://aka.ms/azd); on Apple Silicon, also
 Rosetta (`softwareupdate --install-rosetta`), because the Static Web Apps deploy tool is
 Intel-only.

@@ -59,6 +59,9 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   // What Claude was last told when asked for meal suggestions, and what it answers.
   let suggestBrief: SuggestBrief | null = null;
   let suggestAnswer: (brief: SuggestBrief) => Suggestions = () => ({ days: [] });
+  // Recipe pages printed to PDF (shop pages can't be), and the PDFs kept.
+  const pagePrints: string[] = [];
+  const pagePdfs = new Map<string, Buffer>();
 
   before(async () => {
     admin = createPool(url!);
@@ -67,6 +70,18 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
     await migrate(db);
     server = createApp(db, {
       webOrigins: ["http://web.test"],
+      pageCopies: {
+        print: async (url) => {
+          pagePrints.push(url);
+          if (url.includes("shop.")) throw new Error("page failed to load");
+          return Buffer.from(`%PDF-1.7 ${url}`);
+        },
+        store: {
+          put: async (name, pdf) => void pagePdfs.set(name, pdf),
+          get: async (name) => pagePdfs.get(name) ?? null,
+          delete: async (name) => void pagePdfs.delete(name),
+        },
+      },
       google: { clientId: GOOGLE_CLIENT_ID, keys: async () => new Map([["test-kid", googleKey.publicKey]]) },
       // Stand in for the web and for Claude, so tests stay offline.
       fetchPage: async (url) => {
@@ -632,8 +647,40 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("GET", "/api/family/recipes")).status, 401);
     });
 
+    test("a PDF of each recipe's page is saved when it's added, for the family to open", async () => {
+      // Printing happens after the recipe is saved, so wait for it.
+      let recipes: FavouriteRecipe[] = [];
+      for (let i = 0; i < 50; i++) {
+        recipes = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken })).body;
+        if (recipes.find((r) => r.id === pancakesId)?.pageSavedAt) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.ok(recipes.find((r) => r.id === pancakesId)?.pageSavedAt);
+      const res = await fetch(`${base}/api/family/recipes/${pancakesId}/page.pdf`, { headers: { authorization: `Bearer ${teenToken}` } });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get("content-type"), "application/pdf");
+      assert.equal(res.headers.get("content-disposition"), 'inline; filename="Easy-pancakes.pdf"');
+      assert.equal(await res.text(), `%PDF-1.7 ${pancakes}`);
+      assert.equal(pagePrints.filter((u) => u === pancakes).length, 1);
+
+      // A page that can't be printed has no PDF, and isn't tried again straight away.
+      const shop = recipes.find((r) => r.url === "https://shop.example.com/pans")!;
+      assert.equal(shop.pageSavedAt, null);
+      assert.equal((await call("GET", `/api/family/recipes/${shop.id}/page.pdf`, { token: parentToken })).status, 404);
+      await call("GET", "/api/family/recipes", { token: parentToken });
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(pagePrints.filter((u) => u === shop.url).length, 1);
+
+      // Other families, and people not signed in, can't open it.
+      const other = await call<AuthResponse>("POST", "/api/auth/login", { body: { email: "recipes-other@example.com", password: "password123" } });
+      assert.equal((await call("GET", `/api/family/recipes/${pancakesId}/page.pdf`, { token: other.body.token })).status, 404);
+      assert.equal((await call("GET", `/api/family/recipes/${pancakesId}/page.pdf`)).status, 401);
+    });
+
     test("any family member can remove one", async () => {
+      const pdfs = pagePdfs.size;
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 204);
+      assert.equal(pagePdfs.size, pdfs - 1, "its PDF is removed too");
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: teenToken })).status, 404);
       const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken });
       assert.equal(list.body.length, 1);

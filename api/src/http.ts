@@ -26,6 +26,8 @@ export interface Result {
   redirect?: string;
   /** Sends this as plain text instead of a JSON body. */
   text?: string;
+  /** Sends this file instead of a JSON body. */
+  file?: { data: Buffer; contentType: string; filename: string };
   /** Lets any web page read the response (for public links other apps call). */
   anyOrigin?: boolean;
 }
@@ -134,6 +136,16 @@ export function listener(router: Router, allowedOrigins: string[]) {
         res
           .writeHead(result.status ?? 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" })
           .end(result.text);
+      } else if (result.file) {
+        const { data, contentType, filename } = result.file;
+        res
+          .writeHead(result.status ?? 200, {
+            "content-type": contentType,
+            "content-length": data.length,
+            "content-disposition": `inline; filename="${filename.replace(/["\\\r\n]/g, "")}"`,
+            "cache-control": "private, max-age=3600",
+          })
+          .end(data);
       } else send(res, result.status ?? 200, result.body);
     } catch (err) {
       if (err instanceof HttpError) {
