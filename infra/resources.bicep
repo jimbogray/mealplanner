@@ -65,6 +65,32 @@ resource maps 'Microsoft.Maps/accounts@2023-06-01' = {
   properties: { disableLocalAuth: false }
 }
 
+// ---------- Storage: a PDF of each recipe's page, in case the site goes offline ----------
+// Only the API's managed identity can reach it: no account keys, no public blobs.
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'st${resourceToken}'
+  location: location
+  tags: tags
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+  }
+
+  resource blobs 'blobServices' = {
+    name: 'default'
+
+    resource recipePages 'containers' = {
+      name: 'recipe-pages'
+      properties: { publicAccess: 'None' }
+    }
+  }
+}
+
 // ---------- API: Container Apps ----------
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${resourceToken}'
@@ -103,6 +129,18 @@ resource apiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+var blobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+
+resource apiBlobAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, apiIdentity.id, blobDataContributorRoleId)
+  scope: storage
+  properties: {
+    roleDefinitionId: blobDataContributorRoleId
+    principalId: apiIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: 'cae-${resourceToken}'
   location: location
@@ -132,7 +170,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
     type: 'UserAssigned'
     userAssignedIdentities: { '${apiIdentity.id}': {} }
   }
-  dependsOn: [apiAcrPull]
+  dependsOn: [apiAcrPull, apiBlobAccess]
   properties: {
     managedEnvironmentId: containerEnv.id
     configuration: {
@@ -160,7 +198,8 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'api'
           image: empty(apiImage.outputs.image) ? 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' : apiImage.outputs.image
-          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+          // Chromium, which prints the recipe pages to PDF, needs the extra memory.
+          resources: { cpu: json('0.5'), memory: '1Gi' }
           env: concat(
             [
               { name: 'DATABASE_URL', secretRef: 'database-url' }
@@ -169,6 +208,10 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
               { name: 'GOOGLE_CLIENT_ID', value: googleClientId }
               { name: 'RECIPE_MODEL', value: recipeModel }
               { name: 'MIGRATE_ON_START', value: 'true' }
+              { name: 'RECIPE_PDF_STORAGE_URL', value: storage.properties.primaryEndpoints.blob }
+              { name: 'RECIPE_PDF_CONTAINER', value: storage::blobs::recipePages.name }
+              // Which managed identity the API signs in to Storage as.
+              { name: 'AZURE_CLIENT_ID', value: apiIdentity.properties.clientId }
             ],
             hasAnthropicKey ? [{ name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }] : [],
             hasGooglePlacesKey ? [{ name: 'GOOGLE_PLACES_API_KEY', secretRef: 'google-places-api-key' }] : [],

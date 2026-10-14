@@ -299,6 +299,11 @@ export interface FavouriteRecipe extends RecipeDetails {
   /** Name of the member who added it; null if they've since left. */
   addedBy: string | null;
   createdAt: string;
+  /**
+   * When a PDF copy of the recipe's page was saved (GET /api/family/recipes/:id/page.pdf), in case the site goes
+   * offline; null until it has been.
+   */
+  pageSavedAt: string | null;
 }
 
 /**

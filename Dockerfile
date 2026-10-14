@@ -14,8 +14,10 @@ COPY scripts/bundle-api.sh scripts/
 RUN sh scripts/bundle-api.sh && cd api/.deploy && npm install --omit=dev --no-audit --no-fund
 
 FROM node:24-alpine
+# Chromium prints each recipe's page to PDF; the fonts cover most of what recipe sites use.
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont font-noto font-noto-emoji
 WORKDIR /app
-ENV NODE_ENV=production PORT=8080
+ENV NODE_ENV=production PORT=8080 CHROMIUM_PATH=/usr/bin/chromium-browser
 COPY --from=build /src/api/.deploy ./
 USER node
 EXPOSE 8080

@@ -17,6 +17,12 @@ export interface Config {
   googlePlacesApiKey: string | null;
   /** Azure Maps key; enables finding restaurants on the map and driving times from home. */
   azureMapsKey: string | null;
+  /** Azure Storage blob endpoint (https://<account>.blob.core.windows.net); with chromiumPath, keeps a PDF of each recipe's page. */
+  recipePdfStorageUrl: string | null;
+  /** Blob container the recipe page PDFs go in. */
+  recipePdfContainer: string;
+  /** Chromium (or Chrome) to print recipe pages with. */
+  chromiumPath: string | null;
 }
 
 /** Loads api/.env into process.env if it exists (real environment variables win). */
@@ -44,5 +50,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     recipeModel: env.RECIPE_MODEL?.trim() || DEFAULT_RECIPE_MODEL,
     googlePlacesApiKey: env.GOOGLE_PLACES_API_KEY?.trim() || null,
     azureMapsKey: env.AZURE_MAPS_KEY?.trim() || null,
+    recipePdfStorageUrl: env.RECIPE_PDF_STORAGE_URL?.trim() || null,
+    recipePdfContainer: env.RECIPE_PDF_CONTAINER?.trim() || "recipe-pages",
+    chromiumPath: env.CHROMIUM_PATH?.trim() || null,
   };
 }

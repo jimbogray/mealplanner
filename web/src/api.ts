@@ -93,12 +93,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function send(method: string, path: string, body?: unknown): Promise<Response> {
   const token = getToken();
   const actAs = getActingAs();
-  let res: Response;
   try {
-    res = await fetch(BASE + path, {
+    return await fetch(BASE + path, {
       method,
       headers: {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -110,10 +109,31 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   } catch {
     throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
   }
+}
+
+async function failure(res: Response): Promise<ApiError> {
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`);
-  return data as T;
+  let message: string | undefined;
+  try {
+    message = text ? JSON.parse(text)?.error : undefined;
+  } catch {
+    // Not JSON.
+  }
+  return new ApiError(res.status, message ?? `Request failed (${res.status})`);
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await send(method, path, body);
+  if (!res.ok) throw await failure(res);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** Downloads a file the API sends (it needs the sign-in, so it can't just be a link). */
+async function download(path: string): Promise<Blob> {
+  const res = await send("GET", path);
+  if (!res.ok) throw await failure(res);
+  return res.blob();
 }
 
 export const api = {
@@ -147,6 +167,8 @@ export const api = {
     request<FavouriteRecipe>("PATCH", `/api/family/recipes/${id}`, { prepared }),
   rateRecipe: (id: string, stars: number) => request<FavouriteRecipe>("PUT", `/api/family/recipes/${id}/rating`, { stars }),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
+  /** The PDF copy of a recipe's page, kept in case the site goes offline. */
+  recipePagePdf: (id: string) => download(`/api/family/recipes/${id}/page.pdf`),
 
   restaurants: () => request<Restaurant[]>("GET", "/api/family/restaurants"),
   previewRestaurant: (url: string) => request<RestaurantPreview>("POST", "/api/family/restaurants/preview", { url }),

@@ -58,6 +58,7 @@ import { fetchPage, pageImages, pageLinks, pageText, parseRecipeMeta, type PageF
 import type { IngredientReader, RecipeIngredients } from "./ingredient-reader.js";
 import type { Maps } from "./maps.js";
 import type { MealSuggester, SuggestBrief } from "./meal-suggester.js";
+import type { PagePrinter, PdfStore } from "./recipe-pdf.js";
 import type { RecipeReader } from "./recipe-reader.js";
 import type { RestaurantReader } from "./restaurant-reader.js";
 import * as v from "./validate.js";
@@ -318,6 +319,8 @@ export interface AppOptions {
   addressSearch?: AddressSearch;
   /** Suggests a week's dinners with an LLM. Without it, there's no Suggest button. */
   suggestMeals?: MealSuggester;
+  /** Prints each recipe's page to PDF and keeps it, in case the site goes offline. Without it, no copies are kept. */
+  pageCopies?: { print: PagePrinter; store: PdfStore };
 }
 
 /** A web app's random id for one address search (see AddressSearchRequest). */
@@ -360,6 +363,8 @@ interface RecipeRow {
   chosen_on: string[];
   added_by: string | null;
   created_at: Date;
+  page_pdf_saved_at: Date | null;
+  page_pdf_failed_at: Date | null;
 }
 
 /** The dates on the schedule a recipe or restaurant (`r`) is the meal for, oldest first. */
@@ -370,7 +375,7 @@ function chosenOn(column: "meal_recipe_id" | "meal_restaurant_id"): string {
 /** Selects recipes with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
 function recipeSelect(me: string): string {
   return `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
-    r.prepared, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at,
+    r.prepared, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at, r.page_pdf_saved_at, r.page_pdf_failed_at,
     (SELECT round(avg(stars), 1) FROM recipe_rating WHERE recipe_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM recipe_rating WHERE recipe_id = r.id) AS rating_count,
     (SELECT stars FROM recipe_rating WHERE recipe_id = r.id AND member_id = ${me}) AS my_rating,
@@ -395,8 +400,23 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     chosenOn: r.chosen_on,
     addedBy: r.added_by,
     createdAt: r.created_at.toISOString(),
+    pageSavedAt: r.page_pdf_saved_at?.toISOString() ?? null,
   };
 }
+
+/** The blob a recipe's page PDF is kept in. */
+function pagePdfName(familyId: string, recipeId: string): string {
+  return `${familyId}/${recipeId}.pdf`;
+}
+
+/** A file name for a recipe's page PDF, from its name. */
+function pagePdfFilename(name: string): string {
+  const slug = name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 80);
+  return `${slug || "recipe"}.pdf`;
+}
+
+/** A day after printing a page failed, it's tried again. */
+const PAGE_PDF_RETRY_MS = 24 * 60 * 60 * 1000;
 
 interface RestaurantRow {
   id: string;
@@ -1101,7 +1121,7 @@ async function errandTurnResult(db: Queryable, req: Request, errand: { id: strin
 
 export function buildRouter(
   db: Db,
-  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "readIngredients" | "addressSearch" | "maps" | "readRestaurant" | "suggestMeals"> & {
+  options: Pick<AppOptions, "google" | "fetchPage" | "readRecipe" | "readIngredients" | "addressSearch" | "maps" | "readRestaurant" | "suggestMeals" | "pageCopies"> & {
     webOrigins?: string[];
   } = {},
 ): Router {
@@ -1496,14 +1516,70 @@ export function buildRouter(
   // --- favourite recipes --------------------------------------------------
   // They belong to the family: anyone in it can add, remove or rate one.
 
+  // A PDF copy of each recipe's page is printed when it's added, one page at a time (Chromium is hungry).
+  // Any recipe without one (added before this, or whose printing failed a while ago) is queued again when
+  // the family's recipes are listed.
+  const copying = new Set<string>();
+  let copyQueue: Promise<void> = Promise.resolve();
+  const copyPage = (familyId: string, recipeId: string): void => {
+    const copies = options.pageCopies;
+    if (!copies || copying.has(recipeId)) return;
+    copying.add(recipeId);
+    copyQueue = copyQueue.then(async () => {
+      try {
+        const recipe = (
+          await db.query<{ url: string }>("SELECT url FROM favourite_recipe WHERE id = $1 AND page_pdf_saved_at IS NULL", [recipeId])
+        ).rows[0];
+        if (!recipe) return; // Already saved, or removed.
+        const name = pagePdfName(familyId, recipeId);
+        try {
+          await copies.store.put(name, await copies.print(recipe.url));
+        } catch (err) {
+          console.error(`Saving a PDF of ${recipe.url} failed`, err);
+          await db.query("UPDATE favourite_recipe SET page_pdf_failed_at = now() WHERE id = $1", [recipeId]);
+          return;
+        }
+        const saved = await db.query("UPDATE favourite_recipe SET page_pdf_saved_at = now(), page_pdf_failed_at = NULL WHERE id = $1", [
+          recipeId,
+        ]);
+        if (!saved.rowCount) await copies.store.delete(name); // Removed while it was printing.
+      } catch (err) {
+        console.error("Saving a recipe page's PDF failed", err);
+      } finally {
+        copying.delete(recipeId);
+      }
+    });
+  };
+
   router.add("GET", "/api/family/recipes", async (req) => {
     const { member } = await requireMember(db, req);
     const { rows } = await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.family_id = $1 ORDER BY r.created_at DESC`, [
       member.family_id,
       member.id,
     ]);
+    for (const r of rows) {
+      if (!r.page_pdf_saved_at && (!r.page_pdf_failed_at || Date.now() - r.page_pdf_failed_at.getTime() > PAGE_PDF_RETRY_MS)) {
+        copyPage(member.family_id, r.id);
+      }
+    }
     const body: FavouriteRecipe[] = rows.map(toRecipe);
     return { body };
+  });
+
+  // The PDF copy of a recipe's page.
+  router.add("GET", "/api/family/recipes/:id/page.pdf", async (req) => {
+    const { member } = await requireMember(db, req);
+    const id = v.uuid(req.params.id);
+    const recipe = (
+      await db.query<{ name: string; page_pdf_saved_at: Date | null }>(
+        "SELECT name, page_pdf_saved_at FROM favourite_recipe WHERE id = $1 AND family_id = $2",
+        [id, member.family_id],
+      )
+    ).rows[0];
+    if (!recipe) throw new HttpError(404, "That recipe isn't in your favourites");
+    const pdf = recipe.page_pdf_saved_at && options.pageCopies ? await options.pageCopies.store.get(pagePdfName(member.family_id, id)) : null;
+    if (!pdf) throw new HttpError(404, "There's no saved copy of that recipe's page yet");
+    return { file: { data: pdf, contentType: "application/pdf", filename: pagePdfFilename(recipe.name) } };
   });
 
   // Reads a recipe page so the person adding it can check (or fill in) the details before saving.
@@ -1576,6 +1652,7 @@ export function buildRouter(
       ],
     );
     if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
+    copyPage(member.family_id, rows[0].id);
     const saved = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [rows[0].id, member.id])).rows[0];
     return { status: 201, body: toRecipe(saved) };
   });
@@ -1616,11 +1693,17 @@ export function buildRouter(
 
   router.add("DELETE", "/api/family/recipes/:id", async (req) => {
     const { member } = await requireMember(db, req);
-    const { rowCount } = await db.query("DELETE FROM favourite_recipe WHERE id = $1 AND family_id = $2", [
-      v.uuid(req.params.id),
-      member.family_id,
-    ]);
-    if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    const id = v.uuid(req.params.id);
+    const { rows } = await db.query<{ page_pdf_saved_at: Date | null }>(
+      "DELETE FROM favourite_recipe WHERE id = $1 AND family_id = $2 RETURNING page_pdf_saved_at",
+      [id, member.family_id],
+    );
+    if (!rows[0]) throw new HttpError(404, "That recipe isn't in your favourites");
+    if (rows[0].page_pdf_saved_at && options.pageCopies) {
+      await options.pageCopies.store
+        .delete(pagePdfName(member.family_id, id))
+        .catch((err: unknown) => console.error("Removing a recipe page's PDF failed", err));
+    }
     return { status: 204 };
   });
 

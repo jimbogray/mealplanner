@@ -46,6 +46,22 @@ function Library({ isManager }: { isManager: boolean }) {
     }
   }
 
+  // Opened as soon as it's clicked (a window opened later counts as a pop-up), then pointed at the PDF once it's here.
+  async function openSavedPage(recipe: FavouriteRecipe) {
+    setError(null);
+    const tab = window.open("", "_blank");
+    try {
+      const pdf = await api.recipePagePdf(recipe.id);
+      const url = URL.createObjectURL(pdf);
+      if (tab) tab.location.href = url;
+      else window.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      tab?.close();
+      setError(errorMessage(err));
+    }
+  }
+
   async function rate(recipe: FavouriteRecipe, stars: number) {
     setError(null);
     try {
@@ -84,6 +100,15 @@ function Library({ isManager }: { isManager: boolean }) {
         </button>
         <div className="tile-foot">
           <StarRating mine={r.myRating} onRate={(stars) => void rate(r, stars)} />
+          {r.pageSavedAt && (
+            <button
+              className="tile-pdf"
+              title={`A copy of the recipe page saved ${new Date(r.pageSavedAt).toLocaleDateString()}, in case the site goes offline`}
+              onClick={() => void openSavedPage(r)}
+            >
+              PDF
+            </button>
+          )}
           <ChosenCount dates={r.chosenOn} />
         </div>
       </li>
