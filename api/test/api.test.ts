@@ -163,8 +163,19 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         suggestBrief = brief;
         return suggestAnswer(brief);
       },
-      readIngredients: async ({ url }) => {
-        ingredientReads.push(url);
+      // A recipe typed in by hand (no url) is read from its text.
+      readIngredients: async ({ url, text }) => {
+        ingredientReads.push(url ?? `typed: ${text}`);
+        if (!url) {
+          if (!text.includes("Halloumi")) throw new Error("unexpected typed recipe: " + text);
+          return {
+            isRecipe: true,
+            ingredients: [
+              { name: "halloumi", quantity: "250 g", aisle: "dairy" },
+              { name: "wraps", quantity: "4", aisle: "bakery" },
+            ],
+          };
+        }
         if (url.includes("broken")) throw new Error("model down");
         if (url.includes("curry")) {
           return {
@@ -675,6 +686,45 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       const other = await call<AuthResponse>("POST", "/api/auth/login", { body: { email: "recipes-other@example.com", password: "password123" } });
       assert.equal((await call("GET", `/api/family/recipes/${pancakesId}/page.pdf`, { token: other.body.token })).status, 404);
       assert.equal((await call("GET", `/api/family/recipes/${pancakesId}/page.pdf`)).status, 401);
+    });
+
+    test("a recipe can be typed in by hand, with no link: its ingredients and method are kept, and there's no page to print", async () => {
+      const prints = pagePrints.length;
+      const res = await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+        token: teenToken,
+        body: {
+          url: "",
+          name: "Granny's soup",
+          cookingMinutes: 40,
+          ingredients: "2 leeks\n3 potatoes\n",
+          method: "Chop.\nSimmer for 30 minutes.",
+          siteName: "Not a site",
+        },
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.url, null);
+      assert.equal(res.body.siteName, null);
+      assert.equal(res.body.ingredients, "2 leeks\n3 potatoes");
+      assert.equal(res.body.method, "Chop.\nSimmer for 30 minutes.");
+      assert.equal(res.body.addedBy, "Sam");
+      // Any number of them can be typed in.
+      const another = await call<FavouriteRecipe>("POST", "/api/family/recipes", { token: parentToken, body: { name: "Toast" } });
+      assert.equal(another.status, 201);
+      assert.deepEqual([another.body.url, another.body.ingredients, another.body.method], [null, null, null]);
+      assert.equal((await call("POST", "/api/family/recipes", { token: parentToken, body: { name: "" } })).status, 400);
+      assert.equal(
+        (await call("POST", "/api/family/recipes", { token: parentToken, body: { name: "Big", method: "x".repeat(10_001) } })).status,
+        400,
+      );
+
+      const list = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken })).body;
+      assert.equal(list.find((r) => r.id === res.body.id)?.method, "Chop.\nSimmer for 30 minutes.");
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(pagePrints.length, prints, "nothing to print");
+      assert.equal((await call("GET", `/api/family/recipes/${res.body.id}/page.pdf`, { token: parentToken })).status, 404);
+      for (const id of [res.body.id, another.body.id]) {
+        assert.equal((await call("DELETE", `/api/family/recipes/${id}`, { token: parentToken })).status, 204);
+      }
     });
 
     test("any family member can remove one", async () => {
@@ -1394,6 +1444,29 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("DELETE", `/api/family/weeks/${later}`, { token: parentToken })).status, 204);
       await call("DELETE", path, { token: parentToken });
       for (const id of [curry, tacos, broken]) await call("DELETE", `/api/family/recipes/${id}`, { token: parentToken });
+    });
+
+    test("a typed-in recipe's ingredients go on the shopping list, sorted into aisles by Claude", async () => {
+      const typed = (
+        await call<FavouriteRecipe>("POST", "/api/family/recipes", {
+          token: parentToken,
+          body: { name: "Halloumi wraps", ingredients: "250 g halloumi\n4 wraps", method: "Grill the halloumi." },
+        })
+      ).body.id;
+      const startsOn = addDays(thisWeek, 7);
+      const days = [{ date: startsOn, memberIds: everyone, guests: 0, meal: { recipeId: typed } }];
+      assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days } })).status, 201);
+      const list = (await call<ShoppingList>("GET", `/api/family/shopping?today=${today}`, { token: teenToken })).body;
+      assert.deepEqual(
+        list.meals.map((m) => [m.name, m.url, m.ingredients?.map((i) => `${i.aisle}: ${i.quantity} ${i.name}`)]),
+        [["Halloumi wraps", null, ["dairy: 250 g halloumi", "bakery: 4 wraps"]]],
+      );
+      const read = ingredientReads.filter((r) => r.startsWith("typed:"));
+      assert.equal(read.length, 1);
+      assert.match(read[0], /250 g halloumi\n4 wraps[\s\S]*Grill the halloumi/);
+
+      assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
+      assert.equal((await call("DELETE", `/api/family/recipes/${typed}`, { token: parentToken })).status, 204);
     });
   });
 

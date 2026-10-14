@@ -39,7 +39,7 @@ export function SchedulePage() {
 
 /** The family's recipes and restaurants a Family Manager can pick meals from. */
 interface MealChoices {
-  recipes: { id: string; name: string; url: string }[];
+  recipes: { id: string; name: string; url: string | null }[];
   restaurants: { id: string; name: string; url: string | null }[];
 }
 

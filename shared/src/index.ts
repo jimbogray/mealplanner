@@ -283,10 +283,14 @@ export interface RecipeDetails {
   siteName: string | null;
 }
 
-/** A recipe page a family has saved as a favourite. */
+/** A recipe a family has saved as a favourite: a recipe page, or one typed in by hand. */
 export interface FavouriteRecipe extends RecipeDetails {
   id: Uuid;
-  url: string;
+  /** The recipe's page; null for a recipe typed in by hand. */
+  url: string | null;
+  /** A typed-in recipe's ingredients (one a line) and method, as typed; null for a recipe from a page. */
+  ingredients: string | null;
+  method: string | null;
   /** The family has cooked it. Only Family Managers can change this. */
   prepared: boolean;
   /** The family's average star rating (1 to 5, to one decimal place); null if nobody has rated it. */
@@ -319,9 +323,14 @@ export interface RecipePreview extends Omit<RecipeDetails, "name"> {
   alreadySaved: boolean;
 }
 
-/** Save a favourite: the preview's details, as confirmed or filled in by the person adding it. */
+/**
+ * Save a favourite: the preview's details, as confirmed or filled in by the person adding it. Or, with no url, a
+ * recipe typed in by hand, with its ingredients and method.
+ */
 export interface AddFavouriteRequest {
-  url: string;
+  url?: string | null;
+  ingredients?: string | null;
+  method?: string | null;
   name: string;
   description?: string | null;
   cookingMinutes?: number | null;
@@ -626,7 +635,8 @@ export interface ShoppingMeal {
   date: IsoDate;
   recipeId: Uuid;
   name: string;
-  url: string;
+  /** null for a recipe typed in by hand. */
+  url: string | null;
   /** null when the ingredients couldn't be read (automatic reading is off, or the page couldn't be read). */
   ingredients: (Ingredient & { have: boolean })[] | null;
 }

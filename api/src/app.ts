@@ -349,8 +349,10 @@ function familyChoice(b: Record<string, unknown>): { familyName: string | null; 
 
 interface RecipeRow {
   id: string;
-  url: string;
+  url: string | null;
   name: string;
+  ingredients_text: string | null;
+  method: string | null;
   description: string | null;
   cooking_minutes: number | null;
   main_protein: string | null;
@@ -374,7 +376,7 @@ function chosenOn(column: "meal_recipe_id" | "meal_restaurant_id"): string {
 
 /** Selects recipes with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
 function recipeSelect(me: string): string {
-  return `SELECT r.id, r.url, r.name, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
+  return `SELECT r.id, r.url, r.name, r.ingredients_text, r.method, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
     r.prepared, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at, r.page_pdf_saved_at, r.page_pdf_failed_at,
     (SELECT round(avg(stars), 1) FROM recipe_rating WHERE recipe_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM recipe_rating WHERE recipe_id = r.id) AS rating_count,
@@ -388,6 +390,8 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     id: r.id,
     url: r.url,
     name: r.name,
+    ingredients: r.ingredients_text,
+    method: r.method,
     description: r.description,
     cookingMinutes: r.cooking_minutes,
     mainProtein: r.main_protein,
@@ -889,6 +893,8 @@ function todayOf(req: Request): string {
 }
 
 const MAX_INGREDIENTS = 60;
+/** The most a typed-in recipe's ingredients, or its method, can run to. */
+const MAX_TYPED_RECIPE = 10_000;
 
 /** What Claude read, tidied: names and amounts trimmed and capped, each ingredient once. */
 function tidyIngredients(found: RecipeIngredients): { name: string; quantity: string | null; aisle: Aisle }[] {
@@ -905,11 +911,24 @@ function tidyIngredients(found: RecipeIngredients): { name: string; quantity: st
   return list.slice(0, MAX_INGREDIENTS);
 }
 
+/** Ingredients typed in by hand, one a line, when Claude isn't there to read them: all in the "other" aisle. */
+function typedIngredients(text: string): { name: string; quantity: string | null; aisle: Aisle }[] {
+  return tidyIngredients({
+    isRecipe: true,
+    ingredients: text.split("\n").map((line) => ({ name: line.replace(/^\s*[-*•]\s*/, ""), quantity: null, aisle: "other" })),
+  });
+}
+
+/** A recipe typed in by hand, as text for Claude to read its ingredients from. */
+function typedRecipeText(r: { name: string; ingredients_text: string | null; method: string | null }): string {
+  return [r.name, `Ingredients:\n${r.ingredients_text ?? ""}`, r.method && `Method:\n${r.method}`].filter(Boolean).join("\n\n");
+}
+
 interface ShoppingDayRow {
   day: string;
   recipe_id: string;
   name: string;
-  url: string;
+  url: string | null;
   read: boolean;
 }
 
@@ -1528,9 +1547,12 @@ export function buildRouter(
     copyQueue = copyQueue.then(async () => {
       try {
         const recipe = (
-          await db.query<{ url: string }>("SELECT url FROM favourite_recipe WHERE id = $1 AND page_pdf_saved_at IS NULL", [recipeId])
+          await db.query<{ url: string }>(
+            "SELECT url FROM favourite_recipe WHERE id = $1 AND url IS NOT NULL AND page_pdf_saved_at IS NULL",
+            [recipeId],
+          )
         ).rows[0];
-        if (!recipe) return; // Already saved, or removed.
+        if (!recipe) return; // Already saved, removed, or typed in (no page to print).
         const name = pagePdfName(familyId, recipeId);
         try {
           await copies.store.put(name, await copies.print(recipe.url));
@@ -1558,7 +1580,7 @@ export function buildRouter(
       member.id,
     ]);
     for (const r of rows) {
-      if (!r.page_pdf_saved_at && (!r.page_pdf_failed_at || Date.now() - r.page_pdf_failed_at.getTime() > PAGE_PDF_RETRY_MS)) {
+      if (r.url && !r.page_pdf_saved_at && (!r.page_pdf_failed_at || Date.now() - r.page_pdf_failed_at.getTime() > PAGE_PDF_RETRY_MS)) {
         copyPage(member.family_id, r.id);
       }
     }
@@ -1632,13 +1654,17 @@ export function buildRouter(
     return { body: preview };
   });
 
+  // From a link (after its preview), or typed in by hand with its ingredients and method and no link.
   router.add("POST", "/api/family/recipes", async (req) => {
     const { member } = await requireMember(db, req);
     const b = v.object(req.body);
-    const url = v.webUrl(b.url, "Recipe link");
+    const url = b.url == null || b.url === "" ? null : v.webUrl(b.url, "Recipe link");
+    const ingredients = url ? null : v.optionalText(b.ingredients, "Ingredients", MAX_TYPED_RECIPE);
+    const method = url ? null : v.optionalText(b.method, "Method", MAX_TYPED_RECIPE);
     const { rows } = await db.query<{ id: string }>(
-      `INSERT INTO favourite_recipe (family_id, url, name, description, cooking_minutes, main_protein, image_url, site_name, added_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (family_id, url) DO NOTHING RETURNING id`,
+      `INSERT INTO favourite_recipe
+         (family_id, url, name, description, cooking_minutes, main_protein, image_url, site_name, ingredients_text, method, added_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (family_id, url) DO NOTHING RETURNING id`,
       [
         member.family_id,
         url,
@@ -1647,12 +1673,14 @@ export function buildRouter(
         v.optionalMinutes(b.cookingMinutes),
         v.optionalText(b.mainProtein, "Main protein", 80),
         b.imageUrl == null || b.imageUrl === "" ? null : v.webUrl(b.imageUrl, "Image link"),
-        v.optionalText(b.siteName, "Site name", 80),
+        url ? v.optionalText(b.siteName, "Site name", 80) : null,
+        ingredients,
+        method,
         member.id,
       ],
     );
     if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
-    copyPage(member.family_id, rows[0].id);
+    if (url) copyPage(member.family_id, rows[0].id);
     const saved = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [rows[0].id, member.id])).rows[0];
     return { status: 201, body: toRecipe(saved) };
   });
@@ -1865,17 +1893,30 @@ export function buildRouter(
   const reading = new Map<string, Promise<void>>();
   const readIngredients = (recipeId: string): Promise<void> => {
     const reader = options.readIngredients;
-    if (!reader) return Promise.resolve();
     let pending = reading.get(recipeId);
     if (!pending) {
       pending = (async () => {
         try {
           const recipe = (
-            await db.query<{ url: string }>("SELECT url FROM favourite_recipe WHERE id = $1 AND ingredients_read_at IS NULL", [recipeId])
+            await db.query<{ url: string | null; name: string; ingredients_text: string | null; method: string | null }>(
+              "SELECT url, name, ingredients_text, method FROM favourite_recipe WHERE id = $1 AND ingredients_read_at IS NULL",
+              [recipeId],
+            )
           ).rows[0];
           if (!recipe) return; // Already read, or removed.
-          const page = await (options.fetchPage ?? fetchPage)(recipe.url);
-          const found = tidyIngredients(await reader({ url: page.url, text: pageText(page.html) }));
+          let found: { name: string; quantity: string | null; aisle: Aisle }[];
+          if (recipe.url) {
+            if (!reader) return;
+            const page = await (options.fetchPage ?? fetchPage)(recipe.url);
+            found = tidyIngredients(await reader({ url: page.url, text: pageText(page.html) }));
+          } else if (!recipe.ingredients_text) {
+            found = [];
+          } else {
+            // Typed in: Claude sorts them into aisles; without it, they're kept as typed.
+            found = reader
+              ? tidyIngredients(await reader({ url: null, text: typedRecipeText(recipe) }))
+              : typedIngredients(recipe.ingredients_text);
+          }
           await withTransaction(db, async (tx) => {
             const still = await tx.query("SELECT 1 FROM favourite_recipe WHERE id = $1 AND ingredients_read_at IS NULL FOR UPDATE", [recipeId]);
             if (!still.rowCount) return;
@@ -1910,7 +1951,7 @@ export function buildRouter(
   const shoppingList = async (familyId: string, today: string): Promise<ShoppingList> => {
     let meals = await loadShoppingMeals(db, familyId, today);
     const unread = [...new Set(meals.filter((m) => !m.ingredients).map((m) => m.recipeId))];
-    if (unread.length && options.readIngredients) {
+    if (unread.length) {
       await Promise.all(unread.map(readIngredients));
       meals = await loadShoppingMeals(db, familyId, today);
     }
