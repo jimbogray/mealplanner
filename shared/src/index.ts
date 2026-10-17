@@ -284,6 +284,15 @@ export interface RecipeDetails {
 }
 
 /** A recipe a family has saved as a favourite: a recipe page, or one typed in by hand. */
+/** One time a recipe was cooked. */
+export interface RecipePreparation {
+  /** Set for a press of Prepared (DELETE /api/family/recipes/:id/preparations/:prepId undoes it); null for a schedule day. */
+  id: Uuid | null;
+  /** Null for a recipe marked as prepared before dates were kept. */
+  date: IsoDate | null;
+  fromSchedule: boolean;
+}
+
 export interface FavouriteRecipe extends RecipeDetails {
   id: Uuid;
   /** The recipe's page; null for a recipe typed in by hand. */
@@ -291,8 +300,17 @@ export interface FavouriteRecipe extends RecipeDetails {
   /** A typed-in recipe's ingredients (one a line) and method, as typed; null for a recipe from a page. */
   ingredients: string | null;
   method: string | null;
-  /** The family has cooked it. Only Family Managers can change this. */
+  /** The family has cooked it at least once (pressed on its tile, or on the schedule for a day that's passed). */
   prepared: boolean;
+  /**
+   * Each time the family has cooked it, newest first (ones with no date last). Only Family Managers press Prepared;
+   * each press is one, and a day on the schedule with it as the meal counts once the day has passed.
+   */
+  preparations: RecipePreparation[];
+  /** How many times it's been cooked: preparations.length. */
+  timesPrepared: number;
+  /** The most recent date it was cooked; null if never, or only before dates were kept. */
+  lastPrepared: IsoDate | null;
   /** The family's average star rating (1 to 5, to one decimal place); null if nobody has rated it. */
   averageRating: number | null;
   ratingCount: number;

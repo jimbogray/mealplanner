@@ -599,17 +599,52 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       }
     });
 
-    test("only a Family Manager can mark one as prepared", async () => {
-      const path = `/api/family/recipes/${pancakesId}`;
-      assert.equal((await call("PATCH", path, { token: teenToken, body: { prepared: true } })).status, 403);
-      assert.equal((await call("PATCH", path, { token: parentToken, body: { prepared: "yes" } })).status, 400);
-      const res = await call<FavouriteRecipe>("PATCH", path, { token: parentToken, body: { prepared: true } });
-      assert.equal(res.status, 200);
-      assert.equal(res.body.prepared, true);
+    test("a Family Manager presses Prepared each time it's cooked, and can take a press back", async () => {
+      const path = `/api/family/recipes/${pancakesId}/preparations`;
+      const today = new Date().toISOString().slice(0, 10);
+      assert.equal((await call("POST", path, { token: teenToken })).status, 403);
+      let res = await call<FavouriteRecipe>("POST", path, { token: parentToken });
+      assert.equal(res.status, 201);
       assert.equal(res.body.name, "Easy pancakes");
+      assert.deepEqual([res.body.prepared, res.body.timesPrepared, res.body.lastPrepared], [true, 1, today]);
+      res = await call<FavouriteRecipe>("POST", path, { token: parentToken });
+      assert.equal(res.body.timesPrepared, 2);
       const list = await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: teenToken });
-      assert.equal(list.body.find((r) => r.id === pancakesId)?.prepared, true);
-      assert.equal((await call<FavouriteRecipe>("PATCH", path, { token: parentToken, body: { prepared: false } })).body.prepared, false);
+      assert.equal(list.body.find((r) => r.id === pancakesId)?.timesPrepared, 2);
+
+      // A press made by mistake can be taken back, by a Family Manager only.
+      const prepId = res.body.preparations[0].id!;
+      assert.equal((await call("DELETE", `${path}/${prepId}`, { token: teenToken })).status, 403);
+      res = await call<FavouriteRecipe>("DELETE", `${path}/${prepId}`, { token: parentToken });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.timesPrepared, 1);
+      assert.equal((await call("DELETE", `${path}/${prepId}`, { token: parentToken })).status, 404);
+      res = await call<FavouriteRecipe>("DELETE", `${path}/${res.body.preparations[0].id}`, { token: parentToken });
+      assert.deepEqual([res.body.prepared, res.body.timesPrepared, res.body.lastPrepared, res.body.preparations], [false, 0, null, []]);
+    });
+
+    test("days on the schedule with it as the meal count as cooked once they've passed", async () => {
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const now = new Date();
+      const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 14 - ((now.getUTCDay() + 6) % 7)));
+      const [mon, tue] = [iso(monday), iso(new Date(monday.getTime() + 86_400_000))];
+      const { rows } = await db.query<{ family_id: string }>("SELECT family_id FROM favourite_recipe WHERE id = $1", [pancakesId]);
+      const familyId = rows[0].family_id;
+      const week = await db.query<{ id: string }>("INSERT INTO schedule_week (family_id, starts_on) VALUES ($1, $2) RETURNING id", [familyId, mon]);
+      await db.query("INSERT INTO schedule_day (week_id, day, meal_recipe_id, meal_name) VALUES ($1, $2, $4, 'Pancakes'), ($1, $3, $4, 'Pancakes')", [week.rows[0].id, mon, tue, pancakesId]);
+      // Pressed on one of those days too (the same dinner), plus one from before dates were kept.
+      await db.query("INSERT INTO recipe_preparation (recipe_id, prepared_on) VALUES ($1, $2), ($1, NULL)", [pancakesId, tue]);
+      try {
+        const recipe = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: teenToken })).body.find((r) => r.id === pancakesId)!;
+        assert.deepEqual(
+          recipe.preparations.map((p) => [p.date, p.fromSchedule]),
+          [[tue, false], [mon, true], [null, false]],
+        );
+        assert.deepEqual([recipe.prepared, recipe.timesPrepared, recipe.lastPrepared], [true, 3, tue]);
+      } finally {
+        await db.query("DELETE FROM recipe_preparation WHERE recipe_id = $1", [pancakesId]);
+        await db.query("DELETE FROM schedule_week WHERE id = $1", [week.rows[0].id]);
+      }
     });
 
     test("each family member can rate one, and everyone sees the average", async () => {
@@ -651,8 +686,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       });
       assert.deepEqual((await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: other.body.token })).body, []);
       assert.equal((await call("DELETE", `/api/family/recipes/${pancakesId}`, { token: other.body.token })).status, 404);
-      const patch = await call("PATCH", `/api/family/recipes/${pancakesId}`, { token: other.body.token, body: { prepared: true } });
-      assert.equal(patch.status, 404);
+      const pressed = await call("POST", `/api/family/recipes/${pancakesId}/preparations`, { token: other.body.token });
+      assert.equal(pressed.status, 404);
       const rate = await call("PUT", `/api/family/recipes/${pancakesId}/rating`, { token: other.body.token, body: { stars: 1 } });
       assert.equal(rate.status, 404);
       assert.equal((await call("GET", "/api/family/recipes")).status, 401);
@@ -1142,6 +1177,9 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         restaurant: (await call<Restaurant[]>("GET", "/api/family/restaurants", { token: teenToken })).body.find((r) => r.id === restaurant.id)!.chosenOn,
       });
       assert.deepEqual(await chosen(), { recipe: [monday], restaurant: [] });
+      // A day still to come isn't cooked yet.
+      const listed = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: teenToken })).body.find((r) => r.id === recipe.id)!;
+      assert.equal(listed.timesPrepared, 0);
       const out = await patch(tuesday, { eatOut: true, meal: { restaurantId: restaurant.id } });
       assert.deepEqual(await chosen(), { recipe: [monday], restaurant: [tuesday] });
       assert.deepEqual(out.body.meal, { name: "Pizza Place", mealKit: false, recipeId: null, restaurantId: restaurant.id, url: null });
