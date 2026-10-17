@@ -34,6 +34,7 @@ import {
   type ErrandTurnResponse,
   MAX_ERRAND_NAME,
   type Family,
+  type RecipePreparation,
   type FamilyMember,
   type FavouriteRecipe,
   type Invite,
@@ -358,7 +359,7 @@ interface RecipeRow {
   main_protein: string | null;
   image_url: string | null;
   site_name: string | null;
-  prepared: boolean;
+  preparations: { id: string; date: string | null }[];
   average_rating: string | null;
   rating_count: number;
   my_rating: number | null;
@@ -377,7 +378,9 @@ function chosenOn(column: "meal_recipe_id" | "meal_restaurant_id"): string {
 /** Selects recipes with their ratings; `me` is the placeholder (e.g. "$2") for the caller's member id. */
 function recipeSelect(me: string): string {
   return `SELECT r.id, r.url, r.name, r.ingredients_text, r.method, r.description, r.cooking_minutes, r.main_protein, r.image_url, r.site_name,
-    r.prepared, COALESCE(m.familiar_name, m.name) AS added_by, r.created_at, r.page_pdf_saved_at, r.page_pdf_failed_at,
+    COALESCE((SELECT json_agg(json_build_object('id', p.id, 'date', to_char(p.prepared_on, 'YYYY-MM-DD'))
+      ORDER BY p.prepared_on DESC NULLS LAST, p.created_at DESC) FROM recipe_preparation p WHERE p.recipe_id = r.id), '[]') AS preparations,
+    COALESCE(m.familiar_name, m.name) AS added_by, r.created_at, r.page_pdf_saved_at, r.page_pdf_failed_at,
     (SELECT round(avg(stars), 1) FROM recipe_rating WHERE recipe_id = r.id) AS average_rating,
     (SELECT count(*)::int FROM recipe_rating WHERE recipe_id = r.id) AS rating_count,
     (SELECT stars FROM recipe_rating WHERE recipe_id = r.id AND member_id = ${me}) AS my_rating,
@@ -385,7 +388,23 @@ function recipeSelect(me: string): string {
   FROM favourite_recipe r LEFT JOIN family_member m ON m.id = r.added_by`;
 }
 
-function toRecipe(r: RecipeRow): FavouriteRecipe {
+/**
+ * Each time a recipe was cooked, newest first: the presses of Prepared, plus the days on the schedule with it as
+ * the meal that are before `today` (a press on the same day as a schedule day is the same dinner, so counts once).
+ */
+function preparationsOf(r: RecipeRow, today: string): RecipePreparation[] {
+  const pressed: RecipePreparation[] = r.preparations.map((p) => ({ id: p.id, date: p.date, fromSchedule: false }));
+  const pressedOn = new Set(pressed.map((p) => p.date));
+  const scheduled: RecipePreparation[] = r.chosen_on
+    .filter((day) => day < today && !pressedOn.has(day))
+    .map((day) => ({ id: null, date: day, fromSchedule: true }));
+  const known = [...pressed, ...scheduled].filter((p) => p.date !== null).sort((a, b) => b.date!.localeCompare(a.date!));
+  return [...known, ...pressed.filter((p) => p.date === null)];
+}
+
+/** A recipe as the web app sees it; `today` is the person's own date (schedule days before it count as cooked). */
+function toRecipe(r: RecipeRow, today: string): FavouriteRecipe {
+  const preparations = preparationsOf(r, today);
   return {
     id: r.id,
     url: r.url,
@@ -397,7 +416,10 @@ function toRecipe(r: RecipeRow): FavouriteRecipe {
     mainProtein: r.main_protein,
     imageUrl: r.image_url,
     siteName: r.site_name,
-    prepared: r.prepared,
+    prepared: preparations.length > 0,
+    preparations,
+    timesPrepared: preparations.length,
+    lastPrepared: preparations[0]?.date ?? null,
     averageRating: r.average_rating === null ? null : Number(r.average_rating),
     ratingCount: r.rating_count,
     myRating: r.my_rating,
@@ -1584,7 +1606,8 @@ export function buildRouter(
         copyPage(member.family_id, r.id);
       }
     }
-    const body: FavouriteRecipe[] = rows.map(toRecipe);
+    const today = todayOf(req);
+    const body: FavouriteRecipe[] = rows.map((r) => toRecipe(r, today));
     return { body };
   });
 
@@ -1682,21 +1705,36 @@ export function buildRouter(
     if (!rows[0]) throw new HttpError(409, "That recipe is already one of your favourites");
     if (url) copyPage(member.family_id, rows[0].id);
     const saved = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [rows[0].id, member.id])).rows[0];
-    return { status: 201, body: toRecipe(saved) };
+    return { status: 201, body: toRecipe(saved, todayOf(req)) };
   });
 
-  // Marking a recipe as prepared is for Family Managers only.
-  router.add("PATCH", "/api/family/recipes/:id", async (req) => {
+  // Pressing Prepared records that the family cooked it today; each press is another time. Family Managers only.
+  router.add("POST", "/api/family/recipes/:id/preparations", async (req) => {
     const { member } = await requireAdmin(db, req);
-    const prepared = v.object(req.body).prepared;
-    if (typeof prepared !== "boolean") throw new HttpError(400, "Prepared must be true or false");
-    const { rows } = await db.query<{ id: string }>(
-      "UPDATE favourite_recipe SET prepared = $1 WHERE id = $2 AND family_id = $3 RETURNING id",
-      [prepared, v.uuid(req.params.id), member.family_id],
+    const id = v.uuid(req.params.id);
+    const today = todayOf(req);
+    const { rowCount } = await db.query(
+      `INSERT INTO recipe_preparation (recipe_id, prepared_on, added_by)
+       SELECT id, $3, $4 FROM favourite_recipe WHERE id = $1 AND family_id = $2`,
+      [id, member.family_id, today, member.id],
     );
-    if (!rows[0]) throw new HttpError(404, "That recipe isn't in your favourites");
-    const updated = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [rows[0].id, member.id])).rows[0];
-    return { body: toRecipe(updated) };
+    if (!rowCount) throw new HttpError(404, "That recipe isn't in your favourites");
+    const updated = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
+    return { status: 201, body: toRecipe(updated, today) };
+  });
+
+  // Takes back a press of Prepared (say, one pressed by mistake). Family Managers only.
+  router.add("DELETE", "/api/family/recipes/:id/preparations/:prepId", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const id = v.uuid(req.params.id);
+    const { rowCount } = await db.query(
+      `DELETE FROM recipe_preparation p USING favourite_recipe r
+       WHERE p.id = $1 AND p.recipe_id = r.id AND r.id = $2 AND r.family_id = $3`,
+      [v.uuid(req.params.prepId), id, member.family_id],
+    );
+    if (!rowCount) throw new HttpError(404, "That recipe or preparation isn't in your favourites");
+    const updated = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
+    return { body: toRecipe(updated, todayOf(req)) };
   });
 
   // Anyone in the family can rate a recipe; 0 stars clears their rating.
@@ -1716,7 +1754,7 @@ export function buildRouter(
       );
     }
     const updated = (await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.id = $1`, [id, member.id])).rows[0];
-    return { body: toRecipe(updated) };
+    return { body: toRecipe(updated, todayOf(req)) };
   });
 
   router.add("DELETE", "/api/family/recipes/:id", async (req) => {
@@ -2155,7 +2193,7 @@ export function buildRouter(
     const events = await loadEvents(db, member.family_id);
     const recipes = (
       await db.query<RecipeRow>(`${recipeSelect("$2")} WHERE r.family_id = $1 ORDER BY r.name`, [member.family_id, member.id])
-    ).rows.map(toRecipe);
+    ).rows.map((r) => toRecipe(r, todayOf(req)));
     const restaurants = (
       await db.query<RestaurantRow>(`${restaurantSelect("$2")} WHERE r.family_id = $1 ORDER BY lower(r.name)`, [member.family_id, member.id])
     ).rows.map(toRestaurant);

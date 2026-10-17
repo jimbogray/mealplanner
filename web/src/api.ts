@@ -136,6 +136,12 @@ async function download(path: string): Promise<Blob> {
   return res.blob();
 }
 
+/** Today's date where the person is, "YYYY-MM-DD" (recipes on the schedule before it count as cooked). */
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export const api = {
   signup: (body: SignupRequest) => request<AuthResponse>("POST", "/api/auth/signup", body),
   login: (body: LoginRequest) => request<AuthResponse>("POST", "/api/auth/login", body),
@@ -160,12 +166,15 @@ export const api = {
   acceptInvite: (code: string, body: Partial<MemberInput>) => request<Me>("POST", `/api/invites/${encodeURIComponent(code)}/accept`, body),
 
 
-  recipes: () => request<FavouriteRecipe[]>("GET", "/api/family/recipes"),
+  recipes: () => request<FavouriteRecipe[]>("GET", `/api/family/recipes?today=${localToday()}`),
   previewRecipe: (url: string) => request<RecipePreview>("POST", "/api/family/recipes/preview", { url }),
   addRecipe: (body: AddFavouriteRequest) => request<FavouriteRecipe>("POST", "/api/family/recipes", body),
-  setRecipePrepared: (id: string, prepared: boolean) =>
-    request<FavouriteRecipe>("PATCH", `/api/family/recipes/${id}`, { prepared }),
-  rateRecipe: (id: string, stars: number) => request<FavouriteRecipe>("PUT", `/api/family/recipes/${id}/rating`, { stars }),
+  /** Records that the family cooked it today; each press is another time. */
+  addPreparation: (id: string) => request<FavouriteRecipe>("POST", `/api/family/recipes/${id}/preparations?today=${localToday()}`),
+  removePreparation: (id: string, prepId: string) =>
+    request<FavouriteRecipe>("DELETE", `/api/family/recipes/${id}/preparations/${prepId}?today=${localToday()}`),
+  rateRecipe: (id: string, stars: number) =>
+    request<FavouriteRecipe>("PUT", `/api/family/recipes/${id}/rating?today=${localToday()}`, { stars }),
   removeRecipe: (id: string) => request<void>("DELETE", `/api/family/recipes/${id}`),
   /** The PDF copy of a recipe's page, kept in case the site goes offline. */
   recipePagePdf: (id: string) => download(`/api/family/recipes/${id}/page.pdf`),
