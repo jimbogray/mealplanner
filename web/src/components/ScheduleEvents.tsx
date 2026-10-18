@@ -62,13 +62,14 @@ function who(event: ScheduleEvent, members: FamilyMember[]): string {
   return going.length === members.length && members.length > 1 ? "Everyone" : going.map(displayName).join(", ");
 }
 
-function EventLine({ event }: { event: ScheduleEvent }) {
+/** `showWeekly` marks a repeating event, for when it's being edited; the week view leaves it off. */
+function EventLine({ event, showWeekly = false }: { event: ScheduleEvent; showWeekly?: boolean }) {
   const { members } = useContext(EventsContext);
   return (
     <span className="event-line">
       <strong>{event.title}</strong> {clock(event.startTime)}–{clock(event.endTime)}
       {who(event, members) && <> · {who(event, members)}</>}
-      {event.weekly && <span className="event-weekly"> · weekly</span>}
+      {showWeekly && event.weekly && <span className="event-weekly"> · weekly</span>}
     </span>
   );
 }
@@ -142,7 +143,7 @@ export function DayEvents({ date, editable = false }: { date: string; editable?:
           <EventForm key={e.id} date={date} event={e} onDone={() => setEditing(null)} />
         ) : (
           <div key={e.id} className="event-row">
-            <EventLine event={e} />
+            <EventLine event={e} showWeekly />
             <span className="event-actions">
               <button type="button" className="link small" onClick={() => setEditing(e.id)}>
                 Edit

@@ -313,7 +313,11 @@ function Week({
   onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [showEarlier, setShowEarlier] = useState(false);
   const title = isCurrent ? "This week" : weekLabel(week.startsOn);
+  // This week's days that have passed are tucked away (still there, and still in the edit form).
+  const earlier = isCurrent ? week.days.filter((d) => d.date < today) : [];
+  const shown = showEarlier ? week.days : week.days.filter((d) => !earlier.includes(d));
 
   if (editing) {
     return (
@@ -350,7 +354,7 @@ function Week({
     <section className="card">
       <div className="week-head">
         <h2>{title}</h2>
-        {isCurrent && <span className="note small">from {dayLabel(week.days[0]?.date ?? week.startsOn)}</span>}
+        {isCurrent && <span className="note small">from {dayLabel(shown[0]?.date ?? week.startsOn)}</span>}
         <div className="week-actions">
           <button className="link" onClick={() => setEditing(true)}>
             Edit
@@ -360,11 +364,16 @@ function Week({
           </button>
         </div>
       </div>
+      {earlier.length > 0 && (
+        <button type="button" className="link small earlier-days" onClick={() => setShowEarlier((v) => !v)}>
+          {showEarlier ? "Hide earlier days" : `Show ${earlier.length === 1 ? "1 earlier day" : `${earlier.length} earlier days`}`}
+        </button>
+      )}
       <ul className="days">
-        {week.days.map((d) => (
+        {shown.map((d) => (
           <li
             key={d.date}
-            className={[d.eatOut && "eat-out", d.date === today && "today"].filter(Boolean).join(" ") || undefined}
+            className={[d.eatOut && "eat-out", d.date === today && "today", d.date < today && "past"].filter(Boolean).join(" ") || undefined}
             aria-current={d.date === today ? "date" : undefined}
           >
             <span className="day-name">
