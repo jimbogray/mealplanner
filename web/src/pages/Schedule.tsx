@@ -6,6 +6,7 @@ import {
   isoWeekday,
   MAX_GUESTS,
   MAX_MEAL_NAME,
+  MAX_SUGGEST_NOTES,
   mondayOf,
   nextWeekToAdd,
   usuallyWorkingFromHome,
@@ -473,6 +474,8 @@ function WeekForm({
   const [days, setDays] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  /** Anything Claude should know for this week's suggestions; only used for Suggest, not saved. */
+  const [notes, setNotes] = useState("");
   /** Why each suggested meal was picked, by date, until that day's meal is changed. */
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -492,7 +495,7 @@ function WeekForm({
     setSuggesting(true);
     setError(null);
     try {
-      const { suggestions } = await api.suggestMeals({ days });
+      const { suggestions } = await api.suggestMeals({ days, ...(notes.trim() ? { notes: notes.trim() } : {}) });
       if (!suggestions.length) setError("No suggestions came back this time. Try again, or pick the meals yourself.");
       const byDate = new Map(suggestions.map((s) => [s.date, s]));
       // Only fill days that are still open: anything picked while waiting stays.
@@ -594,6 +597,18 @@ function WeekForm({
               ? "Every day has a meal. Clear one to have it suggested."
               : "Suggests meals for days without one, around who's home, events and your preferences. Change anything you like before saving."}
           </span>
+          <label className="suggest-notes">
+            <span>
+              Anything to know this week? <span className="note small">(optional)</span>
+            </span>
+            <textarea
+              rows={2}
+              maxLength={MAX_SUGGEST_NOTES}
+              placeholder="e.g. We really want to eat out on Friday, or we skipped the meal kit this week"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </label>
         </div>
       )}
       {choices && (

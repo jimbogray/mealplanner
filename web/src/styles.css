@@ -302,6 +302,8 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
 .meal-field .hint.suggested { color: #7a5510; }
 .suggest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; }
 .suggest-row .hint { flex: 1 1 220px; }
+.suggest-notes { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; color: var(--muted); }
+.suggest-notes textarea { color: var(--ink); }
 
 /* Times picked on the schedule, bottom right of a recipe tile or restaurant. */
 .chosen-count { margin-left: auto; font-size: 0.85rem; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }

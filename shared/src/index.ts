@@ -511,7 +511,11 @@ export interface ScheduleEvent {
  */
 export interface SuggestMealsRequest {
   days: ScheduleDay[];
+  /** Anything Claude should know for this week, e.g. "We really want to eat out on Friday". Used once, not saved. */
+  notes?: string;
 }
+
+export const MAX_SUGGEST_NOTES = 500;
 
 /**
  * A suggested dinner for a day: eating out at one of the family's restaurants, take-out from one (only on days

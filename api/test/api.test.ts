@@ -58,7 +58,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
   const ingredientReads: string[] = [];
   // What Claude was last told when asked for meal suggestions, and what it answers.
   let suggestBrief: SuggestBrief | null = null;
-  let suggestAnswer: (brief: SuggestBrief) => Suggestions = () => ({ days: [] });
+  type FakeSuggestions = { days: (Omit<Suggestions["days"][number], "fromNotes"> & { fromNotes?: boolean })[] };
+  let suggestAnswer: (brief: SuggestBrief) => FakeSuggestions = () => ({ days: [] });
   // Recipe pages printed to PDF (shop pages can't be), and the PDFs kept.
   const pagePrints: string[] = [];
   const pagePdfs = new Map<string, Buffer>();
@@ -161,7 +162,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       // Claude reading ingredients: "curry" and "tacos" pages have some (onion in both), "broken" ones fail.
       suggestMeals: async (brief) => {
         suggestBrief = brief;
-        return suggestAnswer(brief);
+        return { days: suggestAnswer(brief).days.map((d) => ({ fromNotes: false, ...d })) };
       },
       // A recipe typed in by hand (no url) is read from its text.
       readIngredients: async ({ url, text }) => {
@@ -1740,6 +1741,28 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         [true, false, false].slice(0, res.body.suggestions.length),
       );
       assert.equal(res.body.suggestions[0].date, date(1));
+    });
+
+    test("notes for the week go to Claude, and can ask for an eat-out beyond the week's number", async () => {
+      const busy = (fromNotes: boolean) => ({
+        days: [{ date: date(4), choice: "restaurant" as const, recipeId: null, restaurantId: dinerId, name: null, fromNotes, reason: "Friday treat" }],
+      });
+      const full = [day(0, { eatOut: true, memberIds: [] }), day(1, { eatOut: true, memberIds: [] }), day(4)];
+      // Asked for in the notes: the eat-out stays, though the week's two are used up.
+      suggestAnswer = () => busy(true);
+      let res = await call<SuggestMealsResponse>("POST", "/api/family/suggestions", {
+        token: parentToken,
+        body: { days: full, notes: "  We really want to eat out on Friday  " },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(suggestBrief!.familyNotes, "We really want to eat out on Friday");
+      assert.deepEqual(res.body.suggestions.map((s) => [s.date, s.eatOut, s.meal.restaurantId]), [[date(4), true, dinerId]]);
+      // Without notes, Claude can't claim it was asked: the limit holds.
+      res = await suggest(full);
+      assert.equal(suggestBrief!.familyNotes, null);
+      assert.equal(res.body.suggestions[0]?.eatOut ?? false, false);
+      const long = await call("POST", "/api/family/suggestions", { token: parentToken, body: { days: full, notes: "x".repeat(501) } });
+      assert.equal(long.status, 400);
     });
 
     test("a take-out day gets a restaurant to order from, never a recipe", async () => {
