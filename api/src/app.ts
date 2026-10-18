@@ -12,6 +12,7 @@ import {
   isTimeOfDay,
   MAX_EVENT_TITLE,
   MAX_MEAL_NAME,
+  MAX_SUGGEST_NOTES,
   mondayOf,
   nextWeekToAdd,
   type Address,
@@ -2154,6 +2155,7 @@ export function buildRouter(
     if (!suggest) throw new HttpError(503, "Meal suggestions aren't set up yet");
     const b = v.object(req.body);
     if (!Array.isArray(b.days) || b.days.length === 0 || b.days.length > 7) throw new HttpError(400, "Send the week's days");
+    const notes = b.notes === undefined || b.notes === null || (typeof b.notes === "string" && !b.notes.trim()) ? null : v.text(b.notes, "Notes", MAX_SUGGEST_NOTES);
     const familyIds = await familyMemberIds(db, member.family_id);
     const days = b.days
       .map((raw) => {
@@ -2208,6 +2210,7 @@ export function buildRouter(
 
     const brief: SuggestBrief = {
       preferences: { eatOutsPerWeek: prefs.eatOutsPerWeek, mealKitsPerWeek: prefs.mealKitsPerWeek },
+      familyNotes: notes,
       left: { ...left },
       family: members.map((m) => ({ name: displayName(m), lifeStage: m.lifeStage, diet: m.diet, allergies: m.allergies })),
       days: days.map((d) => ({
@@ -2265,7 +2268,9 @@ export function buildRouter(
       let reason = s.reason.trim().slice(0, 200);
       // A meal kit, or eating out on a day that isn't already, over the week's number: a quick recipe instead.
       const newEatOut = (s.choice === "restaurant" || s.choice === "otherOut") && !day.eatOut && !day.takeOut;
-      if ((s.choice === "mealKit" && left.mealKits === 0) || (newEatOut && left.eatOuts === 0)) {
+      // ...unless the family's notes for this week asked for it on that day.
+      const asked = notes !== null && s.fromNotes;
+      if (!asked && ((s.choice === "mealKit" && left.mealKits === 0) || (newEatOut && left.eatOuts === 0))) {
         const quick = recipes
           .filter((r) => !recipeUsed(r.id))
           .sort((a, c) => (a.cookingMinutes ?? 60) - (c.cookingMinutes ?? 60) || (c.averageRating ?? 0) - (a.averageRating ?? 0))[0];
@@ -2298,8 +2303,8 @@ export function buildRouter(
       }
       if (!suggestion) continue;
       suggestions.push({ date: s.date, ...suggestion, reason });
-      if (suggestion.meal.mealKit) left.mealKits--;
-      if (suggestion.eatOut && !day.eatOut) left.eatOuts--;
+      if (suggestion.meal.mealKit) left.mealKits = Math.max(0, left.mealKits - 1);
+      if (suggestion.eatOut && !day.eatOut) left.eatOuts = Math.max(0, left.eatOuts - 1);
     }
     return { body: { suggestions: suggestions.sort((a, c) => a.date.localeCompare(c.date)) } };
   });
