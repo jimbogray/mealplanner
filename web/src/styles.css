@@ -242,6 +242,8 @@ input.missing, textarea.missing { border-color: #e0b04a; background: #fffaf0; }
   border-radius: 8px; border-top-color: transparent; margin: 0 -0.5rem; padding: 0.5rem;
 }
 .days li.today + li { border-top-color: transparent; }
+.earlier-days { margin-top: 0.25rem; }
+.days li.past { opacity: 0.6; }
 .today-tag {
   display: block; width: fit-content; margin-top: 0.15rem; padding: 0 0.45rem; border-radius: 999px;
   background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 600;
