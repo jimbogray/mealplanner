@@ -8,7 +8,7 @@ import { useSession } from "../session";
 export function LoginPage() {
   const { signIn } = useSession();
   const navigate = useNavigate();
-  const from = (useLocation().state as { from?: string } | null)?.from ?? "/family";
+  const from = (useLocation().state as { from?: string } | null)?.from ?? "/schedule";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);

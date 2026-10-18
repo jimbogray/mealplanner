@@ -25,7 +25,7 @@ export function App() {
         </Link>
         {me?.family && (
           <nav className="nav">
-            <NavLink to="/schedule">Schedule</NavLink>
+            <NavLink to="/schedule">Weekly Schedule</NavLink>
             <NavLink to="/shopping">Shopping List</NavLink>
             <NavLink to="/library">Recipes</NavLink>
             <NavLink to="/restaurants">Restaurants</NavLink>
@@ -58,9 +58,9 @@ export function App() {
           <p className="note">Loading…</p>
         ) : (
           <Routes>
-            <Route path="/" element={me ? <Navigate to="/family" replace /> : <Navigate to="/signup" replace />} />
-            <Route path="/signup" element={me ? <Navigate to="/family" replace /> : <SignupPage />} />
-            <Route path="/login" element={me ? <Navigate to="/family" replace /> : <LoginPage />} />
+            <Route path="/" element={me ? <Navigate to="/schedule" replace /> : <Navigate to="/signup" replace />} />
+            <Route path="/signup" element={me ? <Navigate to="/schedule" replace /> : <SignupPage />} />
+            <Route path="/login" element={me ? <Navigate to="/schedule" replace /> : <LoginPage />} />
             <Route path="/join/:code" element={<JoinPage />} />
             <Route path="/auth/google" element={<GoogleReturnPage />} />
             <Route
