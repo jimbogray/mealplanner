@@ -120,7 +120,7 @@ function Shopping() {
         <p className="note">
           Everything the recipes on the schedule from today on need, plus anything added, grouped by aisle. Untick what's already in the
           house on the{" "}
-          <Link to="/schedule">Schedule</Link>, and tick things off here as they go in the basket. Use − and + to change how much.
+          <Link to="/schedule">Weekly Schedule</Link>, and tick things off here as they go in the basket. Use − and + to change how much.
         </p>
         {shown && shown.items.length > 0 && (
           <div className="shopping-summary">
@@ -147,7 +147,7 @@ function Shopping() {
       )}
       {shown && shown.meals.length === 0 && shown.extras.length === 0 && (
         <p className="note center">
-          Nothing on the list yet. Pick meals from your recipes on the <Link to="/schedule">Schedule</Link> and their ingredients show
+          Nothing on the list yet. Pick meals from your recipes on the <Link to="/schedule">Weekly Schedule</Link> and their ingredients show
           up here, or add anything above.
         </p>
       )}

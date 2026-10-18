@@ -138,7 +138,7 @@ function Schedule({ members, isManager, canSuggest }: { members: FamilyMember[];
     <EventsContext.Provider value={{ events, setEvents, members }}>
       <div className="stack">
         <section className="card">
-          <h1>Schedule</h1>
+          <h1>Weekly Schedule</h1>
           <p className="note">
             Who's in for dinner each day, and what's cooking. Weeks run Monday to Sunday; anyone in the family can change who's in, and a
             Family Manager picks the meals.
