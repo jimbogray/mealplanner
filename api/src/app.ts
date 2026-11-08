@@ -26,6 +26,7 @@ import {
   MAX_EXTRA_NAME,
   type Quantity,
   type ShoppingExtra,
+  type AddRecipeLinkResponse,
   type ShoppingList,
   type ShoppingMeal,
   weekDays,
@@ -1998,7 +1999,7 @@ export function buildRouter(
       (r) => r.item,
     );
     const extras = (
-      await db.query<ShoppingExtra>("SELECT id, name, aisle FROM shopping_extra WHERE family_id = $1 ORDER BY created_at, id", [familyId])
+      await db.query<ShoppingExtra>("SELECT id, name, aisle, quantities FROM shopping_extra WHERE family_id = $1 ORDER BY created_at, id", [familyId])
     ).rows;
     const adjusted: Record<string, Quantity> = {};
     const quantities = await db.query<{ item: string; amount: string; unit: string | null }>(
@@ -2470,6 +2471,51 @@ export function buildRouter(
     // Added again after being ticked off: it's needed again.
     await db.query("DELETE FROM shopping_bought WHERE family_id = $1 AND item = $2", [member.family_id, ingredientKey(name)]);
     return { status: 201, body: await shoppingList(member.family_id, todayOf(req)) };
+  });
+
+  // A recipe's ingredients, from a link to its page: Claude reads them (as for recipes on the schedule) and they're
+  // added like things added by hand, with the recipe's amounts. The recipe itself isn't saved.
+  router.add("POST", "/api/family/shopping/recipe", async (req) => {
+    const { member } = await requireMember(db, req);
+    const url = v.webUrl(v.object(req.body).url, "Recipe link");
+    const reader = options.readIngredients;
+    if (!reader) throw new HttpError(503, "Reading recipes isn't set up, so add the ingredients by hand");
+    let page;
+    try {
+      page = await (options.fetchPage ?? fetchPage)(url);
+    } catch {
+      throw new HttpError(502, "Couldn't open that page. Check the link and try again");
+    }
+    let found;
+    try {
+      found = tidyIngredients(await reader({ url: page.url, text: pageText(page.html) }));
+    } catch (err) {
+      console.error("Reading a recipe link's ingredients failed", err);
+      throw new HttpError(502, "Couldn't read the recipe just now. Try again in a moment");
+    }
+    if (!found.length) throw new HttpError(422, "Couldn't find a recipe's ingredients on that page");
+    found = found.map((i) => ({ ...i, name: i.name.slice(0, MAX_EXTRA_NAME) }));
+    await withTransaction(db, async (tx) => {
+      // clock_timestamp() keeps them in the recipe's order.
+      await tx.query(
+        `INSERT INTO shopping_extra (family_id, name, aisle, added_by, quantities, created_at)
+         SELECT $1, t.name, t.aisle, $2, CASE WHEN t.quantity IS NULL THEN '{}'::text[] ELSE ARRAY[t.quantity] END, clock_timestamp()
+           FROM unnest($3::text[], $4::text[], $5::text[]) AS t(name, aisle, quantity)
+         ON CONFLICT (family_id, lower(name)) DO UPDATE SET quantities = shopping_extra.quantities || EXCLUDED.quantities`,
+        [member.family_id, member.id, found.map((i) => i.name), found.map((i) => i.aisle), found.map((i) => i.quantity)],
+      );
+      // Ticked off before, but needed again for this recipe.
+      await tx.query("DELETE FROM shopping_bought WHERE family_id = $1 AND item = ANY($2::text[])", [
+        member.family_id,
+        found.map((i) => ingredientKey(i.name)),
+      ]);
+    });
+    const body: AddRecipeLinkResponse = {
+      list: await shoppingList(member.family_id, todayOf(req)),
+      name: parseRecipeMeta(page.html, page.url).title,
+      added: found.map((i) => i.name),
+    };
+    return { status: 201, body };
   });
 
   router.add("DELETE", "/api/family/shopping/extras/:id", async (req) => {

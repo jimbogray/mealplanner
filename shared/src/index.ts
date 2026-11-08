@@ -695,11 +695,13 @@ export interface SetQuantityRequest {
   quantity: Quantity | null;
 }
 
-/** Something added to the shopping list by hand, not from a recipe. */
+/** Something added to the shopping list by hand, or from a recipe link, rather than from a recipe on the schedule. */
 export interface ShoppingExtra {
   id: Uuid;
   name: string;
   aisle: Aisle;
+  /** The amounts recipe links asked for (each one added up on the list); empty when added by hand. */
+  quantities: string[];
 }
 
 /** Add something to the shopping list. Its aisle comes from COMMON_GROCERIES when it's one of them, else Other. */
@@ -708,6 +710,19 @@ export interface AddExtraRequest {
 }
 
 export const MAX_EXTRA_NAME = 60;
+
+/** Add a recipe's ingredients to the shopping list from a link to its page (Claude reads them; the recipe isn't saved). */
+export interface AddRecipeLinkRequest {
+  url: string;
+}
+
+export interface AddRecipeLinkResponse {
+  list: ShoppingList;
+  /** The page's title, when it has one. */
+  name: string | null;
+  /** The ingredients added (spices, salt, pepper and water are left out). */
+  added: string[];
+}
 
 /**
  * The family's shopping list: one ongoing list, compiled from the recipes on the schedule from today on, plus
@@ -767,10 +782,17 @@ export function shoppingItems(
       item(ingredient.name, ingredient.aisle).uses.push({ date: meal.date, meal: meal.name, quantity: ingredient.quantity });
     }
   }
-  for (const extra of extras) item(extra.name, extra.aisle).extraId = extra.id;
+  const extraQuantities = new Map<string, string[]>();
+  for (const extra of extras) {
+    const found = item(extra.name, extra.aisle);
+    found.extraId = extra.id;
+    extraQuantities.set(found.key, extra.quantities ?? []);
+  }
   for (const i of items.values()) {
     const own = adjusted[i.key];
-    const total = own ? { amount: own, text: formatQuantity(own) } : totalQuantity(i.uses.map((u) => u.quantity));
+    const total = own
+      ? { amount: own, text: formatQuantity(own) }
+      : totalQuantity([...i.uses.map((u) => u.quantity), ...(extraQuantities.get(i.key) ?? [])]);
     i.amount = total.amount;
     i.quantity = total.text;
     i.adjusted = !!own;

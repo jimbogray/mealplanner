@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { api } from "../api";
 import { ErrorNote, errorMessage } from "../components/Field";
-import { AddToList, capitalise, withHave } from "../components/Ingredients";
+import { AddRecipeLink, AddToList, capitalise, withHave } from "../components/Ingredients";
 import { useSession } from "../session";
 
 /** The family's shopping list, from the ingredients of the recipes on the schedule, grouped as a store lays them out. */
@@ -140,6 +140,13 @@ function Shopping() {
         <section className="card">
           <h2>Anything else?</h2>
           <AddToList list={shown} today={today} onChange={setList} />
+        </section>
+      )}
+      {shown && (
+        <section className="card">
+          <h2>Add from a recipe link</h2>
+          <p className="note">Paste a link to any recipe and its ingredients are added to the list. The recipe isn't saved to Recipes.</p>
+          <AddRecipeLink today={today} onChange={setList} />
         </section>
       )}
       {shown && shown.items.length === 0 && shown.meals.some((m) => m.ingredients?.length) && (

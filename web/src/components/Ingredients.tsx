@@ -105,7 +105,7 @@ export function AddToList({ list, today, onChange }: { list: ShoppingList; today
         <div className="chips">
           {list.extras.map((x) => (
             <span key={x.id} className="chip extra">
-              {x.name}
+              {capitalise(x.name)}
               <button type="button" className="link" aria-label={`Take ${x.name} off the list`} onClick={() => void remove(x.id)}>
                 ×
               </button>
@@ -113,6 +113,57 @@ export function AddToList({ list, today, onChange }: { list: ShoppingList; today
           ))}
         </div>
       )}
+      <ErrorNote error={error} />
+    </div>
+  );
+}
+
+/**
+ * A box to paste a link to a recipe (one not in the family's recipes): Claude reads its ingredients and they're
+ * added to the shopping list, sorted into aisles. `today` is the person's own date.
+ */
+export function AddRecipeLink({ today, onChange }: { today: string; onChange: (list: ShoppingList) => void }) {
+  const [url, setUrl] = useState("");
+  const [reading, setReading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    if (!url.trim()) return;
+    setReading(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await api.addRecipeLink(today, url.trim());
+      onChange(res.list);
+      setUrl("");
+      const count = `${res.added.length} ingredient${res.added.length === 1 ? "" : "s"}`;
+      setDone(res.name ? `Added ${count} from ${res.name}.` : `Added ${count}.`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setReading(false);
+    }
+  }
+
+  return (
+    <div className="add-extra">
+      <form className="add-extra-form" onSubmit={add}>
+        <input
+          type="url"
+          aria-label="Recipe link"
+          placeholder="Paste a recipe link"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          disabled={reading}
+        />
+        <button type="submit" disabled={reading || !url.trim()}>
+          {reading ? "Reading…" : "Add ingredients"}
+        </button>
+      </form>
+      {reading && <p className="note small">Reading the recipe's ingredients…</p>}
+      {done && <p className="note small">{done} Spices, salt and pepper are left off; take off anything you already have.</p>}
       <ErrorNote error={error} />
     </div>
   );
