@@ -808,6 +808,7 @@ async function mealFrom(
   if (member.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose meals");
   if (b.meal === null) return null;
   const m = v.object(b.meal);
+  if (m.mealKit !== undefined && typeof m.mealKit !== "boolean") throw new HttpError(400, "Meal kit must be true or false");
   if (m.recipeId !== undefined) {
     if (restaurantDay) throw new HttpError(400, "A recipe is for cooking at home; pick a restaurant for eating out or take-out");
     const r = (
@@ -817,7 +818,9 @@ async function mealFrom(
       ])
     ).rows[0];
     if (!r) throw new HttpError(400, "That recipe isn't in your family's recipes");
-    return { name: r.name, mealKit: false, recipeId: r.id, restaurantId: null };
+    // A recipe can also be marked as a meal kit (the kit's recipe card); its ingredients still go on the
+    // shopping list.
+    return { name: r.name, mealKit: m.mealKit === true, recipeId: r.id, restaurantId: null };
   }
   if (m.restaurantId !== undefined) {
     if (!restaurantDay) throw new HttpError(400, "A restaurant is for eating out or take-out; mark the day as one of those first");
@@ -830,7 +833,6 @@ async function mealFrom(
     if (!r) throw new HttpError(400, "That restaurant isn't in your family's restaurants");
     return { name: r.name, mealKit: false, recipeId: null, restaurantId: r.id };
   }
-  if (m.mealKit !== undefined && typeof m.mealKit !== "boolean") throw new HttpError(400, "Meal kit must be true or false");
   if (m.mealKit) {
     if (restaurantDay) throw new HttpError(400, "A meal kit is for cooking at home");
     const name = m.name === undefined || m.name === null || (typeof m.name === "string" && !m.name.trim()) ? null : v.text(m.name, "Meal kit", MAX_MEAL_NAME);

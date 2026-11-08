@@ -1218,6 +1218,22 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await patch(tuesday, { eatOut: true, meal: { mealKit: true } })).status, 400);
       assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { mealKit: "yes" } })).status, 400);
 
+      // A meal kit can come with one of the family's recipes, and the recipe can stop being a kit.
+      const recipe = (
+        await call<FavouriteRecipe>("POST", "/api/family/recipes", { token: parentToken, body: { url: "https://www.example.com/recipes/katsu", name: "Katsu curry" } })
+      ).body;
+      const both = await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: recipe.id, mealKit: true } });
+      assert.equal(both.status, 200);
+      assert.deepEqual(both.body.meal, { name: "Katsu curry", mealKit: true, recipeId: recipe.id, restaurantId: null, url: recipe.url });
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: recipe.id, mealKit: "yes" } })).status, 400);
+      assert.equal((await patch(tuesday, { takeOut: true, memberIds: everyone, guests: 0, meal: { recipeId: recipe.id, mealKit: true } })).status, 400);
+      const week = (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token: teenToken })).body.find((w) => w.startsOn === startsOn)!;
+      assert.deepEqual(week.days.find((d) => d.date === monday)!.meal, both.body.meal);
+      const plain = await patch(monday, { memberIds: everyone, guests: 0, meal: { recipeId: recipe.id } });
+      assert.equal(plain.body.meal?.mealKit, false);
+      assert.equal((await patch(monday, { memberIds: everyone, guests: 0, meal: { mealKit: true } })).body.meal?.recipeId, null);
+      assert.equal((await call("DELETE", `/api/family/recipes/${recipe.id}`, { token: parentToken })).status, 204);
+
       // It stays when who's joining changes, and goes when the day becomes eating out.
       assert.equal((await patch(monday, { memberIds: [everyone[0]], guests: 1 }, teenToken)).body.meal?.mealKit, true);
       assert.equal((await patch(monday, { eatOut: true }, teenToken)).body.meal, null);
@@ -1485,7 +1501,7 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       for (const id of [curry, tacos, broken]) await call("DELETE", `/api/family/recipes/${id}`, { token: parentToken });
     });
 
-    test("a typed-in recipe's ingredients go on the shopping list, sorted into aisles by Claude", async () => {
+    test("a typed-in recipe's ingredients go on the shopping list, sorted into aisles by Claude, meal kit or not", async () => {
       const typed = (
         await call<FavouriteRecipe>("POST", "/api/family/recipes", {
           token: parentToken,
@@ -1493,7 +1509,8 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
         })
       ).body.id;
       const startsOn = addDays(thisWeek, 7);
-      const days = [{ date: startsOn, memberIds: everyone, guests: 0, meal: { recipeId: typed } }];
+      // A meal kit's recipe is still shopped for: kits can leave out the basics.
+      const days = [{ date: startsOn, memberIds: everyone, guests: 0, meal: { recipeId: typed, mealKit: true } }];
       assert.equal((await call("POST", "/api/family/weeks", { token: parentToken, body: { startsOn, today, days } })).status, 201);
       const list = (await call<ShoppingList>("GET", `/api/family/shopping?today=${today}`, { token: teenToken })).body;
       assert.deepEqual(

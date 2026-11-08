@@ -255,8 +255,8 @@ function dayRequest(d: ScheduleDay, isManager: boolean): UpdateDayRequest {
 
 function mealRequest(meal: ScheduleMeal | null): MealInput | null {
   if (!meal) return null;
+  if (meal.recipeId) return meal.mealKit ? { recipeId: meal.recipeId, mealKit: true } : { recipeId: meal.recipeId };
   if (meal.mealKit) return meal.name.trim() ? { mealKit: true, name: meal.name.trim() } : { mealKit: true };
-  if (meal.recipeId) return { recipeId: meal.recipeId };
   if (meal.restaurantId) return { restaurantId: meal.restaurantId };
   return meal.name.trim() ? { name: meal.name.trim() } : null;
 }
@@ -391,9 +391,8 @@ function Week({
               )}
               {d.meal && (
                 <span className="meal">
-                  {d.meal.mealKit ? (
-                    d.meal.name ? `Meal kit: ${d.meal.name}` : "Meal kit"
-                  ) : d.meal.url ? (
+                  {d.meal.mealKit && (d.meal.name ? "Meal kit: " : "Meal kit")}
+                  {d.meal.url ? (
                     <a href={d.meal.url} target="_blank" rel="noopener noreferrer">
                       {d.meal.name}
                     </a>
@@ -541,26 +540,28 @@ function WeekForm({
     else update(day.date, { eatOut, takeOut, meal });
   }
 
-  /** Typing a saved recipe's (or, eating out or take out, restaurant's) name links it; anything else is kept as typed. */
+  /**
+   * Typing a saved recipe's (or, eating out or take out, restaurant's) name links it; anything else is kept as typed.
+   * A meal kit stays a meal kit, with or without a recipe.
+   */
   function setMeal(day: ScheduleDay, text: string) {
-    if (day.meal?.mealKit) {
-      update(day.date, { meal: { name: text, mealKit: true, recipeId: null, restaurantId: null, url: null } });
-      return;
-    }
+    const mealKit = !!day.meal?.mealKit;
     const restaurant = day.eatOut || day.takeOut;
     const options = restaurant ? choices?.restaurants : choices?.recipes;
     const match = options?.find((o) => o.name.toLowerCase() === text.trim().toLowerCase());
-    const meal: ScheduleMeal | null = !text
-      ? null
-      : match
-        ? { name: text, mealKit: false, recipeId: restaurant ? null : match.id, restaurantId: restaurant ? match.id : null, url: match.url }
-        : { name: text, mealKit: false, recipeId: null, restaurantId: null, url: null };
+    const meal: ScheduleMeal | null =
+      !text && !mealKit
+        ? null
+        : match
+          ? { name: text, mealKit, recipeId: restaurant ? null : match.id, restaurantId: restaurant ? match.id : null, url: match.url }
+          : { name: text, mealKit, recipeId: null, restaurantId: null, url: null };
     update(day.date, { meal });
   }
 
-  /** A meal kit instead of a recipe: the box then says which kit, if anyone wants to. */
+  /** Marks the day's meal (a recipe, a typed-in kit name, or nothing yet) as a meal kit, or not, keeping what's chosen. */
   function setMealKit(day: ScheduleDay, mealKit: boolean) {
-    update(day.date, { meal: mealKit ? { name: "", mealKit: true, recipeId: null, restaurantId: null, url: null } : null });
+    const meal = day.meal ?? { name: "", mealKit, recipeId: null, restaurantId: null, url: null };
+    update(day.date, { meal: !mealKit && !meal.name ? null : { ...meal, mealKit } });
   }
 
   function removeDay(date: string) {
@@ -731,10 +732,10 @@ function WeekForm({
                     <div className="meal-input">
                       <input
                         id={`${listId}-${d.date}-meal`}
-                        list={d.meal?.mealKit ? undefined : `${listId}-${restaurant ? "restaurants" : "recipes"}`}
+                        list={`${listId}-${restaurant ? "restaurants" : "recipes"}`}
                         maxLength={MAX_MEAL_NAME}
                         placeholder={
-                          restaurant ? "Pick a restaurant or type one" : d.meal?.mealKit ? "Which kit? (optional)" : "Pick a recipe or type a meal"
+                          restaurant ? "Pick a restaurant or type one" : d.meal?.mealKit ? "Pick the kit's recipe or name it (optional)" : "Pick a recipe or type a meal"
                         }
                         value={d.meal?.name ?? ""}
                         onChange={(e) => setMeal(d, e.target.value)}
