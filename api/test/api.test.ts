@@ -25,6 +25,7 @@ import {
   type ScheduleEvent,
   type ScheduleWeek,
   type ShoppingList,
+  type AddRecipeLinkResponse,
   type SuggestMealsResponse,
 } from "@mealplanner/shared";
 import type { SuggestBrief, Suggestions } from "../src/meal-suggester.js";
@@ -1483,6 +1484,38 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
       assert.equal((await call("DELETE", `/api/family/weeks/${later}`, { token: parentToken })).status, 204);
       await call("DELETE", path, { token: parentToken });
       for (const id of [curry, tacos, broken]) await call("DELETE", `/api/family/recipes/${id}`, { token: parentToken });
+    });
+
+    test("a recipe link's ingredients can be added to the shopping list without saving the recipe", async () => {
+      const path = `/api/family/shopping/recipe?today=${today}`;
+      const add = (url: string) => call<AddRecipeLinkResponse>("POST", path, { token: teenToken, body: { url } });
+      const recipesBefore = (await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken })).body.length;
+
+      const curry = await add("https://www.example.com/link-curry");
+      assert.equal(curry.status, 201);
+      assert.equal(curry.body.name, "Page title");
+      assert.deepEqual(curry.body.added, ["Chicken thighs", "onion", "Coconut milk"]);
+      const item = (list: ShoppingList, key: string) => list.items.find((i) => i.key === key)!;
+      assert.deepEqual([item(curry.body.list, "chicken thighs").aisle, item(curry.body.list, "chicken thighs").quantity], ["meat", "500 g"]);
+      assert.equal(item(curry.body.list, "onion").quantity, "2");
+
+      // Another recipe needing the same thing adds its amount; something ticked off is needed again.
+      assert.equal((await call("PUT", "/api/family/shopping/bought", { token: teenToken, body: { key: "onion", bought: true } })).status, 204);
+      const tacos = await add("https://www.example.com/link-tacos");
+      assert.equal(tacos.status, 201);
+      const onion = item(tacos.body.list, "onion");
+      assert.deepEqual([onion.quantity, onion.bought], ["3", false]);
+      assert.equal(tacos.body.list.extras.filter((e) => e.name.toLowerCase() === "onion").length, 1);
+
+      // Pages that can't be opened or read, or that aren't recipes, add nothing.
+      assert.equal((await add("https://www.example.com/unreachable")).status, 502);
+      assert.equal((await add("https://www.example.com/broken")).status, 502);
+      assert.equal((await add("https://www.example.com/shop")).status, 422);
+      assert.equal((await add("not a link")).status, 400);
+
+      // The recipes aren't saved.
+      assert.equal((await call<FavouriteRecipe[]>("GET", "/api/family/recipes", { token: parentToken })).body.length, recipesBefore);
+      assert.equal((await call("DELETE", `/api/family/shopping?today=${today}`, { token: parentToken })).status, 200);
     });
 
     test("a typed-in recipe's ingredients go on the shopping list, sorted into aisles by Claude", async () => {

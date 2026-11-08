@@ -1,4 +1,5 @@
 import type {
+  AddRecipeLinkResponse,
   AddFavouriteRequest,
   Address,
   AddressSearchRequest,
@@ -201,6 +202,8 @@ export const api = {
     request<void>("PUT", `/api/family/weeks/${startsOn}/days/${date}/have`, body),
   clearShopping: (today: string) => request<ShoppingList>("DELETE", `/api/family/shopping?today=${today}`),
   addExtra: (today: string, name: string) => request<ShoppingList>("POST", `/api/family/shopping/extras?today=${today}`, { name }),
+  addRecipeLink: (today: string, url: string) =>
+    request<AddRecipeLinkResponse>("POST", `/api/family/shopping/recipe?today=${today}`, { url }),
   removeExtra: (today: string, id: string) => request<ShoppingList>("DELETE", `/api/family/shopping/extras/${id}?today=${today}`),
   setQuantity: (body: SetQuantityRequest) => request<void>("PUT", "/api/family/shopping/quantity", body),
   setBought: (body: SetBoughtRequest) => request<void>("PUT", "/api/family/shopping/bought", body),
