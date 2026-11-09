@@ -1,4 +1,4 @@
-import type { FamilyPreferences } from "@mealplanner/shared";
+import type { FamilyPreferences, WeekStartDay } from "@mealplanner/shared";
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import { useSession } from "../session";
@@ -42,8 +42,15 @@ function CountSelect({ id, value, max, disabled, onChange }: { id: string; value
   );
 }
 
-/** The family's preferences: usual dinner times (mid-week and weekend, both optional), and eat-outs and meal kits a week. */
-export function PreferencesCard({ prefs, isAdmin }: { prefs: FamilyPreferences; isAdmin: boolean }) {
+/**
+ * The family's preferences: the day its weeks start on, usual dinner times (mid-week and weekend, both optional), and
+ * eat-outs and meal kits a week.
+ */
+type Prefs = FamilyPreferences & { weekStartsOn: WeekStartDay };
+
+const WEEK_START_LABELS: Record<WeekStartDay, string> = { monday: "Monday", sunday: "Sunday" };
+
+export function PreferencesCard({ prefs, isAdmin }: { prefs: Prefs; isAdmin: boolean }) {
   const [editing, setEditing] = useState(false);
   const times = prefs.dinnerTimes;
   const notSet = <span className="note">Not set</span>;
@@ -56,6 +63,8 @@ export function PreferencesCard({ prefs, isAdmin }: { prefs: FamilyPreferences; 
       ) : (
         <>
           <dl className="preferences">
+            <dt>Week starts on</dt>
+            <dd>{WEEK_START_LABELS[prefs.weekStartsOn]}</dd>
             <dt>Mid-week dinner</dt>
             <dd>{times.weekday ? showTime(times.weekday) : notSet}</dd>
             <dt>Weekend dinner</dt>
@@ -80,7 +89,7 @@ export function PreferencesCard({ prefs, isAdmin }: { prefs: FamilyPreferences; 
   );
 }
 
-function PreferencesForm({ prefs, onDone }: { prefs: FamilyPreferences; onDone: () => void }) {
+function PreferencesForm({ prefs, onDone }: { prefs: Prefs; onDone: () => void }) {
   const { refresh } = useSession();
   const times = prefs.dinnerTimes;
   // A time saved before the half-hour choices (e.g. 18:15) starts as "Not set".
@@ -88,6 +97,7 @@ function PreferencesForm({ prefs, onDone }: { prefs: FamilyPreferences; onDone: 
   const [weekend, setWeekend] = useState(TIME_CHOICES.includes(times.weekend ?? "") ? times.weekend! : "");
   const [eatOuts, setEatOuts] = useState(prefs.eatOutsPerWeek);
   const [mealKits, setMealKits] = useState(prefs.mealKitsPerWeek);
+  const [weekStartsOn, setWeekStartsOn] = useState(prefs.weekStartsOn);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,6 +106,7 @@ function PreferencesForm({ prefs, onDone }: { prefs: FamilyPreferences; onDone: 
     setSaving(true);
     setError(null);
     try {
+      if (weekStartsOn !== prefs.weekStartsOn) await api.setWeekStart({ weekStartsOn });
       await api.setPreferences({
         dinnerTimes: { weekday: weekday || null, weekend: weekend || null },
         eatOutsPerWeek: eatOuts,
@@ -111,6 +122,15 @@ function PreferencesForm({ prefs, onDone }: { prefs: FamilyPreferences; onDone: 
 
   return (
     <form className="stack" onSubmit={(e) => void save(e)}>
+      <Field label="Week starts on" htmlFor="week-start" hint="For everyone in the family. Weeks already planned keep every day.">
+        <select id="week-start" value={weekStartsOn} disabled={saving} onChange={(e) => setWeekStartsOn(e.target.value as WeekStartDay)}>
+          {(Object.keys(WEEK_START_LABELS) as WeekStartDay[]).map((d) => (
+            <option key={d} value={d}>
+              {WEEK_START_LABELS[d]}
+            </option>
+          ))}
+        </select>
+      </Field>
       <Field label="Mid-week dinner" htmlFor="dinner-weekday" hint="Monday to Friday. Optional.">
         <TimeSelect id="dinner-weekday" value={weekday} disabled={saving} onChange={setWeekday} />
       </Field>

@@ -2,12 +2,13 @@ import {
   AISLE_LABELS,
   AISLES,
   formatQuantity,
-  mondayOf,
+  weekStartOf,
   shoppingItems,
   stepQuantity,
   type Quantity,
   type ShoppingItem,
   type ShoppingList,
+  type WeekStartDay,
 } from "@mealplanner/shared";
 import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
@@ -21,7 +22,7 @@ export function ShoppingPage() {
   const { me } = useSession();
   if (!me) return null;
   if (!me.family) return <Navigate to="/family" replace />;
-  return <Shopping />;
+  return <Shopping weekStartsOn={me.family.weekStartsOn} />;
 }
 
 /** Today's date where the person is, "YYYY-MM-DD". */
@@ -35,7 +36,7 @@ function dayLabel(date: string): string {
   return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 
-function Shopping() {
+function Shopping({ weekStartsOn }: { weekStartsOn: WeekStartDay }) {
   const [list, setList] = useState<ShoppingList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = localToday();
@@ -101,7 +102,7 @@ function Shopping() {
     const before = list;
     setList(withHave(list, date, name, false));
     try {
-      await api.setHave(mondayOf(date), date, { name, have: false });
+      await api.setHave(weekStartOf(date, weekStartsOn), date, { name, have: false });
     } catch (err) {
       setList(before);
       setError(errorMessage(err));

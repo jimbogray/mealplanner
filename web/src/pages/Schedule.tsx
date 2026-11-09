@@ -7,7 +7,7 @@ import {
   MAX_GUESTS,
   MAX_MEAL_NAME,
   MAX_SUGGEST_NOTES,
-  mondayOf,
+  weekStartOf,
   nextWeekToAdd,
   usuallyWorkingFromHome,
   weekDays,
@@ -18,6 +18,7 @@ import {
   type ScheduleDay,
   type ScheduleEvent,
   type ScheduleMeal,
+  type WeekStartDay,
   type ScheduleWeek,
   type ShoppingList,
   type UpdateDayRequest,
@@ -35,7 +36,14 @@ export function SchedulePage() {
   const { me } = useSession();
   if (!me) return null;
   if (!me.family) return <Navigate to="/family" replace />;
-  return <Schedule members={me.members} isManager={me.member?.role === "admin"} canSuggest={me.mealSuggestions} />;
+  return (
+    <Schedule
+      members={me.members}
+      isManager={me.member?.role === "admin"}
+      canSuggest={me.mealSuggestions}
+      weekStartsOn={me.family.weekStartsOn}
+    />
+  );
 }
 
 /** The family's recipes and restaurants a Family Manager can pick meals from. */
@@ -63,14 +71,24 @@ function weekLabel(startsOn: string): string {
   return `Week of ${dayLabel(startsOn)}`;
 }
 
-function Schedule({ members, isManager, canSuggest }: { members: FamilyMember[]; isManager: boolean; canSuggest: boolean }) {
+function Schedule({
+  members,
+  isManager,
+  canSuggest,
+  weekStartsOn,
+}: {
+  members: FamilyMember[];
+  isManager: boolean;
+  canSuggest: boolean;
+  weekStartsOn: WeekStartDay;
+}) {
   const [weeks, setWeeks] = useState<ScheduleWeek[] | null>(null);
   const [choices, setChoices] = useState<MealChoices | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = localToday();
-  const thisWeek = mondayOf(today);
+  const thisWeek = weekStartOf(today, weekStartsOn);
 
   useEffect(() => {
     api.weeks().then(setWeeks, (err) => setError(errorMessage(err)));
@@ -86,7 +104,7 @@ function Schedule({ members, isManager, canSuggest }: { members: FamilyMember[];
     );
   }, [isManager]);
 
-  const next = weeks ? nextWeekToAdd(weeks.map((w) => w.startsOn), today) : null;
+  const next = weeks ? nextWeekToAdd(weeks.map((w) => w.startsOn), today, weekStartsOn) : null;
   const upcoming = (weeks ?? []).filter((w) => w.startsOn >= thisWeek);
   const past = (weeks ?? []).filter((w) => w.startsOn < thisWeek).reverse();
 
@@ -112,7 +130,7 @@ function Schedule({ members, isManager, canSuggest }: { members: FamilyMember[];
     setShopping(withHave(shopping, date, name, have));
     setError(null);
     try {
-      await api.setHave(mondayOf(date), date, { name, have });
+      await api.setHave(weekStartOf(date, weekStartsOn), date, { name, have });
     } catch (err) {
       setShopping(before);
       setError(errorMessage(err));
@@ -140,8 +158,8 @@ function Schedule({ members, isManager, canSuggest }: { members: FamilyMember[];
         <section className="card">
           <h1>Weekly Schedule</h1>
           <p className="note">
-            Who's in for dinner each day, and what's cooking. Weeks run Monday to Sunday; anyone in the family can change who's in, and a
-            Family Manager picks the meals.
+            Who's in for dinner each day, and what's cooking. Weeks run {weekStartsOn === "sunday" ? "Sunday to Saturday" : "Monday to Sunday"};
+            anyone in the family can change who's in, and a Family Manager picks the meals.
           </p>
           {next && !adding && (
             <div className="row">

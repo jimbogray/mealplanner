@@ -9,6 +9,7 @@ import {
   eventOn,
   type Address,
   mondayOf,
+  weekStartOf,
   type AddressSearchResponse,
   type AuthResponse,
   type Errand,
@@ -1523,6 +1524,63 @@ describe("API", { skip: url ? false : "set TEST_DATABASE_URL to run API tests" }
 
       assert.equal((await call("DELETE", `/api/family/weeks/${startsOn}`, { token: parentToken })).status, 204);
       assert.equal((await call("DELETE", `/api/family/recipes/${typed}`, { token: parentToken })).status, 204);
+    });
+  });
+
+  describe("week start day", () => {
+    test("weekStartOf finds the Monday or Sunday on or before a date", () => {
+      // 2026-11-08 is a Sunday.
+      assert.equal(weekStartOf("2026-11-08", "monday"), "2026-11-02");
+      assert.equal(weekStartOf("2026-11-08", "sunday"), "2026-11-08");
+      assert.equal(weekStartOf("2026-11-09", "monday"), "2026-11-09");
+      assert.equal(weekStartOf("2026-11-14", "sunday"), "2026-11-08");
+    });
+
+    test("a Family Manager can start the family's weeks on Sunday, and every planned day stays as it was", async () => {
+      const signup = await call<{ token: string; me: Me }>("POST", "/api/auth/signup", {
+        body: { email: "week-start@example.com", password: "password123", name: "Sam", lifeStage: "adult", familyName: "Sundays" },
+      });
+      const token = signup.body.token;
+      const me = signup.body.me;
+      assert.equal(me.family?.weekStartsOn, "monday");
+      const kid = (await call<FamilyMember>("POST", "/api/family/members", { token, body: { name: "Kit", lifeStage: "child" } })).body;
+      const today = new Date().toISOString().slice(0, 10);
+      const thisWeek = mondayOf(today);
+      const nextWeek = addDays(thisWeek, 7);
+      const plan = (startsOn: string) =>
+        Array.from({ length: 7 }, (_, i) => addDays(startsOn, i))
+          .filter((d) => d >= today)
+          .map((date, i) => ({ date, memberIds: i % 2 ? [me.member!.id] : [me.member!.id, kid.id], guests: i, workingFromHomeIds: [] }));
+      for (const startsOn of [thisWeek, nextWeek]) {
+        assert.equal((await call("POST", "/api/family/weeks", { token, body: { startsOn, today, days: plan(startsOn) } })).status, 201);
+      }
+      const days = async () =>
+        (await call<ScheduleWeek[]>("GET", "/api/family/weeks", { token })).body.flatMap((w) => w.days).sort((a, b) => a.date.localeCompare(b.date));
+      const before = await days();
+
+      assert.equal((await call("PUT", "/api/family/week-start", { token, body: { weekStartsOn: "tuesday" } })).status, 400);
+      const res = await call<ScheduleWeek[]>("PUT", "/api/family/week-start", { token, body: { weekStartsOn: "sunday" } });
+      assert.equal(res.status, 200);
+      assert.ok(res.body.every((w) => weekStartOf(w.startsOn, "sunday") === w.startsOn));
+      assert.ok(res.body.every((w) => w.days.every((d) => weekStartOf(d.date, "sunday") === w.startsOn)));
+      assert.deepEqual(await days(), before);
+      assert.equal((await call<Me>("GET", "/api/me", { token })).body.family?.weekStartsOn, "sunday");
+
+      // New weeks start on Sunday now.
+      const last = res.body.at(-1)!.startsOn;
+      const after = addDays(last, 7);
+      assert.equal((await call("POST", "/api/family/weeks", { token, body: { startsOn: addDays(after, 1), today, days: plan(after) } })).status, 400);
+      assert.equal((await call("POST", "/api/family/weeks", { token, body: { startsOn: after, today, days: plan(after) } })).status, 201);
+      const withSunday = await days();
+
+      // And back to Monday, still keeping every day.
+      const back = await call<ScheduleWeek[]>("PUT", "/api/family/week-start", { token, body: { weekStartsOn: "monday" } });
+      assert.ok(back.body.every((w) => w.days.every((d) => weekStartOf(d.date, "monday") === w.startsOn)));
+      assert.deepEqual(await days(), withSunday);
+    });
+
+    test("only a Family Manager can change the day weeks start on", async () => {
+      assert.equal((await call("PUT", "/api/family/week-start", { token: teenToken, body: { weekStartsOn: "sunday" } })).status, 403);
     });
   });
 
