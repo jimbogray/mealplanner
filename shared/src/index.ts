@@ -111,7 +111,21 @@ export interface Family {
   eatOutsPerWeek: number;
   /** Dinners a week the family usually has a meal kit (0 to 7, 0 by default). */
   mealKitsPerWeek: number;
+  /** The day the family's weeks start on; Monday unless a Family Manager has changed it. */
+  weekStartsOn: WeekStartDay;
   createdAt: string;
+}
+
+/** The day a family's weeks start on. */
+export type WeekStartDay = "monday" | "sunday";
+export const WEEK_START_DAYS: readonly WeekStartDay[] = ["monday", "sunday"];
+
+/**
+ * PUT /api/family/week-start body (Family Managers only). Weeks already in the schedule are regrouped to start on
+ * the new day, keeping every day as it was. The response is the family's weeks, as GET /api/family/weeks.
+ */
+export interface SetWeekStartRequest {
+  weekStartsOn: WeekStartDay;
 }
 
 /** Usual dinner times as 24-hour "HH:MM", each null when not given. Weekend is Saturday and Sunday. */
@@ -369,8 +383,13 @@ export function addDays(date: IsoDate, days: number): IsoDate {
 
 /** The Monday on or before a calendar date. */
 export function mondayOf(date: IsoDate): IsoDate {
-  const isoDay = new Date(`${date}T00:00:00Z`).getUTCDay() || 7; // Monday 1 … Sunday 7
-  return addDays(date, 1 - isoDay);
+  return weekStartOf(date, "monday");
+}
+
+/** The first day of the week holding a date: the Monday (or, for weeks starting on Sunday, the Sunday) on or before it. */
+export function weekStartOf(date: IsoDate, startsOn: WeekStartDay): IsoDate {
+  const day = new Date(`${date}T00:00:00Z`).getUTCDay(); // Sunday 0 … Saturday 6
+  return addDays(date, -(startsOn === "sunday" ? day : (day + 6) % 7));
 }
 
 /** True for a real calendar date written as "YYYY-MM-DD". */
@@ -391,7 +410,7 @@ export function usuallyWorkingFromHome(members: Pick<FamilyMember, "id" | "lifeS
   return members.filter((m) => m.lifeStage === "adult" && m.workFromHomeDays.includes(day)).map((m) => m.id);
 }
 
-/** The seven days of a week, Monday first. */
+/** The seven days of a week, from the day it starts. */
 export function weekDays(startsOn: IsoDate): IsoDate[] {
   return Array.from({ length: 7 }, (_, i) => addDays(startsOn, i));
 }
@@ -405,8 +424,8 @@ export function daysToPlan(startsOn: IsoDate, today: IsoDate): IsoDate[] {
  * The week a family can add next: this week if they don't have it yet, otherwise the
  * week after their last one. `today` is the person's own local date.
  */
-export function nextWeekToAdd(weeks: IsoDate[], today: IsoDate): IsoDate {
-  const current = mondayOf(today);
+export function nextWeekToAdd(weeks: IsoDate[], today: IsoDate, startsOn: WeekStartDay = "monday"): IsoDate {
+  const current = weekStartOf(today, startsOn);
   if (!weeks.includes(current)) return current;
   return addDays(weeks.reduce((a, b) => (a > b ? a : b)), 7);
 }
@@ -429,11 +448,12 @@ export interface ScheduleDay {
 
 /**
  * What's for dinner: one of the family's recipes (eating in), one of its restaurants (eating out or take-out), a meal kit
- * (eating in), or typed in. The name stays if the recipe or restaurant is later removed from the family's lists.
+ * (eating in, optionally with one of the family's recipes), or typed in. The name stays if the recipe or restaurant is later removed from the family's lists.
  */
 export interface ScheduleMeal {
   /** Empty only for a meal kit that doesn't say which one. */
   name: string;
+  /** A meal kit, which can also have a recipe. */
   mealKit: boolean;
   recipeId: Uuid | null;
   restaurantId: Uuid | null;
@@ -441,8 +461,8 @@ export interface ScheduleMeal {
   url: string | null;
 }
 
-/** Choose a meal: a recipe (eating in), a restaurant (eating out or take-out), a meal kit (eating in, name optional), or a typed-in name. */
-export type MealInput = { recipeId: Uuid } | { restaurantId: Uuid } | { mealKit: true; name?: string } | { name: string };
+/** Choose a meal: a recipe (eating in, optionally marked as a meal kit), a restaurant (eating out or take-out), a meal kit (eating in, name optional), or a typed-in name. */
+export type MealInput = { recipeId: Uuid; mealKit?: boolean } | { restaurantId: Uuid } | { mealKit: true; name?: string } | { name: string };
 
 export const MAX_MEAL_NAME = 120;
 

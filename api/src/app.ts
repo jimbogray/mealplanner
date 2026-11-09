@@ -13,7 +13,9 @@ import {
   MAX_EVENT_TITLE,
   MAX_MEAL_NAME,
   MAX_SUGGEST_NOTES,
-  mondayOf,
+  WEEK_START_DAYS,
+  weekStartOf,
+  type WeekStartDay,
   nextWeekToAdd,
   type Address,
   type AddressSearchResponse,
@@ -121,6 +123,7 @@ interface FamilyRow {
   dinner_weekend: string | null;
   eat_outs_per_week: number;
   meal_kits_per_week: number;
+  week_starts_on: WeekStartDay;
   created_at: Date;
 }
 
@@ -166,7 +169,7 @@ async function loadMe(
       [self.family_id],
     )
   ).rows.map(toMember);
-  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), ...toPreferences(fam), createdAt: fam.created_at.toISOString() };
+  const family: Family = { id: fam.id, name: fam.name, address: toAddress(fam), ...toPreferences(fam), weekStartsOn: fam.week_starts_on, createdAt: fam.created_at.toISOString() };
   return {
     user,
     family,
@@ -808,6 +811,7 @@ async function mealFrom(
   if (member.role !== "admin") throw new HttpError(403, "Only a Family Manager can choose meals");
   if (b.meal === null) return null;
   const m = v.object(b.meal);
+  if (m.mealKit !== undefined && typeof m.mealKit !== "boolean") throw new HttpError(400, "Meal kit must be true or false");
   if (m.recipeId !== undefined) {
     if (restaurantDay) throw new HttpError(400, "A recipe is for cooking at home; pick a restaurant for eating out or take-out");
     const r = (
@@ -817,7 +821,9 @@ async function mealFrom(
       ])
     ).rows[0];
     if (!r) throw new HttpError(400, "That recipe isn't in your family's recipes");
-    return { name: r.name, mealKit: false, recipeId: r.id, restaurantId: null };
+    // A recipe can also be marked as a meal kit (the kit's recipe card); its ingredients still go on the
+    // shopping list.
+    return { name: r.name, mealKit: m.mealKit === true, recipeId: r.id, restaurantId: null };
   }
   if (m.restaurantId !== undefined) {
     if (!restaurantDay) throw new HttpError(400, "A restaurant is for eating out or take-out; mark the day as one of those first");
@@ -830,7 +836,6 @@ async function mealFrom(
     if (!r) throw new HttpError(400, "That restaurant isn't in your family's restaurants");
     return { name: r.name, mealKit: false, recipeId: null, restaurantId: r.id };
   }
-  if (m.mealKit !== undefined && typeof m.mealKit !== "boolean") throw new HttpError(400, "Meal kit must be true or false");
   if (m.mealKit) {
     if (restaurantDay) throw new HttpError(400, "A meal kit is for cooking at home");
     const name = m.name === undefined || m.name === null || (typeof m.name === "string" && !m.name.trim()) ? null : v.text(m.name, "Meal kit", MAX_MEAL_NAME);
@@ -885,10 +890,15 @@ async function saveDay(tx: Tx, weekId: string, day: DayInput): Promise<void> {
   }
 }
 
-/** A Monday from the path, or 404. */
+/** A week's first day from the path, or 404. Only weeks in the family's schedule are found by it. */
 function weekStart(value: string): string {
-  if (!isIsoDate(value) || mondayOf(value) !== value) throw new HttpError(404, "That week isn't in your schedule");
+  if (!isIsoDate(value)) throw new HttpError(404, "That week isn't in your schedule");
   return value;
+}
+
+/** The day the family's weeks start on. */
+async function familyWeekStart(db: Queryable, familyId: string): Promise<WeekStartDay> {
+  return (await db.query<{ week_starts_on: WeekStartDay }>("SELECT week_starts_on FROM family WHERE id = $1", [familyId])).rows[0].week_starts_on;
 }
 
 /** A week in the path, as its id, or 404. */
@@ -1342,6 +1352,37 @@ export function buildRouter(
     const name = v.text(v.object(req.body).name, "Family name");
     await db.query("UPDATE family SET name = $1 WHERE id = $2", [name, member.family_id]);
     return { status: 204 };
+  });
+
+  // Regroups the family's days into weeks starting on the new day; each day keeps everything on it.
+  router.add("PUT", "/api/family/week-start", async (req) => {
+    const { member } = await requireAdmin(db, req);
+    const startDay = v.object(req.body).weekStartsOn;
+    if (typeof startDay !== "string" || !(WEEK_START_DAYS as readonly string[]).includes(startDay)) {
+      throw new HttpError(400, "Weeks can start on a Monday or a Sunday");
+    }
+    await withTransaction(db, async (tx) => {
+      // Locked as when adding a week, so a week can't be added under the old start day meanwhile.
+      await tx.query("SELECT 1 FROM family WHERE id = $1 FOR UPDATE", [member.family_id]);
+      await tx.query("UPDATE family SET week_starts_on = $2 WHERE id = $1", [member.family_id, startDay]);
+      const newStart = "CASE WHEN $2 = 'sunday' THEN d.day - extract(dow FROM d.day)::int ELSE d.day - extract(isodow FROM d.day)::int + 1 END";
+      await tx.query(
+        `INSERT INTO schedule_week (family_id, starts_on, created_by)
+         SELECT DISTINCT $1::uuid, ${newStart}, $3::uuid FROM schedule_day d JOIN schedule_week w ON w.id = d.week_id WHERE w.family_id = $1
+         ON CONFLICT (family_id, starts_on) DO NOTHING`,
+        [member.family_id, startDay, member.id],
+      );
+      await tx.query(
+        `UPDATE schedule_day d SET week_id = nw.id
+           FROM schedule_week w, schedule_week nw
+          WHERE w.id = d.week_id AND w.family_id = $1 AND nw.family_id = $1 AND nw.starts_on = ${newStart} AND nw.id <> d.week_id`,
+        [member.family_id, startDay],
+      );
+      await tx.query("DELETE FROM schedule_week w WHERE family_id = $1 AND NOT EXISTS (SELECT 1 FROM schedule_day d WHERE d.week_id = w.id)", [
+        member.family_id,
+      ]);
+    });
+    return { body: await loadWeeks(db, member.family_id) };
   });
 
   router.add("PUT", "/api/family/preferences", async (req) => {
@@ -2023,7 +2064,8 @@ export function buildRouter(
     const { member } = await requireMember(db, req);
     const b = v.object(req.body);
     const startsOn = v.isoDate(b.startsOn, "Week");
-    if (mondayOf(startsOn) !== startsOn) throw new HttpError(400, "A week starts on a Monday");
+    const startDay = await familyWeekStart(db, member.family_id);
+    if (weekStartOf(startsOn, startDay) !== startsOn) throw new HttpError(400, `Your family's weeks start on a ${startDay === "sunday" ? "Sunday" : "Monday"}`);
     // The person's own date decides which week is "this week", within a day of ours (time zones).
     const today = v.isoDate(b.today, "Today");
     const serverToday = new Date().toISOString().slice(0, 10);
@@ -2075,7 +2117,10 @@ export function buildRouter(
 
     await withTransaction(db, async (tx) => {
       // One week added at a time per family, so two people can't both add "next week".
-      await tx.query("SELECT 1 FROM family WHERE id = $1 FOR UPDATE", [member.family_id]);
+      const locked = (
+        await tx.query<{ week_starts_on: WeekStartDay }>("SELECT week_starts_on FROM family WHERE id = $1 FOR UPDATE", [member.family_id])
+      ).rows[0];
+      if (locked.week_starts_on !== startDay) throw new HttpError(409, "The day your weeks start on just changed; reload and try again");
       const existing = (
         await tx.query<{ starts_on: string }>(
           "SELECT to_char(starts_on, 'YYYY-MM-DD') AS starts_on FROM schedule_week WHERE family_id = $1",
@@ -2083,7 +2128,7 @@ export function buildRouter(
         )
       ).rows.map((r) => r.starts_on);
       if (existing.includes(startsOn)) throw new HttpError(409, "That week is already in your schedule");
-      const allowed = nextWeekToAdd(existing, today);
+      const allowed = nextWeekToAdd(existing, today, startDay);
       if (startsOn !== allowed) throw new HttpError(409, `The next week you can add starts on ${allowed}`);
       const weekId = (
         await tx.query<{ id: string }>(
@@ -2175,7 +2220,10 @@ export function buildRouter(
         };
       })
       .sort((a, c) => a.date.localeCompare(c.date));
-    if (days.some((d) => mondayOf(d.date) !== mondayOf(days[0].date))) throw new HttpError(400, "The days must all be in one week");
+    const startDay = await familyWeekStart(db, member.family_id);
+    if (days.some((d) => weekStartOf(d.date, startDay) !== weekStartOf(days[0].date, startDay))) {
+      throw new HttpError(400, "The days must all be in one week");
+    }
     if (new Set(days.map((d) => d.date)).size !== days.length) throw new HttpError(400, "A day is listed twice");
     // Days that have passed (allowing a day for time zones) are left as they are.
     const earliest = addDays(new Date().toISOString().slice(0, 10), -1);
